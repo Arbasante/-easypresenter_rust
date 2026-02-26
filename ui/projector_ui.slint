@@ -1,0 +1,58 @@
+export component ProjectorWindow inherits Window {
+    // 1. El color base de la ventana
+    background: root.bg_color;
+
+    in property <string> texto_proyeccion: "";
+    in property <string> referencia: "";
+    in property <float> tamano_letra: 85;
+
+    // --- NUEVAS PROPIEDADES DE ESTILO QUE RECIBE DESDE RUST ---
+    in property <color> bg_color: black;
+    in property <color> text_color: white;
+    in property <image> fondo_imagen;
+    in property <bool> mostrar_imagen: false;
+
+    // CAPA 1: LA IMAGEN O VIDEO AL FONDO (Si el usuario seleccionó Imagen)
+    if (root.mostrar_imagen) : Image {
+        source: root.fondo_imagen;
+        width: 100%;
+        height: 100%;
+        image-fit: cover; // Cover llena la pantalla completa sin bordes negros
+    }
+
+    // CAPA 2: OSCURECEDOR DE IMAGEN
+    // Si hay una foto, oscurecemos un 40% el fondo para que la letra no se pierda
+    if (root.mostrar_imagen) : Rectangle {
+        width: 100%; height: 100%;
+        background: rgba(0, 0, 0, 0.4);
+    }
+
+    // CAPA 3: TEXTO Y REFERENCIA BÍBLICA
+    VerticalLayout {
+        padding: 40px; spacing: 20px; 
+
+        Rectangle {
+            background: transparent;
+            VerticalLayout {
+                Rectangle {
+                    vertical-stretch: 1;
+                    Text {
+                        text: root.texto_proyeccion;
+                        color: root.text_color; // <-- COLOR DINÁMICO
+                        font-size: root.tamano_letra * 1px;
+                        font-weight: 900;
+                        wrap: word-wrap;
+                        horizontal-alignment: center; vertical-alignment: center;
+                        width: parent.width - 80px; x: 40px;
+                    }
+                }
+                Rectangle { height: 60px; background: transparent; }
+            }
+        }
+        
+        if (root.referencia != "") : HorizontalLayout {
+            alignment: end; height: 45px;   
+            Text { text: root.referencia; color: root.text_color; font-size: 32px; font-weight: 800; font-italic: true; vertical-alignment: bottom;}
+        }
+    }
+}

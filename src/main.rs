@@ -17,6 +17,9 @@ struct LibroBibliaDB { pub id: i32, pub nombre: String, pub capitulos: i32 }
 
 #[derive(Hash, Eq, PartialEq, Clone, Debug)] struct CacheKey { version_id: i32, libro_numero: i32, capitulo: i32 }
 
+
+
+
 const NOMBRES_LIBROS: [&str; 66] = [
     "Génesis", "Éxodo", "Levítico", "Números", "Deuteronomio", "Josué", "Jueces", "Rut", "1 Samuel", "2 Samuel",
     "1 Reyes", "2 Reyes", "1 Crónicas", "2 Crónicas", "Esdras", "Nehemías", "Ester", "Job", "Salmos", "Proverbios",
@@ -196,13 +199,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ui.invoke_focus_panel();
     });
 
+    //-------------------
+
     let state_clone = Arc::clone(&state);
     let c_clone = cargar_cantos.clone();
     ui.on_guardar_canto(move |id, titulo, letra| {
-        let estado = state_clone.lock().unwrap();
-        if id == -1 { estado.add_canto(&titulo, &letra); } else { estado.update_canto(id, &titulo, &letra); }
+        // 1. Abrimos unas llaves para limitar el tiempo que tenemos la base de datos bloqueada
+        {
+            let estado = state_clone.lock().unwrap();
+            if id == -1 { 
+                estado.add_canto(&titulo, &letra); 
+            } else { 
+                estado.update_canto(id, &titulo, &letra); 
+            }
+        } // <- ¡Aquí Rust suelta el 'lock' automáticamente!
+
+        // 2. Ahora sí, es seguro llamar a la función que recarga los cantos
         c_clone(String::new());
     });
+
+    //---------------------
 
     let state_clone = Arc::clone(&state);
     let c_clone = cargar_cantos.clone();

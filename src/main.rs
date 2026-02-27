@@ -187,6 +187,62 @@ fn mover_proyector_a_pantalla(p_weak: slint::Weak<ProjectorWindow>, x: i32, y: i
     }
 }
 
+fn calcular_font_size(texto: &str, tiene_referencia: bool) -> f32 {
+    let ancho_util: f32 = 1280.0 - 120.0; // 1160px (60px padding cada lado)
+    
+    // Reservar espacio según si hay referencia o no
+    let alto_util: f32 = if tiene_referencia {
+        720.0 - 180.0  // 540px: deja 180px para referencia + padding
+    } else {
+        720.0 - 120.0  // 600px: solo padding superior e inferior
+    };
+
+    // Factor de ancho por carácter para Inter Bold en español
+    // Más alto que el promedio inglés por las letras acentuadas (á, é, etc.)
+    let char_width_factor: f32 = 0.58;
+    let line_height_factor: f32 = 1.40; // interlineado real de Slint
+
+    let estimar_lineas = |font_size: f32| -> f32 {
+        let chars_por_linea = (ancho_util / (font_size * char_width_factor))
+            .floor()
+            .max(1.0);
+        
+        let mut total_lineas = 0.0f32;
+        for linea in texto.lines() {
+            let chars = linea.chars().count() as f32;
+            if chars == 0.0 {
+                total_lineas += 0.5; // línea vacía = medio espacio
+            } else {
+                total_lineas += (chars / chars_por_linea).ceil();
+            }
+        }
+        total_lineas.max(1.0)
+    };
+
+    // Búsqueda binaria del tamaño máximo que cabe
+    let mut min_size: f32 = 20.0;
+    let mut max_size: f32 = 160.0;
+
+    for _ in 0..25 {
+        let mid = (min_size + max_size) / 2.0;
+        let lineas = estimar_lineas(mid);
+        let alto_necesario = lineas * mid * line_height_factor;
+
+        if alto_necesario <= alto_util {
+            min_size = mid;
+        } else {
+            max_size = mid;
+        }
+    }
+
+    // Factor de seguridad: 90% del máximo teórico para evitar desbordamientos
+    // por diferencias entre la estimación y el render real de Slint
+    let resultado = min_size * 0.90;
+
+    resultado.clamp(26.0, 150.0)
+}
+
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ═══════════════════════════════════════════════════════
     // FORZAR X11 EN LINUX (Wayland no permite set_position)
@@ -455,14 +511,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ui.on_proyectar_estrofa(move |texto, referencia| {
         let p = proyector_handle.unwrap();
         p.set_texto_proyeccion(texto.clone());
+
         let mut ref_str = referencia.to_string();
         if !ref_str.is_empty() {
             let sigla = state_clone.lock().unwrap().get_sigla_actual();
-            if !sigla.is_empty() { ref_str = format!("{}  |  {}", ref_str, sigla); }
+            if !sigla.is_empty() {
+                ref_str = format!("{}  |  {}", ref_str, sigla);
+            }
         }
-        p.set_referencia(SharedString::from(ref_str));
-        let len = texto.len();
-        let font_size = if len >= 450 { 32.0 } else if len >= 320 { 38.0 } else if len >= 220 { 46.0 } else if len >= 120 { 56.0 } else if len >= 60 { 68.0 } else { 85.0 };
+        p.set_referencia(SharedString::from(ref_str.clone()));
+
+        // Pasar si hay referencia para reservar espacio en el cálculo
+        let tiene_referencia = !ref_str.is_empty();
+        let font_size = calcular_font_size(&texto, tiene_referencia);
         p.set_tamano_letra(font_size);
     });
 

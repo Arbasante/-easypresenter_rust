@@ -2,6 +2,16 @@ import { VerticalBox, HorizontalBox, ScrollView, ComboBox } from "std-widgets.sl
 import { ProjectorWindow } from "projector_ui.slint";
 import "./fonts/Inter-VariableFont_opsz,wght.ttf";
 export { ProjectorWindow }
+import { ScrollView, LineEdit, Button, TextEdit, ComboBox, CheckBox } from "std-widgets.slint";
+
+// --- IMPORTACIÓN DE FUENTES ---
+import "./fonts/GoogleSans-Regular.ttf";
+import "./fonts/GoogleSans-Medium.ttf";
+import "./fonts/GoogleSans-Bold.ttf";
+
+import "./fonts/Inter-Regular.ttf";
+import "./fonts/Inter-Medium.ttf";
+import "./fonts/Inter-Bold.ttf";
 
 export struct Canto { id: int, titulo: string, letra: string }
 export struct BookInfo { id: int, nombre: string, capitulos: int }
@@ -30,7 +40,7 @@ component ColorSwatch inherits Rectangle {
 }
 
 export component AppWindow inherits Window {
-    min-width: 800px; min-height: 600px; background: #18181b; default-font-family: "Inter";
+    min-width: 800px; min-height: 600px; background: #18181b; default-font-family: "Google Sans";
 
     in-out property <string> active-tab: "cantos";
     in property <[Canto]> cantos: [];

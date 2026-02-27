@@ -304,16 +304,87 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ui.invoke_focus_panel();
     });
 
+
+    //-------------------------------------------------
+
     let state_clone = Arc::clone(&state);
+    let state_clone2 = Arc::clone(&state);  // segundo clone para el refresh
     let c_clone = cargar_cantos.clone();
+    let ui_handle_guardar = ui.as_weak();
+    let proyector_handle_guardar = proyector.as_weak();
+
+
     ui.on_guardar_canto(move |id, titulo, letra| {
+        // 1. Guardar en BD
         {
             let estado = state_clone.lock().unwrap();
-            if id == -1 { estado.add_canto(&titulo, &letra); }
-            else { estado.update_canto(id, &titulo, &letra); }
+            if id == -1 {
+                estado.add_canto(&titulo, &letra);
+            } else {
+                estado.update_canto(id, &titulo, &letra);
+            }
         }
+
+        // 2. Recargar lista sidebar
         c_clone(String::new());
+
+        // 3. Si era una edición (id != -1), refrescar panel central y proyector
+        if id != -1 {
+            let ui = ui_handle_guardar.unwrap();
+            let p = proyector_handle_guardar.unwrap();
+            let estado = state_clone2.lock().unwrap();
+
+            let titulo_guardado = estado.get_canto_titulo(id);
+            let titulo_en_panel = ui.get_elemento_seleccionado().to_string();
+
+            // Solo refrescar si este canto es el que está activo en el panel
+            // Comparamos con el título viejo (titulo param) y el nuevo (titulo_guardado)
+            let es_canto_activo = titulo_en_panel == titulo.to_string() 
+                || titulo_en_panel == titulo_guardado;
+
+            if es_canto_activo {
+                // Recargar diapositivas frescas de la BD
+                let nuevas_diapos = estado.get_canto_diapositivas(id);
+                let diapos_slint: Vec<DiapositivaUI> = nuevas_diapos.iter()
+                    .map(|d| DiapositivaUI {
+                        orden: SharedString::from(d.orden.to_string()),
+                        texto: SharedString::from(d.texto.clone()),
+                    })
+                    .collect();
+
+                // Guardar índice activo antes de actualizar
+                let active_idx = ui.get_active_estrofa_index();
+
+                // Actualizar título y estrofas en el panel central
+                ui.set_elemento_seleccionado(SharedString::from(&titulo_guardado));
+                ui.set_estrofas_actuales(ModelRc::from(Rc::new(VecModel::from(diapos_slint.clone()))));
+
+                // Actualizar proyector con la estrofa activa (o la primera si no hay)
+                let idx_a_proyectar = if active_idx >= 0 && (active_idx as usize) < diapos_slint.len() {
+                    active_idx as usize
+                } else if !diapos_slint.is_empty() {
+                    ui.set_active_estrofa_index(0);
+                    0
+                } else {
+                    return;
+                };
+
+                let texto_nuevo = diapos_slint[idx_a_proyectar].texto.clone();
+                let len = texto_nuevo.len();
+                let font_size = if len >= 450 { 32.0 } 
+                    else if len >= 320 { 38.0 } 
+                    else if len >= 220 { 46.0 } 
+                    else if len >= 120 { 56.0 } 
+                    else if len >= 60  { 68.0 } 
+                    else { 85.0 };
+
+                p.set_texto_proyeccion(texto_nuevo);
+                p.set_tamano_letra(font_size);
+                p.set_referencia(SharedString::from(""));
+            }
+        }
     });
+
 
     let state_clone = Arc::clone(&state);
     let c_clone = cargar_cantos.clone();

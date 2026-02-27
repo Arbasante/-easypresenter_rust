@@ -44,14 +44,14 @@ export component ProjectorWindow inherits Window {
             }
         }
 
-        // Referencia — tamaño proporcional al texto
+        // Referencia — tamaño fijo, igual para todos los versículos
         if (root.referencia != "") : Rectangle {
-            height: root.tamano_letra * 0.55px + 20px;
+            height: 70px;
             background: transparent;
             Text {
                 text: root.referencia;
                 color: root.text_color;
-                font-size: root.tamano_letra * 0.42px;
+                font-size: 36px;
                 font-weight: 800;
                 font-italic: true;
                 horizontal-alignment: right;

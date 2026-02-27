@@ -62,7 +62,19 @@ impl AppState {
         for item in iter.filter_map(Result::ok) {
             let (id, nombre_bd) = item;
             let (sigla, nombre_comp, prioridad) = match nombre_bd.as_str() {
-                "ReinaValera1960" => ("RVR", "Reina Valera 1960", 0), "NuevaVersiónInternacional" => ("NVI", "Nueva Versión Internacional", 1), "NuevaTraduccionViviente" => ("NTV", "Nueva Traducción Viviente", 2), "BibliaDeLasAméricas" => ("LBLA", "La Biblia de las Américas", 3), "NuevaBibliadelasAméricas" => ("NBLA", "Nueva Biblia de las Américas", 4), "TraduccionLenguajeActual" => ("TLA", "Traducción en Lenguaje Actual", 5), "DiosHablaHoy" => ("DHH", "Dios Habla Hoy", 6), "LaPalabra" => ("BLP", "La Palabra", 7), "TraduccionInterconfesionalVersionHispanoamericana" => ("TIVH", "Trad. Interconfesional Hispanoamericana", 8), "BibliaTextual" => ("BTX", "Biblia Textual", 9), "BibliaJubileo" => ("JUB", "Biblia del Jubileo", 10), "BibliadelOso1573" => ("OSO", "Biblia del Oso 1573", 11), _ => { let s = if nombre_bd.len() >= 4 { &nombre_bd[0..4] } else { &nombre_bd }; ("", s, 999) }
+                "ReinaValera1960" => ("RVR", "Reina Valera 1960", 0),
+                "NuevaVersiónInternacional" => ("NVI", "Nueva Versión Internacional", 1),
+                "NuevaTraduccionViviente" => ("NTV", "Nueva Traducción Viviente", 2),
+                "BibliaDeLasAméricas" => ("LBLA", "La Biblia de las Américas", 3),
+                "NuevaBibliadelasAméricas" => ("NBLA", "Nueva Biblia de las Américas", 4),
+                "TraduccionLenguajeActual" => ("TLA", "Traducción en Lenguaje Actual", 5),
+                "DiosHablaHoy" => ("DHH", "Dios Habla Hoy", 6),
+                "LaPalabra" => ("BLP", "La Palabra", 7),
+                "TraduccionInterconfesionalVersionHispanoamericana" => ("TIVH", "Trad. Interconfesional Hispanoamericana", 8),
+                "BibliaTextual" => ("BTX", "Biblia Textual", 9),
+                "BibliaJubileo" => ("JUB", "Biblia del Jubileo", 10),
+                "BibliadelOso1573" => ("OSO", "Biblia del Oso 1573", 11),
+                _ => { let s = if nombre_bd.len() >= 4 { &nombre_bd[0..4] } else { &nombre_bd }; ("", s, 999) }
             };
             let sigla_final = if sigla.is_empty() { nombre_comp.to_uppercase() } else { sigla.to_string() };
             self.versiones.push(VersionInfo { id, sigla: sigla_final, nombre_completo: nombre_comp.to_string(), prioridad });
@@ -111,7 +123,10 @@ impl AppState {
         let mut orden = 1;
         for estrofa in letra.split("\n\n") {
             let texto = trim(estrofa);
-            if !texto.is_empty() { self.cantos_db.execute("INSERT INTO diapositivas (canto_id, orden, texto) VALUES (?, ?, ?)", rusqlite::params![canto_id, orden, texto]).unwrap(); orden += 1; }
+            if !texto.is_empty() {
+                self.cantos_db.execute("INSERT INTO diapositivas (canto_id, orden, texto) VALUES (?, ?, ?)", rusqlite::params![canto_id, orden, texto]).unwrap();
+                orden += 1;
+            }
         }
     }
     fn add_canto(&self, titulo: &str, letra: &str) {
@@ -138,7 +153,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let current_biblia_capitulo = Arc::new(Mutex::new(-1));
 
     {
-        // ADVERTENCIA AMARILLA ARREGLADA AQUI (quite el "mut")
         let st = state.lock().unwrap();
         let versiones_slint: Vec<SharedString> = st.versiones.iter().map(|v| SharedString::from(&v.nombre_completo)).collect();
         ui.set_bible_versions(ModelRc::from(Rc::new(VecModel::from(versiones_slint))));
@@ -148,43 +162,96 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ui.set_bible_books(ModelRc::from(Rc::new(VecModel::from(libros_slint))));
     }
 
-    let ui_handle = ui.as_weak(); let state_clone = Arc::clone(&state);
+    let ui_handle = ui.as_weak();
+    let state_clone = Arc::clone(&state);
     let cargar_cantos = move |busqueda: String| {
-        let ui = ui_handle.unwrap(); let estado = state_clone.lock().unwrap();
+        let ui = ui_handle.unwrap();
+        let estado = state_clone.lock().unwrap();
         let cantos_db = if busqueda.is_empty() { estado.get_all_cantos() } else { estado.get_cantos_filtrados(&busqueda) };
         let mut cantos_slint: Vec<Canto> = cantos_db.into_iter().map(|c| Canto { id: c.id, titulo: SharedString::from(c.titulo), letra: SharedString::from("") }).collect();
-        if cantos_slint.is_empty() { cantos_slint.push(Canto { id: 0, titulo: SharedString::from("Click derecho para agregar canto"), letra: SharedString::from("") }); }
+        if cantos_slint.is_empty() {
+            cantos_slint.push(Canto { id: 0, titulo: SharedString::from("Click derecho para agregar canto"), letra: SharedString::from("") });
+        }
         ui.set_cantos(ModelRc::from(Rc::new(VecModel::from(cantos_slint))));
     };
     cargar_cantos(String::new());
 
-    let c_clone = cargar_cantos.clone(); ui.on_buscar_cantos(move |t| c_clone(t.to_string()));
-    
-    let ui_handle = ui.as_weak(); let state_clone = Arc::clone(&state); let cb_lib = Arc::clone(&current_biblia_libro); let cb_cap = Arc::clone(&current_biblia_capitulo);
+    let c_clone = cargar_cantos.clone();
+    ui.on_buscar_cantos(move |t| c_clone(t.to_string()));
+
+    let ui_handle = ui.as_weak();
+    let state_clone = Arc::clone(&state);
+    let cb_lib = Arc::clone(&current_biblia_libro);
+    let cb_cap = Arc::clone(&current_biblia_capitulo);
     ui.on_seleccionar_canto(move |id| {
         if id == 0 { return; }
-        *cb_lib.lock().unwrap() = -1; *cb_cap.lock().unwrap() = -1;
-        let ui = ui_handle.unwrap(); let estado = state_clone.lock().unwrap();
+        *cb_lib.lock().unwrap() = -1;
+        *cb_cap.lock().unwrap() = -1;
+        let ui = ui_handle.unwrap();
+        let estado = state_clone.lock().unwrap();
         ui.set_elemento_seleccionado(SharedString::from(estado.get_canto_titulo(id)));
         let diapos_slint: Vec<DiapositivaUI> = estado.get_canto_diapositivas(id).into_iter().map(|d| DiapositivaUI { orden: SharedString::from(d.orden.to_string()), texto: SharedString::from(d.texto) }).collect();
         ui.set_estrofas_actuales(ModelRc::from(Rc::new(VecModel::from(diapos_slint))));
-        ui.set_active_estrofa_index(-1); ui.invoke_focus_panel();
+        ui.set_active_estrofa_index(-1);
+        ui.invoke_focus_panel();
     });
 
-    let state_clone = Arc::clone(&state); let c_clone = cargar_cantos.clone();
+    let state_clone = Arc::clone(&state);
+    let c_clone = cargar_cantos.clone();
     ui.on_guardar_canto(move |id, titulo, letra| {
         let estado = state_clone.lock().unwrap();
         if id == -1 { estado.add_canto(&titulo, &letra); } else { estado.update_canto(id, &titulo, &letra); }
         c_clone(String::new());
     });
 
-    let state_clone = Arc::clone(&state); let c_clone = cargar_cantos.clone();
-    ui.on_eliminar_canto(move |id| { state_clone.lock().unwrap().delete_canto(id); c_clone(String::new()); });
+    let state_clone = Arc::clone(&state);
+    let c_clone = cargar_cantos.clone();
+    ui.on_eliminar_canto(move |id| {
+        state_clone.lock().unwrap().delete_canto(id);
+        c_clone(String::new());
+    });
+
+    // --- ABRIR FORMULARIO NUEVO ---
+    let ui_handle = ui.as_weak();
+    ui.on_abrir_formulario_nuevo(move || {
+        let ui = ui_handle.unwrap();
+        ui.set_form_id(-1);
+        ui.set_form_titulo(SharedString::from(""));
+        ui.set_form_letra(SharedString::from(""));
+        ui.set_mostrar_formulario(true);
+    });
+
+    // --- ABRIR FORMULARIO EDITAR ---
+    let ui_handle = ui.as_weak();
+    let state_clone = Arc::clone(&state);
+    ui.on_abrir_formulario_editar(move |id, _titulo| {
+        let ui = ui_handle.unwrap();
+        let estado = state_clone.lock().unwrap();
+        let diapos = estado.get_canto_diapositivas(id);
+        let letra_completa = diapos.iter()
+            .map(|d| d.texto.clone())
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        ui.set_form_id(id);
+        ui.set_form_titulo(SharedString::from(estado.get_canto_titulo(id)));
+        ui.set_form_letra(SharedString::from(letra_completa));
+        ui.set_mostrar_formulario(true);
+    });
+
+    // --- CONFIRMAR ELIMINAR ---
+    let ui_handle = ui.as_weak();
+    ui.on_confirmar_eliminar_canto(move |id, titulo| {
+        let ui = ui_handle.unwrap();
+        ui.set_menu_canto_id(id);
+        ui.set_menu_canto_titulo(titulo);
+        ui.set_mostrar_confirmar_eliminar(true);
+    });
 
     let proyector_handle = proyector.as_weak();
     ui.on_abrir_proyector(move || { proyector_handle.unwrap().show().unwrap(); });
 
-    let proyector_handle = proyector.as_weak(); let state_clone = Arc::clone(&state);
+    let proyector_handle = proyector.as_weak();
+    let state_clone = Arc::clone(&state);
     ui.on_proyectar_estrofa(move |texto, referencia| {
         let p = proyector_handle.unwrap();
         p.set_texto_proyeccion(texto.clone());
@@ -210,7 +277,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let ui_h = ui.as_weak();
     ui.on_bible_book_selected(move |book| {
-        let ui = ui_h.unwrap(); let mut filas = Vec::new(); let mut fila_actual = Vec::new();
+        let ui = ui_h.unwrap();
+        let mut filas = Vec::new();
+        let mut fila_actual = Vec::new();
         for i in 1..=book.capitulos {
             fila_actual.push(i);
             if fila_actual.len() == 5 || i == book.capitulos {
@@ -221,14 +290,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ui.set_chapter_rows(ModelRc::from(Rc::new(VecModel::from(filas))));
     });
 
-    let ui_h = ui.as_weak(); let state_clone = Arc::clone(&state); let cb_lib = Arc::clone(&current_biblia_libro); let cb_cap = Arc::clone(&current_biblia_capitulo);
+    let ui_h = ui.as_weak();
+    let state_clone = Arc::clone(&state);
+    let cb_lib = Arc::clone(&current_biblia_libro);
+    let cb_cap = Arc::clone(&current_biblia_capitulo);
     ui.on_bible_chapter_selected(move |cap| {
-        let ui = ui_h.unwrap(); let book = ui.get_selected_bible_book();
-        *cb_lib.lock().unwrap() = book.id; *cb_cap.lock().unwrap() = cap;
+        let ui = ui_h.unwrap();
+        let book = ui.get_selected_bible_book();
+        *cb_lib.lock().unwrap() = book.id;
+        *cb_cap.lock().unwrap() = cap;
         let titulo = format!("{} {}", book.nombre, cap);
         ui.set_elemento_seleccionado(SharedString::from(&titulo));
 
-        let state_thread = Arc::clone(&state_clone); let ui_thread = ui.as_weak();
+        let state_thread = Arc::clone(&state_clone);
+        let ui_thread = ui.as_weak();
         thread::spawn(move || {
             let versiculos = state_thread.lock().unwrap().get_capitulo(book.id, cap);
             let _ = slint::invoke_from_event_loop(move || {
@@ -242,30 +317,41 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     });
 
-    let ui_h = ui.as_weak(); let state_clone = Arc::clone(&state); let cb_lib = Arc::clone(&current_biblia_libro); let cb_cap = Arc::clone(&current_biblia_capitulo);
+    let ui_h = ui.as_weak();
+    let state_clone = Arc::clone(&state);
+    let cb_lib = Arc::clone(&current_biblia_libro);
+    let cb_cap = Arc::clone(&current_biblia_capitulo);
     ui.on_bible_search_accepted(move |query| {
-        let ui = ui_h.unwrap(); let q = query.to_string();
+        let ui = ui_h.unwrap();
+        let q = query.to_string();
         let re = Regex::new(r"^\s*(.*?)\s+(\d+)(?:\s+(\d+))?\s*$").unwrap();
         if let Some(caps) = re.captures(&q) {
-            let book_query = &caps[1]; let capitulo: i32 = caps[2].parse().unwrap_or(1); let versiculo_obj: i32 = caps.get(3).map_or(1, |m| m.as_str().parse().unwrap_or(1));
+            let book_query = &caps[1];
+            let capitulo: i32 = caps[2].parse().unwrap_or(1);
+            let versiculo_obj: i32 = caps.get(3).map_or(1, |m| m.as_str().parse().unwrap_or(1));
             if let Some((libro_id, nombre_real)) = buscar_libro_inteligente(book_query) {
-                *cb_lib.lock().unwrap() = libro_id; *cb_cap.lock().unwrap() = capitulo;
+                *cb_lib.lock().unwrap() = libro_id;
+                *cb_cap.lock().unwrap() = capitulo;
                 let titulo = format!("{} {}", nombre_real, capitulo);
                 ui.set_elemento_seleccionado(SharedString::from(&titulo));
 
-                let state_thread = Arc::clone(&state_clone); let ui_thread = ui.as_weak();
+                let state_thread = Arc::clone(&state_clone);
+                let ui_thread = ui.as_weak();
                 thread::spawn(move || {
                     let versiculos = state_thread.lock().unwrap().get_capitulo(libro_id, capitulo);
                     let _ = slint::invoke_from_event_loop(move || {
-                        let ui = ui_thread.unwrap(); let mut target_index = 0;
+                        let ui = ui_thread.unwrap();
+                        let mut target_index = 0;
                         let diapos: Vec<DiapositivaUI> = versiculos.into_iter().enumerate().map(|(i, v)| {
                             if v.versiculo == versiculo_obj { target_index = i as i32; }
                             DiapositivaUI { orden: SharedString::from(v.versiculo.to_string()), texto: SharedString::from(v.texto) }
                         }).collect();
                         ui.set_estrofas_actuales(ModelRc::from(Rc::new(VecModel::from(diapos.clone()))));
-                        ui.set_active_estrofa_index(target_index); ui.set_scroll_to_y(target_index as f32 * 115.0);
+                        ui.set_active_estrofa_index(target_index);
+                        ui.set_scroll_to_y(target_index as f32 * 115.0);
                         if (target_index as usize) < diapos.len() {
-                            let text = diapos[target_index as usize].texto.clone(); let ord = diapos[target_index as usize].orden.clone();
+                            let text = diapos[target_index as usize].texto.clone();
+                            let ord = diapos[target_index as usize].orden.clone();
                             ui.invoke_proyectar_estrofa(text, SharedString::from(format!("{}:{}", titulo, ord)));
                         }
                         ui.invoke_focus_panel();
@@ -276,12 +362,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    let ui_h = ui.as_weak(); let state_clone = Arc::clone(&state); let cb_lib = Arc::clone(&current_biblia_libro); let cb_cap = Arc::clone(&current_biblia_capitulo);
+    let ui_h = ui.as_weak();
+    let state_clone = Arc::clone(&state);
+    let cb_lib = Arc::clone(&current_biblia_libro);
+    let cb_cap = Arc::clone(&current_biblia_capitulo);
     ui.on_bible_version_changed(move |version_name| {
-        let ui = ui_h.unwrap(); let lib = *cb_lib.lock().unwrap(); let cap = *cb_cap.lock().unwrap();
+        let ui = ui_h.unwrap();
+        let lib = *cb_lib.lock().unwrap();
+        let cap = *cb_cap.lock().unwrap();
         let mut versiculos_nuevos = Vec::new();
         {
-            let mut estado = state_clone.lock().unwrap(); estado.set_version_by_name(version_name.as_str());
+            let mut estado = state_clone.lock().unwrap();
+            estado.set_version_by_name(version_name.as_str());
             if lib != -1 && cap != -1 { versiculos_nuevos = estado.get_capitulo(lib, cap); }
         }
         if lib != -1 && cap != -1 && !versiculos_nuevos.is_empty() {
@@ -289,27 +381,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let diapos: Vec<DiapositivaUI> = versiculos_nuevos.into_iter().map(|v| DiapositivaUI { orden: SharedString::from(v.versiculo.to_string()), texto: SharedString::from(v.texto) }).collect();
             ui.set_estrofas_actuales(ModelRc::from(Rc::new(VecModel::from(diapos.clone()))));
             if active_idx >= 0 && (active_idx as usize) < diapos.len() {
-                let texto_nuevo = diapos[active_idx as usize].texto.clone(); let orden = diapos[active_idx as usize].orden.clone();
-                let book_name = ui.get_selected_bible_book().nombre; let titulo = format!("{} {}", book_name, cap);
+                let texto_nuevo = diapos[active_idx as usize].texto.clone();
+                let orden = diapos[active_idx as usize].orden.clone();
+                let book_name = ui.get_selected_bible_book().nombre;
+                let titulo = format!("{} {}", book_name, cap);
                 ui.invoke_proyectar_estrofa(texto_nuevo, SharedString::from(format!("{}:{}", titulo, orden)));
             }
         }
     });
 
-    // --- MAGIA FINAL: SINCRONIZADOR DE ESTILOS ---
+    // --- SINCRONIZADOR DE ESTILOS ---
     let ui_h_sync = ui.as_weak();
     let p_h_sync = proyector.as_weak();
-
     ui.on_sync_estilos(move || {
         let ui = ui_h_sync.unwrap();
         let p = p_h_sync.unwrap();
         let is_biblia = ui.get_active_tab() == "biblias";
-
         let bg_type = if is_biblia { ui.get_biblias_bg_type() } else { ui.get_cantos_bg_type() };
         let font_color = if is_biblia { ui.get_biblias_font_color() } else { ui.get_cantos_font_color() };
-
         p.set_text_color(font_color);
-
         if bg_type == "negro" {
             p.set_bg_color(slint::Color::from_rgb_u8(0, 0, 0));
             p.set_mostrar_imagen(false);
@@ -345,7 +435,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     ui.set_cantos_has_image(true);
                     ui.set_cantos_bg_type(SharedString::from("imagen"));
                 }
-                ui.invoke_sync_estilos(); 
+                ui.invoke_sync_estilos();
             }
         }
     });

@@ -68,12 +68,13 @@ export component AppWindow inherits Window {
     callback cargar_fondo_media(string); 
     callback quitar_fondo_media(string);
 
-    // --- VARIABLES RESTANTES ---
+    // --- VARIABLES FORMULARIO ---
     in-out property <bool> mostrar_formulario: false;
     in-out property <int> form_id: -1;
     in-out property <string> form_titulo: "";
     in-out property <string> form_letra: "";
 
+    // --- VARIABLES BIBLIA ---
     in property <[string]> bible-versions: [];
     in-out property <string> current-bible-version: "";
     in property <[BookInfo]> bible-books: [];
@@ -83,22 +84,49 @@ export component AppWindow inherits Window {
     in-out property <BookInfo> selected-bible-book;
     in property <[ChapterRow]> chapter-rows: [];
 
-    callback buscar_cantos(string); callback abrir_proyector(); callback seleccionar_canto(int);
+    // --- VARIABLES MENÚ CONTEXTUAL ---
+    in-out property <bool> mostrar_menu_canto: false;
+    in-out property <bool> mostrar_confirmar_eliminar: false;
+    in-out property <int> menu_canto_id: -1;
+    in-out property <string> menu_canto_titulo: "";
+    in-out property <length> menu_x: 0px;
+    in-out property <length> menu_y: 0px;
+
+    // --- CALLBACKS ---
+    callback buscar_cantos(string);
+    callback abrir_proyector();
+    callback seleccionar_canto(int);
     callback proyectar_estrofa(string, string); 
-    callback cargar_datos_edicion(int); callback guardar_canto(int, string, string); callback eliminar_canto(int);
-    callback bible-version-changed(string); callback bible-search-changed(string); callback bible-search-accepted(string);
-    callback bible-book-selected(BookInfo); callback bible-chapter-selected(int);
+    callback cargar_datos_edicion(int);
+    callback guardar_canto(int, string, string);
+    callback eliminar_canto(int);
+    callback abrir_formulario_nuevo();
+    callback abrir_formulario_editar(int, string);
+    callback confirmar_eliminar_canto(int, string);
+    callback bible-version-changed(string);
+    callback bible-search-changed(string);
+    callback bible-search-accepted(string);
+    callback bible-book-selected(BookInfo);
+    callback bible-chapter-selected(int);
 
     public function focus_panel() { panel-focus.focus(); }
 
+    // ══════════════════════════════════════════
+    // LAYOUT PRINCIPAL
+    // ══════════════════════════════════════════
     Rectangle {
         width: 100%; height: 100%;
         HorizontalLayout {
-            // COLUMNA 1: SIDEBAR
+
+            // COLUMNA 1: SIDEBAR IZQUIERDO
             Rectangle {
                 width: 240px; background: #111111;
                 VerticalLayout {
-                    Rectangle { height: 48px; HorizontalLayout { padding-left: 16px; padding-right: 16px; spacing: 8px; Text { text: "🖥️"; font-size: 16px; vertical-alignment: center; color: #0ea5e9; } Text { text: "EASY PRESENTER"; color: #f3f4f6; font-size: 13px; font-weight: 900; vertical-alignment: center; } } Rectangle { y: parent.height - 1px; height: 1px; background: rgba(255, 255, 255, 0.08); } }
+                    Rectangle {
+                        height: 48px;
+                        HorizontalLayout { padding-left: 16px; padding-right: 16px; spacing: 8px; Text { text: "🖥️"; font-size: 16px; vertical-alignment: center; color: #0ea5e9; } Text { text: "EASY PRESENTER"; color: #f3f4f6; font-size: 13px; font-weight: 900; vertical-alignment: center; } }
+                        Rectangle { y: parent.height - 1px; height: 1px; background: rgba(255, 255, 255, 0.08); }
+                    }
                     VerticalLayout { 
                         padding-left: 12px; padding-right: 12px; padding-top: 12px; spacing: 4px; 
                         MenuButton { icon: "🎵"; text: "Cantos"; active: root.active-tab == "cantos"; clicked => { root.active-tab = "cantos"; root.sync_estilos(); } } 
@@ -114,30 +142,75 @@ export component AppWindow inherits Window {
             Rectangle {
                 horizontal-stretch: 1; background: #18181b;
                 VerticalLayout {
-                    Rectangle { height: 48px; background: #18181b; HorizontalLayout { padding-left: 24px; padding-right: 16px; Text { text: root.elemento_seleccionado == "" ? "SELECCIONA UN ELEMENTO" : "📖 " + root.elemento_seleccionado; color: root.elemento_seleccionado == "" ? #6b7280 : #0ea5e9; font-size: 12px; font-weight: 900; vertical-alignment: center; horizontal-stretch: 1; } } Rectangle { y: parent.height - 1px; height: 1px; background: rgba(255, 255, 255, 0.06); } }
+                    Rectangle {
+                        height: 48px; background: #18181b;
+                        HorizontalLayout { padding-left: 24px; padding-right: 16px; Text { text: root.elemento_seleccionado == "" ? "SELECCIONA UN ELEMENTO" : "📖 " + root.elemento_seleccionado; color: root.elemento_seleccionado == "" ? #6b7280 : #0ea5e9; font-size: 12px; font-weight: 900; vertical-alignment: center; horizontal-stretch: 1; } }
+                        Rectangle { y: parent.height - 1px; height: 1px; background: rgba(255, 255, 255, 0.06); }
+                    }
                     
                     panel-focus := FocusScope {
                         vertical-stretch: 1;
                         key-pressed(event) => {
                             if (root.estrofas_actuales.length > 0 && (root.active-tab == "cantos" || root.active-tab == "biblias")) {
-                                if (event.text == Key.UpArrow) { if (root.active_estrofa_index > 0) { root.active_estrofa_index -= 1; root.proyectar_estrofa(root.estrofas_actuales[root.active_estrofa_index].texto, root.active-tab == "biblias" ? root.elemento_seleccionado + ":" + root.estrofas_actuales[root.active_estrofa_index].orden : ""); root.scroll_to_y = root.active_estrofa_index * 115px > 150px ? root.active_estrofa_index * 115px - 150px : 0px; } return accept; }
-                                if (event.text == Key.DownArrow) { if (root.active_estrofa_index < root.estrofas_actuales.length - 1) { root.active_estrofa_index += 1; root.proyectar_estrofa(root.estrofas_actuales[root.active_estrofa_index].texto, root.active-tab == "biblias" ? root.elemento_seleccionado + ":" + root.estrofas_actuales[root.active_estrofa_index].orden : ""); root.scroll_to_y = root.active_estrofa_index * 115px > 150px ? root.active_estrofa_index * 115px - 150px : 0px; } else if (root.active_estrofa_index == -1) { root.active_estrofa_index = 0; root.proyectar_estrofa(root.estrofas_actuales[root.active_estrofa_index].texto, root.active-tab == "biblias" ? root.elemento_seleccionado + ":" + root.estrofas_actuales[root.active_estrofa_index].orden : ""); root.scroll_to_y = 0px; } return accept; }
-                            } return reject;
+                                if (event.text == Key.UpArrow) {
+                                    if (root.active_estrofa_index > 0) {
+                                        root.active_estrofa_index -= 1;
+                                        root.proyectar_estrofa(root.estrofas_actuales[root.active_estrofa_index].texto, root.active-tab == "biblias" ? root.elemento_seleccionado + ":" + root.estrofas_actuales[root.active_estrofa_index].orden : "");
+                                        root.scroll_to_y = root.active_estrofa_index * 115px > 150px ? root.active_estrofa_index * 115px - 150px : 0px;
+                                    }
+                                    return accept;
+                                }
+                                if (event.text == Key.DownArrow) {
+                                    if (root.active_estrofa_index < root.estrofas_actuales.length - 1) {
+                                        root.active_estrofa_index += 1;
+                                        root.proyectar_estrofa(root.estrofas_actuales[root.active_estrofa_index].texto, root.active-tab == "biblias" ? root.elemento_seleccionado + ":" + root.estrofas_actuales[root.active_estrofa_index].orden : "");
+                                        root.scroll_to_y = root.active_estrofa_index * 115px > 150px ? root.active_estrofa_index * 115px - 150px : 0px;
+                                    } else if (root.active_estrofa_index == -1) {
+                                        root.active_estrofa_index = 0;
+                                        root.proyectar_estrofa(root.estrofas_actuales[root.active_estrofa_index].texto, root.active-tab == "biblias" ? root.elemento_seleccionado + ":" + root.estrofas_actuales[root.active_estrofa_index].orden : "");
+                                        root.scroll_to_y = 0px;
+                                    }
+                                    return accept;
+                                }
+                            }
+                            return reject;
                         }
 
                         Rectangle {
                             width: 100%; height: 100%; background: #18181b;
                             if (root.active-tab == "cantos" || root.active-tab == "biblias") : Rectangle {
                                 width: 100%; height: 100%;
-                                if (root.estrofas_actuales.length == 0) : VerticalLayout { alignment: center; spacing: 16px; Text { text: "𝅘𝅥𝅮𝅘𝅥𝅮"; color: #374151; font-size: 48px; horizontal-alignment: center; } Text { text: root.elemento_seleccionado == "" ? "SELECCIONA UN ARCHIVO DE LA BIBLIOTECA" : root.elemento_seleccionado; color: #374151; font-size: 13px; font-weight: 700; horizontal-alignment: center; } }
+                                if (root.estrofas_actuales.length == 0) : VerticalLayout {
+                                    alignment: center; spacing: 16px;
+                                    Text { text: "𝅘𝅥𝅮𝅘𝅥𝅮"; color: #374151; font-size: 48px; horizontal-alignment: center; }
+                                    Text { text: root.elemento_seleccionado == "" ? "SELECCIONA UN ARCHIVO DE LA BIBLIOTECA" : root.elemento_seleccionado; color: #374151; font-size: 13px; font-weight: 700; horizontal-alignment: center; }
+                                }
                                 if (root.estrofas_actuales.length > 0) : ScrollView {
                                     viewport-y: -root.scroll_to_y;
                                     VerticalLayout {
                                         padding: 24px; spacing: 16px;
                                         for estrofa[idx] in root.estrofas_actuales : Rectangle {
-                                            background: idx == root.active_estrofa_index ? rgba(220, 38, 38, 0.15) : (touch-estrofa.has-hover ? rgba(14, 165, 233, 0.1) : rgba(255, 255, 255, 0.02)); border-radius: 8px; border-width: 1px; border-color: idx == root.active_estrofa_index ? #dc2626 : (touch-estrofa.has-hover ? #0ea5e9 : rgba(255,255,255,0.05));
-                                            touch-estrofa := TouchArea { clicked => { root.active_estrofa_index = idx; root.proyectar_estrofa(estrofa.texto, root.active-tab == "biblias" ? root.elemento_seleccionado + ":" + estrofa.orden : ""); panel-focus.focus(); } }
-                                            HorizontalLayout { padding: 16px; spacing: 16px; Text { text: estrofa.orden; color: idx == root.active_estrofa_index ? #dc2626 : #0ea5e9; font-weight: 900; font-size: 12px; vertical-alignment: top; width: 20px;} Text { text: estrofa.texto; color: idx == root.active_estrofa_index ? white : (touch-estrofa.has-hover ? white : #e5e7eb); font-size: 18px; wrap: word-wrap; horizontal-stretch: 1; } Rectangle { width: 80px; height: 24px; border-radius: 4px; border-width: 1px; background: idx == root.active_estrofa_index ? #dc2626 : transparent; border-color: idx == root.active_estrofa_index ? #dc2626 : (touch-estrofa.has-hover ? #0ea5e9 : rgba(255,255,255,0.1)); Text { text: idx == root.active_estrofa_index ? "EN VIVO" : "PROYECTAR"; color: idx == root.active_estrofa_index ? white : (touch-estrofa.has-hover ? #0ea5e9 : #4b5563); font-size: 9px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; } } }
+                                            background: idx == root.active_estrofa_index ? rgba(220, 38, 38, 0.15) : (touch-estrofa.has-hover ? rgba(14, 165, 233, 0.1) : rgba(255, 255, 255, 0.02));
+                                            border-radius: 8px; border-width: 1px;
+                                            border-color: idx == root.active_estrofa_index ? #dc2626 : (touch-estrofa.has-hover ? #0ea5e9 : rgba(255,255,255,0.05));
+                                            touch-estrofa := TouchArea {
+                                                clicked => {
+                                                    root.active_estrofa_index = idx;
+                                                    root.proyectar_estrofa(estrofa.texto, root.active-tab == "biblias" ? root.elemento_seleccionado + ":" + estrofa.orden : "");
+                                                    panel-focus.focus();
+                                                }
+                                            }
+                                            HorizontalLayout {
+                                                padding: 16px; spacing: 16px;
+                                                Text { text: estrofa.orden; color: idx == root.active_estrofa_index ? #dc2626 : #0ea5e9; font-weight: 900; font-size: 12px; vertical-alignment: top; width: 20px;}
+                                                Text { text: estrofa.texto; color: idx == root.active_estrofa_index ? white : (touch-estrofa.has-hover ? white : #e5e7eb); font-size: 18px; wrap: word-wrap; horizontal-stretch: 1; }
+                                                Rectangle {
+                                                    width: 80px; height: 24px; border-radius: 4px; border-width: 1px;
+                                                    background: idx == root.active_estrofa_index ? #dc2626 : transparent;
+                                                    border-color: idx == root.active_estrofa_index ? #dc2626 : (touch-estrofa.has-hover ? #0ea5e9 : rgba(255,255,255,0.1));
+                                                    Text { text: idx == root.active_estrofa_index ? "EN VIVO" : "PROYECTAR"; color: idx == root.active_estrofa_index ? white : (touch-estrofa.has-hover ? #0ea5e9 : #4b5563); font-size: 9px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; }
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -151,12 +224,137 @@ export component AppWindow inherits Window {
             Rectangle {
                 width: 300px; background: #111111;
                 VerticalLayout {
-                    Rectangle { height: 48px; background: #1a1a1a; Text { text: "BIBLIOTECA"; color: #9ca3af; font-size: 10px; font-weight: 700; vertical-alignment: center; x: 16px; } Rectangle { y: parent.height - 1px; height: 1px; background: rgba(255, 255, 255, 0.05); } }
+                    Rectangle {
+                        height: 48px; background: #1a1a1a;
+                        Text { text: "BIBLIOTECA"; color: #9ca3af; font-size: 10px; font-weight: 700; vertical-alignment: center; x: 16px; }
+                        Rectangle { y: parent.height - 1px; height: 1px; background: rgba(255, 255, 255, 0.05); }
+                    }
+
                     Rectangle {
                         vertical-stretch: 1;
-                        if (root.active-tab == "cantos") : VerticalLayout { Rectangle { height: 52px; Rectangle { height: 32px; x: 10px; y: 10px; width: parent.width - 20px; border-radius: 4px; background: #1f1f1f; border-width: 1px; border-color: rgba(255,255,255,0.08); HorizontalLayout { padding-left: 10px; spacing: 6px; Text { text: "🔍"; font-size: 10px; color: #4b5563; vertical-alignment: center; } TextInput { text <=> root.buscador_texto; font-size: 10px; color: #f3f4f6; vertical-alignment: center; horizontal-stretch: 1; edited => { root.buscar_cantos(self.text); } } } } } Rectangle { vertical-stretch: 1; background: rgba(0, 0, 0, 0.3); ScrollView { VerticalLayout { padding-left: 4px; padding-right: 4px; padding-top: 4px; spacing: 0px; for canto in root.cantos : Rectangle { height: 36px; background: touch-canto.has-hover ? rgba(14, 165, 233, 0.2) : transparent; touch-canto := TouchArea { clicked => { root.seleccionar_canto(canto.id); } } HorizontalLayout { padding-left: 10px; padding-right: 10px; spacing: 8px; Text { text: canto.titulo; color: #e5e7eb; font-size: 11px; font-weight: 700; vertical-alignment: center; horizontal-stretch: 1; } } Rectangle { y: parent.height - 1px; height: 1px; background: rgba(255, 255, 255, 0.05); } } } } } }
-                        if (root.active-tab == "biblias") : VerticalLayout { padding: 10px; spacing: 10px; ComboBox { height: 32px; width: 100%; model: root.bible-versions; current-value <=> root.current-bible-version; selected(val) => { root.bible-version-changed(val); } } Rectangle { height: 32px; width: 100%; background: #1f1f1f; border-radius: 4px; border-width: 1px; border-color: rgba(255, 255, 255, 0.08); HorizontalLayout { padding-left: 8px; padding-right: 8px; spacing: 6px; Text { text: "🔍"; font-size: 10px; color: #4b5563; vertical-alignment: center; } search_focus := FocusScope { horizontal-stretch: 1; forward-focus: search_input; key-pressed(event) => { if (event.text == Key.Tab || event.text == Key.RightArrow) { if (root.bible-search-suggestion != "" && root.bible-search-suggestion != root.bible-search-text) { root.bible-search-text = root.bible-search-suggestion + " "; root.bible-search-suggestion = ""; root.bible-search-changed(root.bible-search-text); search_input.set-selection-offsets(999, 999); return accept; } } return reject; } Rectangle { width: 100%; height: 100%; Text { text: root.bible-search-suggestion; color: #4b5563; font-size: 10px; vertical-alignment: center; horizontal-alignment: left; width: 100%; } search_input := TextInput { width: 100%; height: 100%; text <=> root.bible-search-text; color: #f3f4f6; font-size: 10px; vertical-alignment: center; edited => { root.bible-search-changed(self.text); } accepted => { root.bible-search-accepted(self.text); } } } } } } if (!root.show-bible-chapters) : Rectangle { vertical-stretch: 1; background: rgba(0, 0, 0, 0.3); border-radius: 8px; ScrollView { VerticalLayout { padding: 4px; for book in root.bible-books : Rectangle { height: 36px; background: touch-book.has-hover ? rgba(14, 165, 233, 0.2) : transparent; touch-book := TouchArea { clicked => { root.selected-bible-book = book; root.show-bible-chapters = true; root.bible-book-selected(book); } } HorizontalLayout { padding-left: 8px; padding-right: 8px; Text { text: book.nombre; color: touch-book.has-hover ? white : #9ca3af; font-size: 11px; font-weight: 700; vertical-alignment: center; } Rectangle { horizontal-stretch: 1; } } Rectangle { y: parent.height - 1px; height: 1px; background: rgba(255, 255, 255, 0.05); } } } } } if (root.show-bible-chapters) : Rectangle { vertical-stretch: 1; background: rgba(0, 0, 0, 0.3); border-radius: 8px; VerticalLayout { Rectangle { height: 36px; touch-back := TouchArea { clicked => { root.show-bible-chapters = false; } } HorizontalLayout { padding-left: 12px; spacing: 8px; Text { text: "<"; color: #0ea5e9; font-weight: 900; vertical-alignment: center;} Text { text: root.selected-bible-book.nombre; color: #0ea5e9; font-size: 11px; font-weight: 900; vertical-alignment: center; } } Rectangle { y: parent.height - 1px; height: 1px; background: rgba(255, 255, 255, 0.05); } } ScrollView { VerticalLayout { padding: 12px; spacing: 8px; alignment: start; for row in root.chapter-rows : HorizontalLayout { spacing: 8px; height: 42px; for cap in row.caps : Rectangle { width: 42px; border-radius: 6px; border-width: 1px; border-color: rgba(255,255,255,0.05); background: touch-cap.has-hover ? #0ea5e9 : #1f1f1f; touch-cap := TouchArea { clicked => { root.bible-chapter-selected(cap); } } Text { text: cap; color: touch-cap.has-hover ? white : #d1d5db; font-size: 12px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; } } Rectangle { horizontal-stretch: 1; } } } } } } }
+
+                        // ── TAB CANTOS ──
+                        if (root.active-tab == "cantos") : VerticalLayout {
+                            // Buscador
+                            Rectangle {
+                                height: 52px;
+                                Rectangle {
+                                    height: 32px; x: 10px; y: 10px; width: parent.width - 20px;
+                                    border-radius: 4px; background: #1f1f1f; border-width: 1px; border-color: rgba(255,255,255,0.08);
+                                    HorizontalLayout {
+                                        padding-left: 10px; spacing: 6px;
+                                        Text { text: "🔍"; font-size: 10px; color: #4b5563; vertical-alignment: center; }
+                                        TextInput { text <=> root.buscador_texto; font-size: 10px; color: #f3f4f6; vertical-alignment: center; horizontal-stretch: 1; edited => { root.buscar_cantos(self.text); } }
+                                    }
+                                }
+                            }
+                            // Lista de cantos
+                            Rectangle {
+                                vertical-stretch: 1; background: rgba(0, 0, 0, 0.3);
+                                ScrollView {
+                                    VerticalLayout {
+                                        padding-left: 4px; padding-right: 4px; padding-top: 4px; spacing: 0px;
+                                        for canto in root.cantos : Rectangle {
+                                            height: 36px;
+                                            background: touch-canto.has-hover ? rgba(14, 165, 233, 0.2) : transparent;
+                                            touch-canto := TouchArea {
+                                                clicked => { root.seleccionar_canto(canto.id); }
+                                                pointer-event(e) => {
+                                                    if (e.button == PointerEventButton.right && e.kind == PointerEventKind.up) {
+                                                        root.menu_canto_id = canto.id;
+                                                        root.menu_canto_titulo = canto.titulo;
+                                                        root.menu_x = self.mouse-x + 10px;
+                                                        root.menu_y = self.absolute-position.y - 48px;
+                                                        root.mostrar_menu_canto = true;
+                                                    }
+                                                }
+                                            }
+                                            HorizontalLayout {
+                                                padding-left: 10px; padding-right: 10px; spacing: 8px;
+                                                Text { text: canto.titulo; color: #e5e7eb; font-size: 11px; font-weight: 700; vertical-alignment: center; horizontal-stretch: 1; }
+                                            }
+                                            Rectangle { y: parent.height - 1px; height: 1px; background: rgba(255, 255, 255, 0.05); }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // ── TAB BIBLIAS ──
+                        if (root.active-tab == "biblias") : VerticalLayout {
+                            padding: 10px; spacing: 10px;
+                            ComboBox { height: 32px; width: 100%; model: root.bible-versions; current-value <=> root.current-bible-version; selected(val) => { root.bible-version-changed(val); } }
+                            Rectangle {
+                                height: 32px; width: 100%; background: #1f1f1f; border-radius: 4px; border-width: 1px; border-color: rgba(255, 255, 255, 0.08);
+                                HorizontalLayout {
+                                    padding-left: 8px; padding-right: 8px; spacing: 6px;
+                                    Text { text: "🔍"; font-size: 10px; color: #4b5563; vertical-alignment: center; }
+                                    search_focus := FocusScope {
+                                        horizontal-stretch: 1; forward-focus: search_input;
+                                        key-pressed(event) => {
+                                            if (event.text == Key.Tab || event.text == Key.RightArrow) {
+                                                if (root.bible-search-suggestion != "" && root.bible-search-suggestion != root.bible-search-text) {
+                                                    root.bible-search-text = root.bible-search-suggestion + " ";
+                                                    root.bible-search-suggestion = "";
+                                                    root.bible-search-changed(root.bible-search-text);
+                                                    search_input.set-selection-offsets(999, 999);
+                                                    return accept;
+                                                }
+                                            }
+                                            return reject;
+                                        }
+                                        Rectangle {
+                                            width: 100%; height: 100%;
+                                            Text { text: root.bible-search-suggestion; color: #4b5563; font-size: 10px; vertical-alignment: center; horizontal-alignment: left; width: 100%; }
+                                            search_input := TextInput { width: 100%; height: 100%; text <=> root.bible-search-text; color: #f3f4f6; font-size: 10px; vertical-alignment: center; edited => { root.bible-search-changed(self.text); } accepted => { root.bible-search-accepted(self.text); } }
+                                        }
+                                    }
+                                }
+                            }
+                            if (!root.show-bible-chapters) : Rectangle {
+                                vertical-stretch: 1; background: rgba(0, 0, 0, 0.3); border-radius: 8px;
+                                ScrollView {
+                                    VerticalLayout {
+                                        padding: 4px;
+                                        for book in root.bible-books : Rectangle {
+                                            height: 36px; background: touch-book.has-hover ? rgba(14, 165, 233, 0.2) : transparent;
+                                            touch-book := TouchArea { clicked => { root.selected-bible-book = book; root.show-bible-chapters = true; root.bible-book-selected(book); } }
+                                            HorizontalLayout { padding-left: 8px; padding-right: 8px; Text { text: book.nombre; color: touch-book.has-hover ? white : #9ca3af; font-size: 11px; font-weight: 700; vertical-alignment: center; } Rectangle { horizontal-stretch: 1; } }
+                                            Rectangle { y: parent.height - 1px; height: 1px; background: rgba(255, 255, 255, 0.05); }
+                                        }
+                                    }
+                                }
+                            }
+                            if (root.show-bible-chapters) : Rectangle {
+                                vertical-stretch: 1; background: rgba(0, 0, 0, 0.3); border-radius: 8px;
+                                VerticalLayout {
+                                    Rectangle {
+                                        height: 36px;
+                                        touch-back := TouchArea { clicked => { root.show-bible-chapters = false; } }
+                                        HorizontalLayout { padding-left: 12px; spacing: 8px; Text { text: "<"; color: #0ea5e9; font-weight: 900; vertical-alignment: center;} Text { text: root.selected-bible-book.nombre; color: #0ea5e9; font-size: 11px; font-weight: 900; vertical-alignment: center; } }
+                                        Rectangle { y: parent.height - 1px; height: 1px; background: rgba(255, 255, 255, 0.05); }
+                                    }
+                                    ScrollView {
+                                        VerticalLayout {
+                                            padding: 12px; spacing: 8px; alignment: start;
+                                            for row in root.chapter-rows : HorizontalLayout {
+                                                spacing: 8px; height: 42px;
+                                                for cap in row.caps : Rectangle {
+                                                    width: 42px; border-radius: 6px; border-width: 1px; border-color: rgba(255,255,255,0.05);
+                                                    background: touch-cap.has-hover ? #0ea5e9 : #1f1f1f;
+                                                    touch-cap := TouchArea { clicked => { root.bible-chapter-selected(cap); } }
+                                                    Text { text: cap; color: touch-cap.has-hover ? white : #d1d5db; font-size: 12px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                                                }
+                                                Rectangle { horizontal-stretch: 1; }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
+
+                    // Botón personalizar
                     VerticalLayout { 
                         padding-left: 16px; padding-right: 16px; padding-top: 12px; padding-bottom: 12px; spacing: 0px; 
                         HorizontalLayout { 
@@ -168,26 +366,48 @@ export component AppWindow inherits Window {
                             } 
                         } 
                     }
-                    Rectangle { height: 72px; background: #111111; Rectangle { height: 40px; width: parent.width - 32px; x: 16px; y: 16px; border-radius: 20px; background: #dc2626; drop-shadow-color: rgba(220, 38, 38, 0.3); drop-shadow-blur: 10px; drop-shadow-offset-y: 4px; touch-proyector := TouchArea { clicked => { root.abrir_proyector(); } } HorizontalLayout { alignment: center; spacing: 8px; Text { text: "📽"; font-size: 14px; color: white; vertical-alignment: center; } Text { text: "ABRIR PROYECTOR"; font-size: 11px; font-weight: 800; letter-spacing: 1px; color: white; vertical-alignment: center; } } } }
+
+                    // Botón abrir proyector
+                    Rectangle {
+                        height: 72px; background: #111111;
+                        Rectangle {
+                            height: 40px; width: parent.width - 32px; x: 16px; y: 16px;
+                            border-radius: 20px; background: #dc2626;
+                            drop-shadow-color: rgba(220, 38, 38, 0.3); drop-shadow-blur: 10px; drop-shadow-offset-y: 4px;
+                            touch-proyector := TouchArea { clicked => { root.abrir_proyector(); } }
+                            HorizontalLayout { alignment: center; spacing: 8px; Text { text: "📽"; font-size: 14px; color: white; vertical-alignment: center; } Text { text: "ABRIR PROYECTOR"; font-size: 11px; font-weight: 800; letter-spacing: 1px; color: white; vertical-alignment: center; } }
+                        }
+                    }
                 }
             }
         }
     }
 
-    // ── MODAL DE PERSONALIZACIÓN ──
+    // ══════════════════════════════════════════
+    // MODAL DE PERSONALIZACIÓN
+    // ══════════════════════════════════════════
     if (root.mostrar_personalizar) : Rectangle {
         width: 100%; height: 100%; background: rgba(0, 0, 0, 0.6);
         touch-close-modal := TouchArea { clicked => { root.mostrar_personalizar = false; } }
-        
         Rectangle {
             width: 520px; height: 380px; background: #111111; border-radius: 12px; border-width: 1px; border-color: #27272a; drop-shadow-color: rgba(0, 0, 0, 0.5); drop-shadow-blur: 20px;
             touch-blocker := TouchArea {} 
-            
             VerticalLayout {
-                Rectangle { height: 56px; HorizontalLayout { padding-left: 20px; padding-right: 20px; alignment: space-between; HorizontalLayout { spacing: 8px; alignment: start; Text { text: "🎨"; font-size: 14px; vertical-alignment: center; } Text { text: "PERSONALIZAR PROYECCIÓN"; color: #0ea5e9; font-weight: 900; font-size: 12px; letter-spacing: 0.5px; vertical-alignment: center; } } Rectangle { width: 32px; height: 32px; y: 12px; border-radius: 8px; background: touch-x.has-hover ? rgba(255,255,255,0.1) : transparent; touch-x := TouchArea { clicked => { root.mostrar_personalizar = false; } } Text { text: "✕"; color: #9ca3af; font-size: 14px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; } } } }
-                
-                Rectangle { height: 48px; background: #1a1a1a; HorizontalLayout { Rectangle { horizontal-stretch: 1; background: transparent; touch-t1 := TouchArea { clicked => { root.modal_tab = "biblias"; } } VerticalLayout { Text { text: "FONDO DE BIBLIA"; color: root.modal_tab == "biblias" ? #0ea5e9 : #6b7280; font-weight: 900; font-size: 11px; horizontal-alignment: center; vertical-alignment: center; vertical-stretch: 1;} Rectangle { height: 2px; background: root.modal_tab == "biblias" ? #0ea5e9 : transparent; } } } Rectangle { horizontal-stretch: 1; background: transparent; touch-t2 := TouchArea { clicked => { root.modal_tab = "cantos"; } } VerticalLayout { Text { text: "FONDO DE CANTOS"; color: root.modal_tab == "cantos" ? #0ea5e9 : #6b7280; font-weight: 900; font-size: 11px; horizontal-alignment: center; vertical-alignment: center; vertical-stretch: 1;} Rectangle { height: 2px; background: root.modal_tab == "cantos" ? #0ea5e9 : transparent; } } } } }
-                
+                Rectangle {
+                    height: 56px;
+                    HorizontalLayout {
+                        padding-left: 20px; padding-right: 20px; alignment: space-between;
+                        HorizontalLayout { spacing: 8px; alignment: start; Text { text: "🎨"; font-size: 14px; vertical-alignment: center; } Text { text: "PERSONALIZAR PROYECCIÓN"; color: #0ea5e9; font-weight: 900; font-size: 12px; letter-spacing: 0.5px; vertical-alignment: center; } }
+                        Rectangle { width: 32px; height: 32px; y: 12px; border-radius: 8px; background: touch-x.has-hover ? rgba(255,255,255,0.1) : transparent; touch-x := TouchArea { clicked => { root.mostrar_personalizar = false; } } Text { text: "✕"; color: #9ca3af; font-size: 14px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; } }
+                    }
+                }
+                Rectangle {
+                    height: 48px; background: #1a1a1a;
+                    HorizontalLayout {
+                        Rectangle { horizontal-stretch: 1; background: transparent; touch-t1 := TouchArea { clicked => { root.modal_tab = "biblias"; } } VerticalLayout { Text { text: "FONDO DE BIBLIA"; color: root.modal_tab == "biblias" ? #0ea5e9 : #6b7280; font-weight: 900; font-size: 11px; horizontal-alignment: center; vertical-alignment: center; vertical-stretch: 1;} Rectangle { height: 2px; background: root.modal_tab == "biblias" ? #0ea5e9 : transparent; } } }
+                        Rectangle { horizontal-stretch: 1; background: transparent; touch-t2 := TouchArea { clicked => { root.modal_tab = "cantos"; } } VerticalLayout { Text { text: "FONDO DE CANTOS"; color: root.modal_tab == "cantos" ? #0ea5e9 : #6b7280; font-weight: 900; font-size: 11px; horizontal-alignment: center; vertical-alignment: center; vertical-stretch: 1;} Rectangle { height: 2px; background: root.modal_tab == "cantos" ? #0ea5e9 : transparent; } } }
+                    }
+                }
                 Rectangle {
                     vertical-stretch: 1;
                     if (root.modal_tab == "biblias") : VerticalLayout {
@@ -229,8 +449,256 @@ export component AppWindow inherits Window {
                         } } }
                     }
                 }
-                
-                Rectangle { height: 60px; background: transparent; HorizontalLayout { padding-right: 24px; alignment: end; Rectangle { width: 80px; height: 36px; border-radius: 6px; background: touch-listo.has-hover ? #e5e7eb : white; touch-listo := TouchArea { clicked => { root.mostrar_personalizar = false; } } Text { text: "LISTO"; color: black; font-weight: 900; font-size: 11px; horizontal-alignment: center; vertical-alignment: center; } } } }
+                Rectangle {
+                    height: 60px; background: transparent;
+                    HorizontalLayout { padding-right: 24px; alignment: end; Rectangle { width: 80px; height: 36px; border-radius: 6px; background: touch-listo.has-hover ? #e5e7eb : white; touch-listo := TouchArea { clicked => { root.mostrar_personalizar = false; } } Text { text: "LISTO"; color: black; font-weight: 900; font-size: 11px; horizontal-alignment: center; vertical-alignment: center; } } }
+                }
+            }
+        }
+    }
+
+    // ══════════════════════════════════════════
+    // MENÚ CONTEXTUAL DE CANTO
+    // ══════════════════════════════════════════
+    if (root.mostrar_menu_canto) : Rectangle {
+        width: 100%; height: 100%; background: transparent;
+        touch-dismiss := TouchArea {
+            clicked => { root.mostrar_menu_canto = false; }
+        }
+        Rectangle {
+            x: root.menu_x;
+            y: root.menu_y;
+            width: 185px; height: 114px;
+            background: #1e1e1e; border-radius: 8px;
+            border-width: 1px; border-color: #374151;
+            drop-shadow-color: rgba(0,0,0,0.6); drop-shadow-blur: 16px;
+            touch-block := TouchArea {}
+            VerticalLayout {
+                padding: 4px; spacing: 0px;
+                // AGREGAR
+                Rectangle {
+                    height: 34px; border-radius: 6px;
+                    background: touch-add.has-hover ? rgba(14, 165, 233, 0.15) : transparent;
+                    touch-add := TouchArea {
+                        clicked => {
+                            root.mostrar_menu_canto = false;
+                            root.abrir_formulario_nuevo();
+                        }
+                    }
+                    HorizontalLayout { padding-left: 12px; spacing: 10px;
+                        Text { text: "+"; color: #0ea5e9; font-size: 15px; font-weight: 900; vertical-alignment: center; }
+                        Text { text: "Agregar canto"; color: #e5e7eb; font-size: 11px; font-weight: 600; vertical-alignment: center; }
+                    }
+                }
+                // EDITAR
+                Rectangle {
+                    height: 34px; border-radius: 6px;
+                    background: touch-edit.has-hover ? rgba(14, 165, 233, 0.15) : transparent;
+                    touch-edit := TouchArea {
+                        clicked => {
+                            root.mostrar_menu_canto = false;
+                            root.abrir_formulario_editar(root.menu_canto_id, root.menu_canto_titulo);
+                        }
+                    }
+                    HorizontalLayout { padding-left: 12px; spacing: 10px;
+                        Text { text: "✎"; color: #9ca3af; font-size: 13px; vertical-alignment: center; }
+                        Text { text: "Editar canto"; color: #e5e7eb; font-size: 11px; font-weight: 600; vertical-alignment: center; }
+                    }
+                }
+                // SEPARADOR
+                Rectangle { height: 1px; background: #2d2d2d; }
+                // ELIMINAR
+                Rectangle {
+                    height: 34px; border-radius: 6px;
+                    background: touch-del.has-hover ? rgba(220, 38, 38, 0.15) : transparent;
+                    touch-del := TouchArea {
+                        clicked => {
+                            root.mostrar_menu_canto = false;
+                            root.confirmar_eliminar_canto(root.menu_canto_id, root.menu_canto_titulo);
+                        }
+                    }
+                    HorizontalLayout { padding-left: 12px; spacing: 10px;
+                        Text { text: "✕"; color: #f87171; font-size: 12px; font-weight: 900; vertical-alignment: center; }
+                        Text { text: "Eliminar canto"; color: #f87171; font-size: 11px; font-weight: 600; vertical-alignment: center; }
+                    }
+                }
+            }
+        }
+    }
+
+    // ══════════════════════════════════════════
+    // MODAL CONFIRMACIÓN ELIMINAR
+    // ══════════════════════════════════════════
+    if (root.mostrar_confirmar_eliminar) : Rectangle {
+        width: 100%; height: 100%; background: rgba(0,0,0,0.65);
+        touch-bg-elim := TouchArea { clicked => { root.mostrar_confirmar_eliminar = false; } }
+        Rectangle {
+            width: 360px; height: 170px;
+            background: #111111; border-radius: 12px;
+            border-width: 1px; border-color: #27272a;
+            drop-shadow-color: rgba(0,0,0,0.5); drop-shadow-blur: 20px;
+            touch-block-elim := TouchArea {}
+            VerticalLayout {
+                padding: 28px; spacing: 14px;
+                Text { text: "Eliminar canto"; color: white; font-size: 14px; font-weight: 900; horizontal-alignment: center; }
+                Text { text: "\"" + root.menu_canto_titulo + "\" sera eliminado permanentemente."; color: #6b7280; font-size: 11px; horizontal-alignment: center; wrap: word-wrap; }
+                HorizontalLayout { spacing: 12px; alignment: center;
+                    Rectangle {
+                        width: 110px; height: 36px; border-radius: 6px;
+                        background: touch-cancel.has-hover ? #27272a : #1f1f1f;
+                        border-width: 1px; border-color: #374151;
+                        touch-cancel := TouchArea { clicked => { root.mostrar_confirmar_eliminar = false; } }
+                        Text { text: "Cancelar"; color: #9ca3af; font-size: 11px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                    }
+                    Rectangle {
+                        width: 110px; height: 36px; border-radius: 6px;
+                        background: touch-confirm.has-hover ? #b91c1c : #dc2626;
+                        touch-confirm := TouchArea {
+                            clicked => {
+                                root.eliminar_canto(root.menu_canto_id);
+                                root.mostrar_confirmar_eliminar = false;
+                            }
+                        }
+                        Text { text: "Eliminar"; color: white; font-size: 11px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                    }
+                }
+            }
+        }
+    }
+
+// ══════════════════════════════════════════
+    // MODAL FORMULARIO AGREGAR / EDITAR
+    // ══════════════════════════════════════════
+    if (root.mostrar_formulario) : Rectangle {
+        width: 100%; height: 100%;
+        background: rgba(0,0,0,0.65);
+
+        // Centrado real usando layouts
+        VerticalLayout {
+            alignment: center;
+            HorizontalLayout {
+                alignment: center;
+
+                Rectangle {
+                    width: 520px;
+                    height: 500px;
+                    background: #111111;
+                    border-radius: 12px;
+                    border-width: 1px;
+                    border-color: #27272a;
+                    drop-shadow-color: rgba(0,0,0,0.5);
+                    drop-shadow-blur: 20px;
+
+                    VerticalLayout {
+                        padding: 24px;
+                        spacing: 14px;
+
+                        // ── HEADER ──
+                        HorizontalLayout {
+                            alignment: space-between;
+                            height: 32px;
+                            Text {
+                                text: root.form_id == -1 ? "AGREGAR CANTO" : "EDITAR CANTO";
+                                color: #0ea5e9;
+                                font-size: 13px;
+                                font-weight: 900;
+                                vertical-alignment: center;
+                                horizontal-stretch: 1;
+                            }
+                            Rectangle {
+                                width: 28px; height: 28px; border-radius: 6px;
+                                background: touch-close-form.has-hover ? rgba(255,255,255,0.1) : transparent;
+                                touch-close-form := TouchArea { clicked => { root.mostrar_formulario = false; } }
+                                Text { text: "✕"; color: #9ca3af; font-size: 13px; horizontal-alignment: center; vertical-alignment: center; }
+                            }
+                        }
+
+                        // ── SEPARADOR ──
+                        Rectangle { height: 1px; background: rgba(255,255,255,0.07); }
+
+                        // ── CAMPO TÍTULO ──
+                        VerticalLayout {
+                            spacing: 6px;
+                            height: 62px;
+                            Text {
+                                text: "TÍTULO";
+                                color: #6b7280;
+                                font-size: 9px;
+                                font-weight: 800;
+                                letter-spacing: 0.5px;
+                                height: 16px;
+                            }
+                            Rectangle {
+                                height: 38px;
+                                border-radius: 6px;
+                                background: #1f1f1f;
+                                border-width: 1px;
+                                border-color: rgba(255,255,255,0.1);
+                                TextInput {
+                                    x: 12px;
+                                    width: parent.width - 24px;
+                                    height: 100%;
+                                    text <=> root.form_titulo;
+                                    color: #f3f4f6;
+                                    font-size: 12px;
+                                    vertical-alignment: center;
+                                }
+                            }
+                        }
+
+                        // ── CAMPO LETRA ──
+                        VerticalLayout {
+                            vertical-stretch: 1;
+                            spacing: 6px;
+                            Text {
+                                text: "LETRA  (separa estrofas con una línea vacía)";
+                                color: #6b7280;
+                                font-size: 9px;
+                                font-weight: 800;
+                                letter-spacing: 0.5px;
+                                height: 16px;
+                            }
+                            Rectangle {
+                                vertical-stretch: 1;
+                                border-radius: 6px;
+                                background: #1f1f1f;
+                                border-width: 1px;
+                                border-color: rgba(255,255,255,0.1);
+                                TextEdit {
+                                    width: 100%;
+                                    height: 100%;
+                                    text <=> root.form_letra;
+                                    font-size: 12px;
+                                }
+                            }
+                        }
+
+                        // ── BOTONES ──
+                        HorizontalLayout {
+                            alignment: end;
+                            spacing: 12px;
+                            height: 38px;
+                            Rectangle {
+                                width: 110px; height: 38px; border-radius: 6px;
+                                background: touch-cancel2.has-hover ? #27272a : #1f1f1f;
+                                border-width: 1px; border-color: #374151;
+                                touch-cancel2 := TouchArea { clicked => { root.mostrar_formulario = false; } }
+                                Text { text: "Cancelar"; color: #9ca3af; font-size: 11px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                            }
+                            Rectangle {
+                                width: 110px; height: 38px; border-radius: 6px;
+                                background: touch-save.has-hover ? #0284c7 : #0ea5e9;
+                                touch-save := TouchArea {
+                                    clicked => {
+                                        root.guardar_canto(root.form_id, root.form_titulo, root.form_letra);
+                                        root.mostrar_formulario = false;
+                                    }
+                                }
+                                Text { text: "Guardar"; color: white; font-size: 11px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                            }
+                        }
+                    }
+                }
             }
         }
     }

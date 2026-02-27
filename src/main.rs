@@ -1,24 +1,20 @@
 use rusqlite::{Connection, Result};
-use slint::{ModelRc, SharedString, VecModel, ComponentHandle, Image}; 
-use rfd::FileDialog; 
+use slint::{ModelRc, SharedString, VecModel, ComponentHandle, Image};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::rc::Rc;
 use std::thread;
 use regex::Regex;
+use display_info::DisplayInfo;
 
-slint::include_modules!(); 
+slint::include_modules!();
 
 struct CantoDB { pub id: i32, pub titulo: String }
 struct DiapositivaDB { pub orden: i32, pub texto: String }
 struct LibroBibliaDB { pub id: i32, pub nombre: String, pub capitulos: i32 }
 #[derive(Clone)] struct VersiculoDB { pub versiculo: i32, pub texto: String }
 #[derive(Clone)] struct VersionInfo { pub id: i32, pub sigla: String, pub nombre_completo: String, pub prioridad: i32 }
-
 #[derive(Hash, Eq, PartialEq, Clone, Debug)] struct CacheKey { version_id: i32, libro_numero: i32, capitulo: i32 }
-
-
-
 
 const NOMBRES_LIBROS: [&str; 66] = [
     "Génesis", "Éxodo", "Levítico", "Números", "Deuteronomio", "Josué", "Jueces", "Rut", "1 Samuel", "2 Samuel",
@@ -34,7 +30,7 @@ fn trim(s: &str) -> String { s.trim().to_string() }
 
 fn normalizar(texto: &str) -> String {
     let mut resultado = texto.to_string();
-    let reemplazos = [ ("á", "a"), ("é", "e"), ("í", "i"), ("ó", "o"), ("ú", "u"), ("Á", "a"), ("É", "e"), ("Í", "i"), ("Ó", "o"), ("Ú", "u") ];
+    let reemplazos = [("á","a"),("é","e"),("í","i"),("ó","o"),("ú","u"),("Á","a"),("É","e"),("Í","i"),("Ó","o"),("Ú","u")];
     for (viejo, nuevo) in reemplazos { resultado = resultado.replace(viejo, nuevo); }
     resultado.to_lowercase()
 }
@@ -42,11 +38,17 @@ fn normalizar(texto: &str) -> String {
 fn buscar_libro_inteligente(query: &str) -> Option<(i32, String)> {
     let q = normalizar(&trim(query));
     if q.is_empty() { return None; }
-    for (i, &nombre) in NOMBRES_LIBROS.iter().enumerate() { if normalizar(nombre).starts_with(&q) { return Some(((i + 1) as i32, nombre.to_string())); } }
+    for (i, &nombre) in NOMBRES_LIBROS.iter().enumerate() {
+        if normalizar(nombre).starts_with(&q) { return Some(((i + 1) as i32, nombre.to_string())); }
+    }
     None
 }
 
-struct AppState { cantos_db: Connection, biblias_db: Connection, versiones: Vec<VersionInfo>, current_version_id: i32, chapter_cache: HashMap<CacheKey, Vec<VersiculoDB>> }
+struct AppState {
+    cantos_db: Connection, biblias_db: Connection,
+    versiones: Vec<VersionInfo>, current_version_id: i32,
+    chapter_cache: HashMap<CacheKey, Vec<VersiculoDB>>
+}
 
 impl AppState {
     fn new() -> Result<Self> {
@@ -61,7 +63,7 @@ impl AppState {
 
     fn procesar_versiones(&mut self) {
         let mut stmt = self.biblias_db.prepare("SELECT id, nombre FROM versiones").unwrap();
-        let iter = stmt.query_map([], |row| { Ok((row.get::<_, i32>(0)?, row.get::<_, String>(1)?)) }).unwrap();
+        let iter = stmt.query_map([], |row| Ok((row.get::<_, i32>(0)?, row.get::<_, String>(1)?))).unwrap();
         for item in iter.filter_map(Result::ok) {
             let (id, nombre_bd) = item;
             let (sigla, nombre_comp, prioridad) = match nombre_bd.as_str() {
@@ -87,10 +89,14 @@ impl AppState {
     }
 
     fn set_version_by_name(&mut self, name: &str) -> String {
-        if let Some(v) = self.versiones.iter().find(|v| v.nombre_completo == name) { self.current_version_id = v.id; return v.nombre_completo.clone(); }
+        if let Some(v) = self.versiones.iter().find(|v| v.nombre_completo == name) {
+            self.current_version_id = v.id; return v.nombre_completo.clone();
+        }
         String::new()
     }
-    fn get_sigla_actual(&self) -> String { self.versiones.iter().find(|v| v.id == self.current_version_id).map(|v| v.sigla.clone()).unwrap_or_default() }
+    fn get_sigla_actual(&self) -> String {
+        self.versiones.iter().find(|v| v.id == self.current_version_id).map(|v| v.sigla.clone()).unwrap_or_default()
+    }
     fn get_libros_biblia(&self) -> Vec<LibroBibliaDB> {
         let mut stmt = self.biblias_db.prepare("SELECT libro_numero, libro_nombre, MAX(capitulo) FROM versiculos WHERE version_id = ? GROUP BY libro_numero ORDER BY libro_numero").unwrap();
         let iter = stmt.query_map([self.current_version_id], |row| Ok(LibroBibliaDB { id: row.get(0)?, nombre: row.get(1)?, capitulos: row.get(2)? })).unwrap();
@@ -105,7 +111,6 @@ impl AppState {
         self.chapter_cache.insert(key, lista.clone());
         lista
     }
-
     fn get_all_cantos(&self) -> Vec<CantoDB> {
         let mut stmt = self.cantos_db.prepare("SELECT id, titulo FROM cantos ORDER BY titulo").unwrap();
         let iter = stmt.query_map([], |row| Ok(CantoDB { id: row.get(0)?, titulo: row.get(1)? })).unwrap();
@@ -116,7 +121,9 @@ impl AppState {
         let iter = stmt.query_map([format!("%{}%", busqueda)], |row| Ok(CantoDB { id: row.get(0)?, titulo: row.get(1)? })).unwrap();
         iter.filter_map(Result::ok).collect()
     }
-    fn get_canto_titulo(&self, id: i32) -> String { self.cantos_db.query_row("SELECT titulo FROM cantos WHERE id = ?", [id], |row| row.get(0)).unwrap_or_default() }
+    fn get_canto_titulo(&self, id: i32) -> String {
+        self.cantos_db.query_row("SELECT titulo FROM cantos WHERE id = ?", [id], |row| row.get(0)).unwrap_or_default()
+    }
     fn get_canto_diapositivas(&self, id: i32) -> Vec<DiapositivaDB> {
         let mut stmt = self.cantos_db.prepare("SELECT orden, texto FROM diapositivas WHERE canto_id = ? ORDER BY orden").unwrap();
         let iter = stmt.query_map([id], |row| Ok(DiapositivaDB { orden: row.get(0)?, texto: row.get(1)? })).unwrap();
@@ -147,13 +154,110 @@ impl AppState {
     }
 }
 
+fn mover_proyector_a_pantalla(p_weak: slint::Weak<ProjectorWindow>, x: i32, y: i32, width: u32, height: u32) {
+    // Delays diferentes por OS:
+    // Windows: el DWM procesa rápido, ~80ms es suficiente
+    // Linux X11: el WM necesita más tiempo, usamos intentos múltiples
+    // IMPORTANTE: En Linux, forzar X11 con: WAYLAND_DISPLAY="" cargo run
+    //             o agregar al inicio de main: std::env::set_var("WAYLAND_DISPLAY", "");
+
+    let intentos: &[(u64, bool)] = if cfg!(target_os = "windows") {
+        // Windows: 3 intentos con delays cortos
+        &[(80, false), (200, false), (400, true)]
+    } else {
+        // Linux X11: más intentos con delays más largos
+        &[(150, false), (350, false), (600, false), (900, true)]
+    };
+
+    for &(delay_ms, es_ultimo) in intentos {
+        let p_clone = p_weak.clone();
+        thread::spawn(move || {
+            thread::sleep(std::time::Duration::from_millis(delay_ms));
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(p) = p_clone.upgrade() {
+                    p.window().set_position(slint::PhysicalPosition::new(x, y));
+                    p.window().set_size(slint::PhysicalSize::new(width, height));
+                    if es_ultimo {
+                        // Solo maximizar en el último intento, cuando ya está en posición
+                        p.window().set_maximized(true);
+                    }
+                }
+            });
+        });
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // ═══════════════════════════════════════════════════════
+    // FORZAR X11 EN LINUX (Wayland no permite set_position)
+    // Esto no afecta Windows en absoluto
+    // ═══════════════════════════════════════════════════════
+    #[cfg(target_os = "linux")]
+    {
+        // Si está corriendo bajo Wayland, forzar compatibilidad XWayland
+        // para poder posicionar ventanas en monitores específicos
+        if std::env::var("WAYLAND_DISPLAY").is_ok() {
+            println!("Detectado Wayland, forzando modo X11/XWayland para posicionamiento de ventanas...");
+            std::env::set_var("WAYLAND_DISPLAY", "");
+            std::env::set_var("GDK_BACKEND", "x11");
+        }
+    }
+
     let state = Arc::new(Mutex::new(AppState::new()?));
     let ui = AppWindow::new()?;
     let proyector = ProjectorWindow::new()?;
 
-    let current_biblia_libro = Arc::new(Mutex::new(-1));
-    let current_biblia_capitulo = Arc::new(Mutex::new(-1));
+    let current_biblia_libro = Arc::new(Mutex::new(-1i32));
+    let current_biblia_capitulo = Arc::new(Mutex::new(-1i32));
+
+    // ═══════════════════════════════════════════════════════
+    // DETECCIÓN DE SEGUNDA PANTALLA
+    // display-info funciona en Windows y Linux
+    // ═══════════════════════════════════════════════════════
+    let segunda_pantalla: Arc<Mutex<Option<(i32, i32, u32, u32)>>> = Arc::new(Mutex::new(None));
+    {
+        match DisplayInfo::all() {
+            Ok(pantallas) => {
+                let pantallas: Vec<DisplayInfo> = pantallas;
+                println!("=== Pantallas detectadas: {} ===", pantallas.len());
+                for (i, p) in pantallas.iter().enumerate() {
+                    println!("  [{}] {}x{} en ({},{}) scale={} primary={}", 
+                        i, p.width, p.height, p.x, p.y, p.scale_factor, p.is_primary);
+                }
+
+                // ── DETECCIÓN ROBUSTA ──────────────────────────────────────
+                // Bug conocido de display-info en Linux: a veces todas las
+                // pantallas tienen is_primary=false. 
+                // Solución: si ninguna está marcada como primaria,
+                // asumir que la pantalla en (0,0) es la principal
+                // y tomar cualquier otra como secundaria.
+                // ──────────────────────────────────────────────────────────
+                let hay_primaria_marcada = pantallas.iter().any(|d| d.is_primary);
+
+                let segunda = if hay_primaria_marcada {
+                    // Caso normal: hay una marcada como primaria
+                    pantallas.iter().find(|d| !d.is_primary)
+                } else {
+                    // Ninguna marcada (bug de display-info en Linux/Wayland)
+                    // La pantalla principal siempre está en coordenadas (0,0)
+                    println!("  ⚠ Ninguna pantalla marcada como primaria");
+                    println!("    → Usando heurística: la pantalla principal es la de (0,0)");
+                    pantallas.iter().find(|d| !(d.x == 0 && d.y == 0))
+                };
+
+                if let Some(segunda) = segunda {
+                    println!("  → Pantalla secundaria: {}x{} en ({},{})", 
+                        segunda.width, segunda.height, segunda.x, segunda.y);
+                    let w = (segunda.width as f32 * segunda.scale_factor) as u32;
+                    let h = (segunda.height as f32 * segunda.scale_factor) as u32;
+                    *segunda_pantalla.lock().unwrap() = Some((segunda.x, segunda.y, w, h));
+                } else {
+                    println!("  → Solo hay una pantalla disponible");
+                }
+            }
+            Err(e) => println!("No se pudieron detectar pantallas: {}", e),
+        }
+    }
 
     {
         let st = state.lock().unwrap();
@@ -193,32 +297,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let ui = ui_handle.unwrap();
         let estado = state_clone.lock().unwrap();
         ui.set_elemento_seleccionado(SharedString::from(estado.get_canto_titulo(id)));
-        let diapos_slint: Vec<DiapositivaUI> = estado.get_canto_diapositivas(id).into_iter().map(|d| DiapositivaUI { orden: SharedString::from(d.orden.to_string()), texto: SharedString::from(d.texto) }).collect();
+        let diapos_slint: Vec<DiapositivaUI> = estado.get_canto_diapositivas(id).into_iter()
+            .map(|d| DiapositivaUI { orden: SharedString::from(d.orden.to_string()), texto: SharedString::from(d.texto) }).collect();
         ui.set_estrofas_actuales(ModelRc::from(Rc::new(VecModel::from(diapos_slint))));
         ui.set_active_estrofa_index(-1);
         ui.invoke_focus_panel();
     });
 
-    //-------------------
-
     let state_clone = Arc::clone(&state);
     let c_clone = cargar_cantos.clone();
     ui.on_guardar_canto(move |id, titulo, letra| {
-        // 1. Abrimos unas llaves para limitar el tiempo que tenemos la base de datos bloqueada
         {
             let estado = state_clone.lock().unwrap();
-            if id == -1 { 
-                estado.add_canto(&titulo, &letra); 
-            } else { 
-                estado.update_canto(id, &titulo, &letra); 
-            }
-        } // <- ¡Aquí Rust suelta el 'lock' automáticamente!
-
-        // 2. Ahora sí, es seguro llamar a la función que recarga los cantos
+            if id == -1 { estado.add_canto(&titulo, &letra); }
+            else { estado.update_canto(id, &titulo, &letra); }
+        }
         c_clone(String::new());
     });
-
-    //---------------------
 
     let state_clone = Arc::clone(&state);
     let c_clone = cargar_cantos.clone();
@@ -227,7 +322,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         c_clone(String::new());
     });
 
-    // --- ABRIR FORMULARIO NUEVO ---
     let ui_handle = ui.as_weak();
     ui.on_abrir_formulario_nuevo(move || {
         let ui = ui_handle.unwrap();
@@ -237,24 +331,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ui.set_mostrar_formulario(true);
     });
 
-    // --- ABRIR FORMULARIO EDITAR ---
     let ui_handle = ui.as_weak();
     let state_clone = Arc::clone(&state);
     ui.on_abrir_formulario_editar(move |id, _titulo| {
         let ui = ui_handle.unwrap();
         let estado = state_clone.lock().unwrap();
         let diapos = estado.get_canto_diapositivas(id);
-        let letra_completa = diapos.iter()
-            .map(|d| d.texto.clone())
-            .collect::<Vec<_>>()
-            .join("\n\n");
+        let letra_completa = diapos.iter().map(|d| d.texto.clone()).collect::<Vec<_>>().join("\n\n");
         ui.set_form_id(id);
         ui.set_form_titulo(SharedString::from(estado.get_canto_titulo(id)));
         ui.set_form_letra(SharedString::from(letra_completa));
         ui.set_mostrar_formulario(true);
     });
 
-    // --- CONFIRMAR ELIMINAR ---
     let ui_handle = ui.as_weak();
     ui.on_confirmar_eliminar_canto(move |id, titulo| {
         let ui = ui_handle.unwrap();
@@ -263,8 +352,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ui.set_mostrar_confirmar_eliminar(true);
     });
 
+    // ═══════════════════════════════════════════════════════
+    // ABRIR PROYECTOR → SEGUNDA PANTALLA (multi-OS)
+    // ═══════════════════════════════════════════════════════
     let proyector_handle = proyector.as_weak();
-    ui.on_abrir_proyector(move || { proyector_handle.unwrap().show().unwrap(); });
+    let segunda_pantalla_clone = Arc::clone(&segunda_pantalla);
+    ui.on_abrir_proyector(move || {
+        let p = proyector_handle.unwrap();
+        let info = *segunda_pantalla_clone.lock().unwrap();
+
+        if let Some((x, y, width, height)) = info {
+            p.show().unwrap();
+            // Llamar función que maneja delays por OS
+            mover_proyector_a_pantalla(p.as_weak(), x, y, width, height);
+            println!("Proyector → segunda pantalla {}x{} @ ({},{})", width, height, x, y);
+        } else {
+            p.show().unwrap();
+            let p_weak = p.as_weak();
+            thread::spawn(move || {
+                thread::sleep(std::time::Duration::from_millis(100));
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(p) = p_weak.upgrade() { p.window().set_maximized(true); }
+                });
+            });
+            println!("Proyector → pantalla principal (única pantalla)");
+        }
+    });
 
     let proyector_handle = proyector.as_weak();
     let state_clone = Arc::clone(&state);
@@ -317,7 +430,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         *cb_cap.lock().unwrap() = cap;
         let titulo = format!("{} {}", book.nombre, cap);
         ui.set_elemento_seleccionado(SharedString::from(&titulo));
-
         let state_thread = Arc::clone(&state_clone);
         let ui_thread = ui.as_weak();
         thread::spawn(move || {
@@ -350,7 +462,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 *cb_cap.lock().unwrap() = capitulo;
                 let titulo = format!("{} {}", nombre_real, capitulo);
                 ui.set_elemento_seleccionado(SharedString::from(&titulo));
-
                 let state_thread = Arc::clone(&state_clone);
                 let ui_thread = ui.as_weak();
                 thread::spawn(move || {
@@ -406,7 +517,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    // --- SINCRONIZADOR DE ESTILOS ---
     let ui_h_sync = ui.as_weak();
     let p_h_sync = proyector.as_weak();
     ui.on_sync_estilos(move || {
@@ -436,7 +546,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    // --- CARGAR ARCHIVOS MULTIMEDIA ---
     let ui_h_media = ui.as_weak();
     ui.on_cargar_fondo_media(move |tipo| {
         let ui = ui_h_media.unwrap();

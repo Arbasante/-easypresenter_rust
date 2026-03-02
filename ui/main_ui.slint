@@ -65,6 +65,9 @@ export component AppWindow inherits Window {
     in-out property <image> cantos_bg_image;
     in-out property <bool> cantos_has_image: false;
 
+    in-out property <string> biblias_video_path: ""; 
+    in-out property <string> cantos_video_path: "";
+
     callback cargar_fondo_media(string); 
     callback quitar_fondo_media(string);
 
@@ -416,7 +419,7 @@ export component AppWindow inherits Window {
                                 BgOption { text: "NEGRO"; fill: black; active: root.biblias_bg_type == "negro"; clicked => { root.biblias_bg_type = "negro"; root.sync_estilos(); } }
                                 BgOption { text: "BLANCO"; fill: white; active: root.biblias_bg_type == "blanco"; clicked => { root.biblias_bg_type = "blanco"; root.sync_estilos(); } }
                                 BgOption { text: "IMAGEN"; icon: "🖼️"; fill: #1a1a1a; active: root.biblias_bg_type == "imagen"; clicked => { root.cargar_fondo_media("biblias"); } }
-                                BgOption { text: "VIDEO"; icon: "🎬"; fill: #1a1a1a; active: root.biblias_bg_type == "video"; clicked => { root.cargar_fondo_media("biblias"); } }
+                                BgOption { text: "VIDEO"; icon: "🎬"; fill: #1a1a1a; active: root.biblias_bg_type == "video"; clicked => { root.cargar_fondo_media("biblias-video"); } }
                         } }
                         VerticalLayout { spacing: 12px; HorizontalLayout { spacing: 6px; Text { text: "T"; color: #9ca3af; font-size: 12px; font-weight: 900; } Text { text: "COLOR DEL TEXTO"; color: #9ca3af; font-size: 10px; font-weight: 800; letter-spacing: 0.5px; vertical-alignment: center;} } Rectangle { height: 56px; border-radius: 8px; background: #0a0a0a; border-width: 1px; border-color: #27272a; HorizontalLayout { padding-left: 16px; spacing: 12px; alignment: start; vertical-stretch: 1;
                                     ColorSwatch { sw_color: #ffffff; active: root.biblias_font_color == #ffffff; clicked => { root.biblias_font_color = #ffffff; root.sync_estilos(); } }
@@ -435,7 +438,7 @@ export component AppWindow inherits Window {
                                 BgOption { text: "NEGRO"; fill: black; active: root.cantos_bg_type == "negro"; clicked => { root.cantos_bg_type = "negro"; root.sync_estilos(); } }
                                 BgOption { text: "BLANCO"; fill: white; active: root.cantos_bg_type == "blanco"; clicked => { root.cantos_bg_type = "blanco"; root.sync_estilos(); } }
                                 BgOption { text: "IMAGEN"; icon: "🖼️"; fill: #1a1a1a; active: root.cantos_bg_type == "imagen"; clicked => { root.cargar_fondo_media("cantos"); } }
-                                BgOption { text: "VIDEO"; icon: "🎬"; fill: #1a1a1a; active: root.cantos_bg_type == "video"; clicked => { root.cargar_fondo_media("cantos"); } }
+                                BgOption { text: "VIDEO"; icon: "🎬"; fill: #1a1a1a; active: root.cantos_bg_type == "video"; clicked => { root.cargar_fondo_media("cantos-video"); } }
                         } }
                         VerticalLayout { spacing: 12px; HorizontalLayout { spacing: 6px; Text { text: "T"; color: #9ca3af; font-size: 12px; font-weight: 900; } Text { text: "COLOR DEL TEXTO"; color: #9ca3af; font-size: 10px; font-weight: 800; letter-spacing: 0.5px; vertical-alignment: center;} } Rectangle { height: 56px; border-radius: 8px; background: #0a0a0a; border-width: 1px; border-color: #27272a; HorizontalLayout { padding-left: 16px; spacing: 12px; alignment: start; vertical-stretch: 1;
                                     ColorSwatch { sw_color: #ffffff; active: root.cantos_font_color == #ffffff; clicked => { root.cantos_font_color = #ffffff; root.sync_estilos(); } }

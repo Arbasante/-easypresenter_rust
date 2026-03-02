@@ -9,25 +9,48 @@ export component ProjectorWindow inherits Window {
     in property <float> tamano_letra: 85;
     in property <color> bg_color: black;
     in property <color> text_color: white;
+    
     in property <image> fondo_imagen;
     in property <bool> mostrar_imagen: false;
 
-    if (root.mostrar_imagen) : Image {
+    // --- NUEVAS PROPIEDADES DE VIDEO ---
+    in property <image> fondo_video_frame;
+    in property <bool> es_video: false;
+    
+
+    // Capa 1: Imagen estática
+    if (root.mostrar_imagen && !root.es_video) : Image {
         source: root.fondo_imagen;
         width: 100%; height: 100%;
         image-fit: cover;
     }
-    if (root.mostrar_imagen) : Rectangle {
+
+    // Capa 1.5: Video Nativo (Fotogramas inyectados desde Rust)
+    if (root.es_video) : Image {
+        source: root.fondo_video_frame;
+        width: 100%; height: 100%;
+        image-fit: cover;
+    }
+
+    // Capa 2: Oscurecer el fondo para que las letras resalten
+    if (root.es_video || root.mostrar_imagen) : Rectangle {
         width: 100%; height: 100%;
         background: rgba(0, 0, 0, 0.4);
     }
+
+    // Filtro oscuro (Se aplica a imagen o video)
+    if (root.mostrar_imagen || root.es_video) : Rectangle {
+        width: 100%; height: 100%;
+        background: rgba(0, 0, 0, 0.4);
+    }
+
+    
 
     VerticalLayout {
         padding: 50px;
         padding-bottom: root.referencia != "" ? 16px : 50px;
         spacing: 0px;
 
-        // Área principal — ocupa TODO el espacio disponible
         Rectangle {
             vertical-stretch: 1;
             background: transparent;
@@ -44,7 +67,6 @@ export component ProjectorWindow inherits Window {
             }
         }
 
-        // Referencia — tamaño fijo, igual para todos los versículos
         if (root.referencia != "") : Rectangle {
             height: 70px;
             background: transparent;

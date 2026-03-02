@@ -17,6 +17,9 @@ directories = "5.0"
 rfd = "0.14" # NUEVO: Para abrir diálogos de selección de archivos nativos
 regex = "1"
 display-info = "0.4"
+gstreamer = "0.22"
+gstreamer-app = "0.22"
+gstreamer-video = "0.22"
 
 [build-dependencies]
 slint-build = "1.8.0"

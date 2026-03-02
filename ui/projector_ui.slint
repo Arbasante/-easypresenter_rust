@@ -16,6 +16,7 @@ export component ProjectorWindow inherits Window {
     // --- NUEVAS PROPIEDADES DE VIDEO ---
     in property <image> fondo_video_frame;
     in property <bool> es_video: false;
+    in property <float> fondo_opacity: 0.4;
     
 
     // Capa 1: Imagen estática
@@ -33,19 +34,11 @@ export component ProjectorWindow inherits Window {
     }
 
     // Capa 2: Oscurecer el fondo para que las letras resalten
-    if (root.es_video || root.mostrar_imagen) : Rectangle {
+    // [¡BUG CORREGIDO AQUI!] Ahora lee 'root.fondo_opacity' en lugar de 0.4
+    Rectangle {
         width: 100%; height: 100%;
-        background: rgba(0, 0, 0, 0.4);
+        background: rgba(0, 0, 0, root.fondo_opacity);
     }
-
-    // Filtro oscuro (Se aplica a imagen o video)
-    if (root.mostrar_imagen || root.es_video) : Rectangle {
-        width: 100%; height: 100%;
-        background: rgba(0, 0, 0, 0.4);
-    }
-
-    
-
     VerticalLayout {
         padding: 50px;
         padding-bottom: root.referencia != "" ? 16px : 50px;

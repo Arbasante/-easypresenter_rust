@@ -1,8 +1,8 @@
-import { VerticalBox, HorizontalBox, ScrollView, ComboBox } from "std-widgets.slint";
+import { VerticalBox, HorizontalBox, ScrollView, ComboBox, Slider } from "std-widgets.slint";
 import { ProjectorWindow } from "projector_ui.slint";
 import "./fonts/Inter-VariableFont_opsz,wght.ttf";
 export { ProjectorWindow }
-import { ScrollView, LineEdit, Button, TextEdit, ComboBox, CheckBox } from "std-widgets.slint";
+import { LineEdit, Button, TextEdit, CheckBox } from "std-widgets.slint";
 
 // --- IMPORTACIÓN DE FUENTES ---
 import "./fonts/GoogleSans-Regular.ttf";
@@ -59,17 +59,45 @@ export component AppWindow inherits Window {
     in-out property <color> biblias_font_color: white;
     in-out property <image> biblias_bg_image;
     in-out property <bool> biblias_has_image: false;
+    in-out property <float> biblias_fondo_opacity: 0.5; // Nueva propiedad opacidad
     
     in-out property <string> cantos_bg_type: "negro"; 
     in-out property <color> cantos_font_color: white;
     in-out property <image> cantos_bg_image;
     in-out property <bool> cantos_has_image: false;
+    in-out property <float> cantos_fondo_opacity: 0.5; // Nueva propiedad opacidad
+
+    // --- VARIABLES SELECTOR DE COLOR ---
+    in-out property <color> biblias_custom_color: #0ea5e9;
+    in-out property <color> cantos_custom_color: #0ea5e9;
+    in-out property <bool> mostrar_selector_color: false;
+    in-out property <string> color_target: "biblias";
+    property <[[color]]> paleta_colores: [
+        [ #93c5fd, #86efac, #fdf08a, #fdba74, #fca5a5, #d8b4fe, #d6d3d1, #ffffff ],
+        [ #3b82f6, #22c55e, #eab308, #f97316, #ef4444, #a855f7, #78716c, #e5e7eb ],
+        [ #1d4ed8, #166534, #a16207, #c2410c, #b91c1c, #7e22ce, #44403c, #9ca3af ],
+        [ #1e3a8a, #14532d, #713f12, #7c2d12, #7f1d1d, #581c87, #292524, #000000 ]
+    ];
 
     in-out property <string> biblias_video_path: ""; 
     in-out property <string> cantos_video_path: "";
 
-    callback cargar_fondo_media(string); 
-    callback quitar_fondo_media(string);
+    // --- VARIABLES DE GALERÍA ---
+    in property <[image]> biblias_image_data: [];
+    in property <[image]> cantos_image_data: [];
+    in property <[string]> biblias_video_names: [];
+    in property <[string]> cantos_video_names: [];
+    in-out property <int> biblias_selected_img: -1;
+    in-out property <int> cantos_selected_img: -1;
+    in-out property <int> biblias_selected_vid: -1;
+    in-out property <int> cantos_selected_vid: -1;
+
+    // Callbacks Galería y Legacy
+    callback agregar_a_galeria(string);
+    callback seleccionar_galeria_item(string, int);
+    callback eliminar_galeria_item(string, int);
+    callback cargar_fondo_media(string); // Legacy
+    callback quitar_fondo_media(string); // Legacy
 
     // --- VARIABLES FORMULARIO ---
     in-out property <bool> mostrar_formulario: false;
@@ -115,7 +143,7 @@ export component AppWindow inherits Window {
     public function focus_panel() { panel-focus.focus(); }
 
     // ══════════════════════════════════════════
-    // LAYOUT PRINCIPAL
+    // LAYOUT PRINCIPAL (SIN CAMBIOS)
     // ══════════════════════════════════════════
     Rectangle {
         width: 100%; height: 100%;
@@ -387,14 +415,20 @@ export component AppWindow inherits Window {
     }
 
     // ══════════════════════════════════════════
-    // MODAL DE PERSONALIZACIÓN
+    // MODAL DE PERSONALIZACIÓN (REDISEÑADO)
     // ══════════════════════════════════════════
     if (root.mostrar_personalizar) : Rectangle {
         width: 100%; height: 100%; background: rgba(0, 0, 0, 0.6);
         touch-close-modal := TouchArea { clicked => { root.mostrar_personalizar = false; } }
         Rectangle {
-            width: 520px; height: 380px; background: #111111; border-radius: 12px; border-width: 1px; border-color: #27272a; drop-shadow-color: rgba(0, 0, 0, 0.5); drop-shadow-blur: 20px;
+            width: 540px; height: 440px; // Dimensiones ampliadas para la galería
+            background: #111111; border-radius: 12px; border-width: 1px; border-color: #27272a; 
+            drop-shadow-color: rgba(0, 0, 0, 0.5); drop-shadow-blur: 20px;
             touch-blocker := TouchArea {} 
+            
+            // Estado local para saber en qué tab de la galería estamos
+            property <string> current_gal_tab: "imagenes";
+
             VerticalLayout {
                 Rectangle {
                     height: 56px;
@@ -411,47 +445,258 @@ export component AppWindow inherits Window {
                         Rectangle { horizontal-stretch: 1; background: transparent; touch-t2 := TouchArea { clicked => { root.modal_tab = "cantos"; } } VerticalLayout { Text { text: "FONDO DE CANTOS"; color: root.modal_tab == "cantos" ? #0ea5e9 : #6b7280; font-weight: 900; font-size: 11px; horizontal-alignment: center; vertical-alignment: center; vertical-stretch: 1;} Rectangle { height: 2px; background: root.modal_tab == "cantos" ? #0ea5e9 : transparent; } } }
                     }
                 }
+
+                // CONTENIDO DEL MODAL
                 Rectangle {
                     vertical-stretch: 1;
+                    padding: 24px;
+                    
+                    // -- SECCIÓN PARA BIBLIAS --
                     if (root.modal_tab == "biblias") : VerticalLayout {
-                        padding: 24px; spacing: 24px; alignment: start;
-                        VerticalLayout { spacing: 12px; HorizontalLayout { spacing: 6px; Text { text: "🖼"; color: #9ca3af; font-size: 10px; } Text { text: "FONDO ACTUAL: BIBLIA"; color: #9ca3af; font-size: 10px; font-weight: 800; letter-spacing: 0.5px; } } HorizontalLayout { spacing: 12px;
-                                BgOption { text: "NEGRO"; fill: black; active: root.biblias_bg_type == "negro"; clicked => { root.biblias_bg_type = "negro"; root.sync_estilos(); } }
-                                BgOption { text: "BLANCO"; fill: white; active: root.biblias_bg_type == "blanco"; clicked => { root.biblias_bg_type = "blanco"; root.sync_estilos(); } }
-                                BgOption { text: "IMAGEN"; icon: "🖼️"; fill: #1a1a1a; active: root.biblias_bg_type == "imagen"; clicked => { root.cargar_fondo_media("biblias"); } }
-                                BgOption { text: "VIDEO"; icon: "🎬"; fill: #1a1a1a; active: root.biblias_bg_type == "video"; clicked => { root.cargar_fondo_media("biblias-video"); } }
-                        } }
-                        VerticalLayout { spacing: 12px; HorizontalLayout { spacing: 6px; Text { text: "T"; color: #9ca3af; font-size: 12px; font-weight: 900; } Text { text: "COLOR DEL TEXTO"; color: #9ca3af; font-size: 10px; font-weight: 800; letter-spacing: 0.5px; vertical-alignment: center;} } Rectangle { height: 56px; border-radius: 8px; background: #0a0a0a; border-width: 1px; border-color: #27272a; HorizontalLayout { padding-left: 16px; spacing: 12px; alignment: start; vertical-stretch: 1;
+                        spacing: 20px; alignment: start;
+                        
+                        // FILA ÚNICA: Tipo, Color y Opacidad
+                        HorizontalLayout {
+                            spacing: 20px;
+                            
+                            // 1. Tipo de Fondo
+                            VerticalLayout {
+                                spacing: 10px;
+                                Text { text: "TIPO DE FONDO"; color: #9ca3af; font-size: 10px; font-weight: 800; }
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    BgOption { text: "NEGRO"; fill: black; active: root.biblias_bg_type == "negro"; clicked => { root.biblias_bg_type = "negro"; root.sync_estilos(); } }
+                                    BgOption { text: "BLANCO"; fill: white; active: root.biblias_bg_type == "blanco"; clicked => { root.biblias_bg_type = "blanco"; root.sync_estilos(); } }
+                                }
+                            }
+                            Rectangle { width: 1px; background: #27272a; } // Separador
+                            
+                            // 2. Color de Texto
+                            VerticalLayout {
+                                spacing: 10px;
+                                Text { text: "COLOR DE TEXTO"; color: #9ca3af; font-size: 10px; font-weight: 800; }
+                                HorizontalLayout {
+                                    spacing: 6px; alignment: start;
                                     ColorSwatch { sw_color: #ffffff; active: root.biblias_font_color == #ffffff; clicked => { root.biblias_font_color = #ffffff; root.sync_estilos(); } }
                                     ColorSwatch { sw_color: #000000; active: root.biblias_font_color == #000000; clicked => { root.biblias_font_color = #000000; root.sync_estilos(); } }
-                                    ColorSwatch { sw_color: #fcd34d; active: root.biblias_font_color == #fcd34d; clicked => { root.biblias_font_color = #fcd34d; root.sync_estilos(); } }
-                                    ColorSwatch { sw_color: #06b6d4; active: root.biblias_font_color == #06b6d4; clicked => { root.biblias_font_color = #06b6d4; root.sync_estilos(); } }
-                                    ColorSwatch { sw_color: #f87171; active: root.biblias_font_color == #f87171; clicked => { root.biblias_font_color = #f87171; root.sync_estilos(); } }
-                                    ColorSwatch { sw_color: #4ade80; active: root.biblias_font_color == #4ade80; clicked => { root.biblias_font_color = #4ade80; root.sync_estilos(); } }
-                                    Rectangle { width: 1px; height: 24px; background: #374151; } 
-                                    ColorSwatch { sw_color: #d946ef; inside_text: "T"; active: root.biblias_font_color == #d946ef; clicked => { root.biblias_font_color = #d946ef; root.sync_estilos(); } }
-                        } } }
+                                    ColorSwatch { 
+                                        sw_color: root.biblias_custom_color; inside_text: "T"; 
+                                        active: root.biblias_font_color != #ffffff && root.biblias_font_color != #000000; 
+                                        clicked => { 
+                                            root.biblias_font_color = root.biblias_custom_color; 
+                                            root.color_target = "biblias"; 
+                                            root.mostrar_selector_color = true; 
+                                            root.sync_estilos();
+                                        } 
+                                    }
+                                }
+                            }
+                            Rectangle { width: 1px; background: #27272a; } // Separador
+                            
+                            // 3. Opacidad
+                            VerticalLayout {
+                                spacing: 10px;
+                                Text { text: "OPACIDAD DEL FONDO"; color: #9ca3af; font-size: 10px; font-weight: 800; }
+                                VerticalLayout {
+                                    alignment: center; vertical-stretch: 1;
+                                    Slider { width: 100px; minimum: 0.0; maximum: 1.0; value <=> root.biblias_fondo_opacity; changed => { root.sync_estilos(); } }
+                                }
+                            }
+                        }
+
+                        // FILA 2: Galería de Medios
+                        Rectangle {
+                            height: 140px; border-radius: 8px; background: #151515; border-width: 1px; border-color: #27272a;
+                            VerticalLayout {
+                                // Pestañas Internas de la Galería
+                                HorizontalLayout {
+                                    height: 34px;
+                                    Rectangle {
+                                        horizontal-stretch: 1; background: current_gal_tab == "imagenes" ? #1f1f1f : transparent; border-top-left-radius: 8px;
+                                        touch-gal-img := TouchArea { clicked => { current_gal_tab = "imagenes"; } }
+                                        Text { text: "IMÁGENES"; color: current_gal_tab == "imagenes" ? #0ea5e9 : #6b7280; font-size: 10px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; }
+                                    }
+                                    Rectangle {
+                                        horizontal-stretch: 1; background: current_gal_tab == "videos" ? #1f1f1f : transparent; border-top-right-radius: 8px;
+                                        touch-gal-vid := TouchArea { clicked => { current_gal_tab = "videos"; } }
+                                        Text { text: "VIDEOS"; color: current_gal_tab == "videos" ? #0ea5e9 : #6b7280; font-size: 10px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; }
+                                    }
+                                }
+                                Rectangle { height: 1px; background: #27272a; }
+                                
+                                // Scroll de la Galería
+                                if (current_gal_tab == "imagenes") : ScrollView {
+                                    width: 100%; height: 100%;
+                                    HorizontalLayout {
+                                        padding: 10px; spacing: 10px;
+                                        Rectangle {
+                                            width: 80px; height: 80px; border-radius: 6px; border-width: 1px; border-color: #374151; background: touch-add-bi.has-hover ? #1f1f1f : transparent;
+                                            touch-add-bi := TouchArea { clicked => { root.agregar_a_galeria("biblias-img"); } }
+                                            Text { text: "+"; font-size: 24px; color: #6b7280; horizontal-alignment: center; vertical-alignment: center; }
+                                        }
+                                        for img[idx] in root.biblias_image_data: Rectangle {
+                                            width: 80px; height: 80px; border-radius: 6px; border-width: 2px;
+                                            border-color: root.biblias_selected_img == idx ? #0ea5e9 : transparent;
+                                            Image { source: img; width: 100%; height: 100%; image-fit: cover; }
+                                            TouchArea { clicked => { root.seleccionar_galeria_item("biblias-img", idx); } }
+                                            // Botón X para eliminar
+                                            Rectangle {
+                                                width: 18px; height: 18px; x: parent.width - 22px; y: 4px; border-radius: 9px; background: rgba(0,0,0,0.6);
+                                                TouchArea { clicked => { root.eliminar_galeria_item("biblias-img", idx); } }
+                                                Text { text: "✕"; color: #f87171; font-size: 9px; horizontal-alignment: center; vertical-alignment: center; font-weight: 900; }
+                                            }
+                                        }
+                                    }
+                                }
+                                if (current_gal_tab == "videos") : ScrollView {
+                                    width: 100%; height: 100%;
+                                    HorizontalLayout {
+                                        padding: 10px; spacing: 10px;
+                                        Rectangle {
+                                            width: 80px; height: 80px; border-radius: 6px; border-width: 1px; border-color: #374151; background: touch-add-bv.has-hover ? #1f1f1f : transparent;
+                                            touch-add-bv := TouchArea { clicked => { root.agregar_a_galeria("biblias-vid"); } }
+                                            Text { text: "+"; font-size: 24px; color: #6b7280; horizontal-alignment: center; vertical-alignment: center; }
+                                        }
+                                        for vid[idx] in root.biblias_video_names: Rectangle {
+                                            width: 80px; height: 80px; border-radius: 6px; border-width: 2px; background: #222;
+                                            border-color: root.biblias_selected_vid == idx ? #0ea5e9 : transparent;
+                                            VerticalLayout { padding: 4px; alignment: center; Text { text: "🎬\n" + vid; font-size: 9px; color: white; horizontal-alignment: center; wrap: word-wrap; } }
+                                            TouchArea { clicked => { root.seleccionar_galeria_item("biblias-vid", idx); } }
+                                            Rectangle {
+                                                width: 18px; height: 18px; x: parent.width - 22px; y: 4px; border-radius: 9px; background: rgba(0,0,0,0.6);
+                                                TouchArea { clicked => { root.eliminar_galeria_item("biblias-vid", idx); } }
+                                                Text { text: "✕"; color: #f87171; font-size: 9px; horizontal-alignment: center; vertical-alignment: center; font-weight: 900; }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
+
+                    // -- SECCIÓN PARA CANTOS --
                     if (root.modal_tab == "cantos") : VerticalLayout {
-                        padding: 24px; spacing: 24px; alignment: start;
-                        VerticalLayout { spacing: 12px; HorizontalLayout { spacing: 6px; Text { text: "🖼"; color: #9ca3af; font-size: 10px; } Text { text: "FONDO ACTUAL: CANTOS"; color: #9ca3af; font-size: 10px; font-weight: 800; letter-spacing: 0.5px; } } HorizontalLayout { spacing: 12px;
-                                BgOption { text: "NEGRO"; fill: black; active: root.cantos_bg_type == "negro"; clicked => { root.cantos_bg_type = "negro"; root.sync_estilos(); } }
-                                BgOption { text: "BLANCO"; fill: white; active: root.cantos_bg_type == "blanco"; clicked => { root.cantos_bg_type = "blanco"; root.sync_estilos(); } }
-                                BgOption { text: "IMAGEN"; icon: "🖼️"; fill: #1a1a1a; active: root.cantos_bg_type == "imagen"; clicked => { root.cargar_fondo_media("cantos"); } }
-                                BgOption { text: "VIDEO"; icon: "🎬"; fill: #1a1a1a; active: root.cantos_bg_type == "video"; clicked => { root.cargar_fondo_media("cantos-video"); } }
-                        } }
-                        VerticalLayout { spacing: 12px; HorizontalLayout { spacing: 6px; Text { text: "T"; color: #9ca3af; font-size: 12px; font-weight: 900; } Text { text: "COLOR DEL TEXTO"; color: #9ca3af; font-size: 10px; font-weight: 800; letter-spacing: 0.5px; vertical-alignment: center;} } Rectangle { height: 56px; border-radius: 8px; background: #0a0a0a; border-width: 1px; border-color: #27272a; HorizontalLayout { padding-left: 16px; spacing: 12px; alignment: start; vertical-stretch: 1;
-                                    ColorSwatch { sw_color: #ffffff; active: root.cantos_font_color == #ffffff; clicked => { root.cantos_font_color = #ffffff; root.sync_estilos(); } }
-                                    ColorSwatch { sw_color: #000000; active: root.cantos_font_color == #000000; clicked => { root.cantos_font_color = #000000; root.sync_estilos(); } }
-                                    ColorSwatch { sw_color: #fcd34d; active: root.cantos_font_color == #fcd34d; clicked => { root.cantos_font_color = #fcd34d; root.sync_estilos(); } }
-                                    ColorSwatch { sw_color: #06b6d4; active: root.cantos_font_color == #06b6d4; clicked => { root.cantos_font_color = #06b6d4; root.sync_estilos(); } }
-                                    ColorSwatch { sw_color: #f87171; active: root.cantos_font_color == #f87171; clicked => { root.cantos_font_color = #f87171; root.sync_estilos(); } }
-                                    ColorSwatch { sw_color: #4ade80; active: root.cantos_font_color == #4ade80; clicked => { root.cantos_font_color = #4ade80; root.sync_estilos(); } }
-                                    Rectangle { width: 1px; height: 24px; background: #374151; }
-                                    ColorSwatch { sw_color: #d946ef; inside_text: "T"; active: root.cantos_font_color == #d946ef; clicked => { root.cantos_font_color = #d946ef; root.sync_estilos(); } }
-                        } } }
+                        spacing: 20px; alignment: start;
+                        
+                        // FILA ÚNICA: Tipo, Color y Opacidad
+                        HorizontalLayout {
+                            spacing: 20px;
+                            
+                            // 1. Tipo de Fondo
+                            VerticalLayout {
+                                spacing: 10px;
+                                Text { text: "TIPO DE FONDO"; color: #9ca3af; font-size: 10px; font-weight: 800; }
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    BgOption { text: "NEGRO"; fill: black; active: root.biblias_bg_type == "negro"; clicked => { root.biblias_bg_type = "negro"; root.sync_estilos(); } }
+                                    BgOption { text: "BLANCO"; fill: white; active: root.biblias_bg_type == "blanco"; clicked => { root.biblias_bg_type = "blanco"; root.sync_estilos(); } }
+                                }
+                            }
+                            Rectangle { width: 1px; background: #27272a; } // Separador
+                            
+                            // 2. Color de Texto
+                            VerticalLayout {
+                                spacing: 10px;
+                                Text { text: "COLOR DE TEXTO"; color: #9ca3af; font-size: 10px; font-weight: 800; }
+                                HorizontalLayout {
+                                    spacing: 6px; alignment: start;
+                                    ColorSwatch { sw_color: #ffffff; active: root.biblias_font_color == #ffffff; clicked => { root.biblias_font_color = #ffffff; root.sync_estilos(); } }
+                                    ColorSwatch { sw_color: #000000; active: root.biblias_font_color == #000000; clicked => { root.biblias_font_color = #000000; root.sync_estilos(); } }
+                                    ColorSwatch { 
+                                        sw_color: root.biblias_custom_color; inside_text: "T"; 
+                                        active: root.biblias_font_color != #ffffff && root.biblias_font_color != #000000; 
+                                        clicked => { 
+                                            root.biblias_font_color = root.biblias_custom_color; 
+                                            root.color_target = "biblias"; 
+                                            root.mostrar_selector_color = true; 
+                                            root.sync_estilos();
+                                        } 
+                                    }
+                                }
+                            }
+                            Rectangle { width: 1px; background: #27272a; } // Separador
+                            
+                            // 3. Opacidad
+                            VerticalLayout {
+                                spacing: 10px;
+                                Text { text: "OPACIDAD DEL FONDO"; color: #9ca3af; font-size: 10px; font-weight: 800; }
+                                VerticalLayout {
+                                    alignment: center; vertical-stretch: 1;
+                                    Slider { width: 100px; minimum: 0.0; maximum: 1.0; value <=> root.biblias_fondo_opacity; changed => { root.sync_estilos(); } }
+                                }
+                            }
+                        }
+
+                        // FILA 2: Galería de Medios
+                        Rectangle {
+                            height: 140px; border-radius: 8px; background: #151515; border-width: 1px; border-color: #27272a;
+                            VerticalLayout {
+                                // Pestañas Internas de la Galería
+                                HorizontalLayout {
+                                    height: 34px;
+                                    Rectangle {
+                                        horizontal-stretch: 1; background: current_gal_tab == "imagenes" ? #1f1f1f : transparent; border-top-left-radius: 8px;
+                                        touch-gal-img2 := TouchArea { clicked => { current_gal_tab = "imagenes"; } }
+                                        Text { text: "IMÁGENES"; color: current_gal_tab == "imagenes" ? #0ea5e9 : #6b7280; font-size: 10px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; }
+                                    }
+                                    Rectangle {
+                                        horizontal-stretch: 1; background: current_gal_tab == "videos" ? #1f1f1f : transparent; border-top-right-radius: 8px;
+                                        touch-gal-vid2 := TouchArea { clicked => { current_gal_tab = "videos"; } }
+                                        Text { text: "VIDEOS"; color: current_gal_tab == "videos" ? #0ea5e9 : #6b7280; font-size: 10px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; }
+                                    }
+                                }
+                                Rectangle { height: 1px; background: #27272a; }
+                                
+                                // Scroll de la Galería
+                                if (current_gal_tab == "imagenes") : ScrollView {
+                                    width: 100%; height: 100%;
+                                    HorizontalLayout {
+                                        padding: 10px; spacing: 10px;
+                                        Rectangle {
+                                            width: 80px; height: 80px; border-radius: 6px; border-width: 1px; border-color: #374151; background: touch-add-ci.has-hover ? #1f1f1f : transparent;
+                                            touch-add-ci := TouchArea { clicked => { root.agregar_a_galeria("cantos-img"); } }
+                                            Text { text: "+"; font-size: 24px; color: #6b7280; horizontal-alignment: center; vertical-alignment: center; }
+                                        }
+                                        for img[idx] in root.cantos_image_data: Rectangle {
+                                            width: 80px; height: 80px; border-radius: 6px; border-width: 2px;
+                                            border-color: root.cantos_selected_img == idx ? #0ea5e9 : transparent;
+                                            Image { source: img; width: 100%; height: 100%; image-fit: cover; }
+                                            TouchArea { clicked => { root.seleccionar_galeria_item("cantos-img", idx); } }
+                                            Rectangle {
+                                                width: 18px; height: 18px; x: parent.width - 22px; y: 4px; border-radius: 9px; background: rgba(0,0,0,0.6);
+                                                TouchArea { clicked => { root.eliminar_galeria_item("cantos-img", idx); } }
+                                                Text { text: "✕"; color: #f87171; font-size: 9px; horizontal-alignment: center; vertical-alignment: center; font-weight: 900; }
+                                            }
+                                        }
+                                    }
+                                }
+                                if (current_gal_tab == "videos") : ScrollView {
+                                    width: 100%; height: 100%;
+                                    HorizontalLayout {
+                                        padding: 10px; spacing: 10px;
+                                        Rectangle {
+                                            width: 80px; height: 80px; border-radius: 6px; border-width: 1px; border-color: #374151; background: touch-add-cv.has-hover ? #1f1f1f : transparent;
+                                            touch-add-cv := TouchArea { clicked => { root.agregar_a_galeria("cantos-vid"); } }
+                                            Text { text: "+"; font-size: 24px; color: #6b7280; horizontal-alignment: center; vertical-alignment: center; }
+                                        }
+                                        for vid[idx] in root.cantos_video_names: Rectangle {
+                                            width: 80px; height: 80px; border-radius: 6px; border-width: 2px; background: #222;
+                                            border-color: root.cantos_selected_vid == idx ? #0ea5e9 : transparent;
+                                            VerticalLayout { padding: 4px; alignment: center; Text { text: "🎬\n" + vid; font-size: 9px; color: white; horizontal-alignment: center; wrap: word-wrap; } }
+                                            TouchArea { clicked => { root.seleccionar_galeria_item("cantos-vid", idx); } }
+                                            Rectangle {
+                                                width: 18px; height: 18px; x: parent.width - 22px; y: 4px; border-radius: 9px; background: rgba(0,0,0,0.6);
+                                                TouchArea { clicked => { root.eliminar_galeria_item("cantos-vid", idx); } }
+                                                Text { text: "✕"; color: #f87171; font-size: 9px; horizontal-alignment: center; vertical-alignment: center; font-weight: 900; }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
+                
                 Rectangle {
                     height: 60px; background: transparent;
                     HorizontalLayout { padding-right: 24px; alignment: end; Rectangle { width: 80px; height: 36px; border-radius: 6px; background: touch-listo.has-hover ? #e5e7eb : white; touch-listo := TouchArea { clicked => { root.mostrar_personalizar = false; } } Text { text: "LISTO"; color: black; font-weight: 900; font-size: 11px; horizontal-alignment: center; vertical-alignment: center; } } }
@@ -461,7 +706,7 @@ export component AppWindow inherits Window {
     }
 
     // ══════════════════════════════════════════
-    // MENÚ CONTEXTUAL DE CANTO
+    // MENÚ CONTEXTUAL DE CANTO (SIN CAMBIOS)
     // ══════════════════════════════════════════
     if (root.mostrar_menu_canto) : Rectangle {
         width: 100%; height: 100%; background: transparent;
@@ -530,7 +775,58 @@ export component AppWindow inherits Window {
     }
 
     // ══════════════════════════════════════════
-    // MODAL CONFIRMACIÓN ELIMINAR
+    // MODAL SELECTOR DE COLOR ("T")
+    // ══════════════════════════════════════════
+    if (root.mostrar_selector_color) : Rectangle {
+        width: 100%; height: 100%; background: rgba(0,0,0,0.65);
+        touch-bg-color := TouchArea { clicked => { root.mostrar_selector_color = false; } }
+        
+        Rectangle {
+            width: 330px; height: 210px;
+            background: #27272a; border-radius: 8px; border-width: 1px; border-color: #3f3f46;
+            drop-shadow-color: rgba(0,0,0,0.5); drop-shadow-blur: 20px;
+            touch-block-color := TouchArea {}
+            
+            VerticalLayout {
+                padding: 16px; spacing: 16px;
+                HorizontalLayout {
+                    Text { text: "🎨  Seleccionar Color"; color: white; font-weight: 800; font-size: 12px; vertical-alignment: center; horizontal-stretch: 1; }
+                    Rectangle { 
+                        width: 24px; height: 24px; border-radius: 4px; background: touch-close-col.has-hover ? rgba(255,255,255,0.1) : transparent;
+                        touch-close-col := TouchArea { clicked => { root.mostrar_selector_color = false; } } 
+                        Text { text: "✕"; color: #9ca3af; font-weight: 900; horizontal-alignment: center; vertical-alignment: center; } 
+                    }
+                }
+                
+                VerticalLayout {
+                    spacing: 8px; alignment: center;
+                    for row in root.paleta_colores : HorizontalLayout {
+                        spacing: 8px; alignment: center;
+                        for c in row : Rectangle {
+                            width: 28px; height: 28px; border-radius: 6px; background: c; 
+                            border-width: 1px; border-color: rgba(255,255,255,0.1);
+                            touch-c := TouchArea {
+                                clicked => {
+                                    if (root.color_target == "biblias") {
+                                        root.biblias_custom_color = c;
+                                        root.biblias_font_color = c;
+                                    } else {
+                                        root.cantos_custom_color = c;
+                                        root.cantos_font_color = c;
+                                    }
+                                    root.sync_estilos();
+                                    root.mostrar_selector_color = false;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ══════════════════════════════════════════
+    // MODAL CONFIRMACIÓN ELIMINAR (SIN CAMBIOS)
     // ══════════════════════════════════════════
     if (root.mostrar_confirmar_eliminar) : Rectangle {
         width: 100%; height: 100%; background: rgba(0,0,0,0.65);
@@ -570,7 +866,7 @@ export component AppWindow inherits Window {
     }
 
 // ══════════════════════════════════════════
-    // MODAL FORMULARIO AGREGAR / EDITAR
+    // MODAL FORMULARIO AGREGAR / EDITAR (SIN CAMBIOS)
     // ══════════════════════════════════════════
     if (root.mostrar_formulario) : Rectangle {
         width: 100%; height: 100%;

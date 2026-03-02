@@ -236,7 +236,7 @@ impl NativeVideoPlayer {
 
         // Convertir ruta local a formato URI (file:///...)
         let path = std::path::Path::new(ruta).canonicalize().unwrap_or_else(|_| std::path::PathBuf::from(ruta));
-        let uri = format!("file://{}", path.display());
+        let uri = gst::glib::filename_to_uri(&path, None).expect("No se pudo convertir la ruta a URI");
 
         // playbin3 es el gestor automático de GStreamer
         let pipeline = gst::ElementFactory::make("playbin")
@@ -259,7 +259,12 @@ impl NativeVideoPlayer {
         pipeline.set_property("video-sink", &appsink);
         
         // Silenciar el video de fondo
-        pipeline.set_property("volume", 0.0f64);
+        let audio_sink = gst::ElementFactory::make("fakesink")
+            .property("sync", false) // No perder tiempo sincronizando audio que no se va a escuchar
+            .build()
+            .expect("No se pudo crear fakesink para el audio");
+
+        pipeline.set_property("audio-sink", &audio_sink);
 
         // Callback súper rápido cuando hay un nuevo fotograma
         appsink.set_callbacks(

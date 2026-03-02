@@ -1,5 +1,5 @@
 use rusqlite::{Connection, Result};
-use slint::{ModelRc, SharedString, VecModel, ComponentHandle, Image};
+use slint::{ModelRc, SharedString, VecModel, ComponentHandle, Image, SharedPixelBuffer, Rgba8Pixel};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::rc::Rc;
@@ -7,6 +7,11 @@ use std::thread;
 use regex::Regex;
 use display_info::DisplayInfo;
 
+// ── IMPORTS DE GSTREAMER CON SUS ALIAS CORRECTOS ──
+use gstreamer as gst;
+use gstreamer_app as gst_app;
+use gstreamer_video as gst_video;
+use gst::prelude::*;
 slint::include_modules!();
 
 struct CantoDB { pub id: i32, pub titulo: String }
@@ -154,18 +159,11 @@ impl AppState {
     }
 }
 
-fn mover_proyector_a_pantalla(p_weak: slint::Weak<ProjectorWindow>, x: i32, y: i32, width: u32, height: u32) {
-    // Delays diferentes por OS:
-    // Windows: el DWM procesa rápido, ~80ms es suficiente
-    // Linux X11: el WM necesita más tiempo, usamos intentos múltiples
-    // IMPORTANTE: En Linux, forzar X11 con: WAYLAND_DISPLAY="" cargo run
-    //             o agregar al inicio de main: std::env::set_var("WAYLAND_DISPLAY", "");
 
+fn mover_proyector_a_pantalla(p_weak: slint::Weak<ProjectorWindow>, x: i32, y: i32, width: u32, height: u32) {
     let intentos: &[(u64, bool)] = if cfg!(target_os = "windows") {
-        // Windows: 3 intentos con delays cortos
         &[(80, false), (200, false), (400, true)]
     } else {
-        // Linux X11: más intentos con delays más largos
         &[(150, false), (350, false), (600, false), (900, true)]
     };
 
@@ -178,7 +176,6 @@ fn mover_proyector_a_pantalla(p_weak: slint::Weak<ProjectorWindow>, x: i32, y: i
                     p.window().set_position(slint::PhysicalPosition::new(x, y));
                     p.window().set_size(slint::PhysicalSize::new(width, height));
                     if es_ultimo {
-                        // Solo maximizar en el último intento, cuando ya está en posición
                         p.window().set_maximized(true);
                     }
                 }
@@ -188,30 +185,18 @@ fn mover_proyector_a_pantalla(p_weak: slint::Weak<ProjectorWindow>, x: i32, y: i
 }
 
 fn calcular_font_size(texto: &str, tiene_referencia: bool) -> f32 {
-    let ancho_util: f32 = 1280.0 - 120.0; // 1160px (60px padding cada lado)
-    
-    // Reservar espacio según si hay referencia o no
-    let alto_util: f32 = if tiene_referencia {
-        720.0 - 180.0  // 540px: deja 180px para referencia + padding
-    } else {
-        720.0 - 120.0  // 600px: solo padding superior e inferior
-    };
-
-    // Factor de ancho por carácter para Inter Bold en español
-    // Más alto que el promedio inglés por las letras acentuadas (á, é, etc.)
+    let ancho_util: f32 = 1280.0 - 120.0; 
+    let alto_util: f32 = if tiene_referencia { 720.0 - 180.0 } else { 720.0 - 120.0 };
     let char_width_factor: f32 = 0.58;
-    let line_height_factor: f32 = 1.40; // interlineado real de Slint
+    let line_height_factor: f32 = 1.40;
 
     let estimar_lineas = |font_size: f32| -> f32 {
-        let chars_por_linea = (ancho_util / (font_size * char_width_factor))
-            .floor()
-            .max(1.0);
-        
+        let chars_por_linea = (ancho_util / (font_size * char_width_factor)).floor().max(1.0);
         let mut total_lineas = 0.0f32;
         for linea in texto.lines() {
             let chars = linea.chars().count() as f32;
             if chars == 0.0 {
-                total_lineas += 0.5; // línea vacía = medio espacio
+                total_lineas += 0.5;
             } else {
                 total_lineas += (chars / chars_por_linea).ceil();
             }
@@ -219,7 +204,6 @@ fn calcular_font_size(texto: &str, tiene_referencia: bool) -> f32 {
         total_lineas.max(1.0)
     };
 
-    // Búsqueda binaria del tamaño máximo que cabe
     let mut min_size: f32 = 20.0;
     let mut max_size: f32 = 160.0;
 
@@ -235,80 +219,174 @@ fn calcular_font_size(texto: &str, tiene_referencia: bool) -> f32 {
         }
     }
 
-    // Factor de seguridad: 90% del máximo teórico para evitar desbordamientos
-    // por diferencias entre la estimación y el render real de Slint
-    let resultado = min_size * 0.90;
-
-    resultado.clamp(26.0, 150.0)
+    (min_size * 0.90).clamp(26.0, 150.0)
 }
 
+struct NativeVideoPlayer {
+    pipeline: Option<gst::Element>,
+}
+
+impl NativeVideoPlayer {
+    fn new() -> Self {
+        Self { pipeline: None }
+    }
+
+    fn reproducir(&mut self, ruta: &str, proj_weak: slint::Weak<ProjectorWindow>) {
+        self.detener(); // Detiene cualquier video previo
+
+        // Convertir ruta local a formato URI (file:///...)
+        let path = std::path::Path::new(ruta).canonicalize().unwrap_or_else(|_| std::path::PathBuf::from(ruta));
+        let uri = format!("file://{}", path.display());
+
+        // playbin3 es el gestor automático de GStreamer
+        let pipeline = gst::ElementFactory::make("playbin")
+            .property("uri", &uri)
+            .build()
+            .expect("No se pudo crear playbin");
+
+        // appsink extrae los fotogramas para pasarlos a Slint
+        let appsink = gst_app::AppSink::builder()
+            .caps(
+                &gst::Caps::builder("video/x-raw")
+                    .field("format", "RGBA") // Slint usa RGBA
+                    
+                    .build(),
+            )
+            .max_buffers(1) // FUNDAMENTAL: Solo guarda 1 fotograma en memoria a la vez
+            .drop(true)
+            .build();
+
+        pipeline.set_property("video-sink", &appsink);
+        
+        // Silenciar el video de fondo
+        pipeline.set_property("volume", 0.0f64);
+
+        // Callback súper rápido cuando hay un nuevo fotograma
+        appsink.set_callbacks(
+            gst_app::AppSinkCallbacks::builder()
+                .new_sample(move |appsink| {
+                    let sample = match appsink.pull_sample() {
+                        Ok(s) => s,
+                        Err(_) => return Ok(gst::FlowSuccess::Ok),
+                    };
+                    
+                    let buffer = sample.buffer().unwrap();
+                    let caps = sample.caps().unwrap();
+                    let info = gst_video::VideoInfo::from_caps(caps).unwrap();
+                    
+                    let width = info.width();
+                    let height = info.height();
+
+                    // Mapeo de memoria cero-copias donde sea posible
+                    let map = buffer.map_readable().unwrap();
+
+                    let mut pixel_buffer = SharedPixelBuffer::<Rgba8Pixel>::new(width, height);
+                    unsafe {
+                        let dest = pixel_buffer.make_mut_slice();
+                        let dest_u8 = std::slice::from_raw_parts_mut(
+                            dest.as_mut_ptr() as *mut u8,
+                            dest.len() * 4
+                        );
+                        dest_u8.copy_from_slice(map.as_slice());
+                    }
+
+                    
+                    let proj_clone = proj_weak.clone();
+                    
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(p) = proj_clone.upgrade() {
+                            // ¡La imagen se crea AQUÍ ADENTRO, en el hilo correcto!
+                            let image = slint::Image::from_rgba8(pixel_buffer);
+                            p.set_fondo_video_frame(image);
+                        }
+                    });
+
+                    Ok(gst::FlowSuccess::Ok)
+                })
+                .build(),
+        );
+
+        pipeline.set_state(gst::State::Playing).unwrap();
+
+        // Manejar el bucle (cuando el video termina, vuelve a empezar)
+        let bus = pipeline.bus().unwrap();
+        let pipeline_clone = pipeline.clone();
+        
+        thread::spawn(move || {
+            for msg in bus.iter_timed(gst::ClockTime::NONE) {
+                match msg.view() {
+                    gst::MessageView::Eos(..) => {
+                        // Repetir el video
+                        let _ = pipeline_clone.seek_simple(
+                            gst::SeekFlags::FLUSH | gst::SeekFlags::KEY_UNIT,
+                            gst::ClockTime::ZERO,
+                        );
+                    }
+                    gst::MessageView::Error(err) => {
+                        eprintln!("Error de GStreamer: {} ({:?})", err.error(), err.debug());
+                        break;
+                    }
+                    _ => (),
+                }
+            }
+        });
+
+        self.pipeline = Some(pipeline);
+    }
+
+    fn detener(&mut self) {
+        if let Some(pipeline) = self.pipeline.take() {
+            let _ = pipeline.set_state(gst::State::Null);
+        }
+    }
+}
+
+impl Drop for NativeVideoPlayer {
+    fn drop(&mut self) {
+        self.detener();
+    }
+}
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // ═══════════════════════════════════════════════════════
-    // FORZAR X11 EN LINUX (Wayland no permite set_position)
-    // Esto no afecta Windows en absoluto
-    // ═══════════════════════════════════════════════════════
+
+    gst::init().expect("Error al inicializar GStreamer. ¿Están instaladas las librerías?");
+
     #[cfg(target_os = "linux")]
     {
-        // Si está corriendo bajo Wayland, forzar compatibilidad XWayland
-        // para poder posicionar ventanas en monitores específicos
         if std::env::var("WAYLAND_DISPLAY").is_ok() {
-            println!("Detectado Wayland, forzando modo X11/XWayland para posicionamiento de ventanas...");
+            println!("Detectado Wayland, forzando modo X11/XWayland...");
             std::env::set_var("WAYLAND_DISPLAY", "");
             std::env::set_var("GDK_BACKEND", "x11");
         }
     }
 
-    let state = Arc::new(Mutex::new(AppState::new()?));
-    let ui = AppWindow::new()?;
-    let proyector = ProjectorWindow::new()?;
-
     let current_biblia_libro = Arc::new(Mutex::new(-1i32));
     let current_biblia_capitulo = Arc::new(Mutex::new(-1i32));
 
-    // ═══════════════════════════════════════════════════════
-    // DETECCIÓN DE SEGUNDA PANTALLA
-    // display-info funciona en Windows y Linux
-    // ═══════════════════════════════════════════════════════
     let segunda_pantalla: Arc<Mutex<Option<(i32, i32, u32, u32)>>> = Arc::new(Mutex::new(None));
+    
+    
+
+    let state = Arc::new(Mutex::new(AppState::new()?));
+    let ui = AppWindow::new()?;
+    let proyector = ProjectorWindow::new()?;
+    let video_player = Arc::new(Mutex::new(NativeVideoPlayer::new()));
+
     {
         match DisplayInfo::all() {
             Ok(pantallas) => {
                 let pantallas: Vec<DisplayInfo> = pantallas;
-                println!("=== Pantallas detectadas: {} ===", pantallas.len());
-                for (i, p) in pantallas.iter().enumerate() {
-                    println!("  [{}] {}x{} en ({},{}) scale={} primary={}", 
-                        i, p.width, p.height, p.x, p.y, p.scale_factor, p.is_primary);
-                }
-
-                // ── DETECCIÓN ROBUSTA ──────────────────────────────────────
-                // Bug conocido de display-info en Linux: a veces todas las
-                // pantallas tienen is_primary=false. 
-                // Solución: si ninguna está marcada como primaria,
-                // asumir que la pantalla en (0,0) es la principal
-                // y tomar cualquier otra como secundaria.
-                // ──────────────────────────────────────────────────────────
                 let hay_primaria_marcada = pantallas.iter().any(|d| d.is_primary);
-
                 let segunda = if hay_primaria_marcada {
-                    // Caso normal: hay una marcada como primaria
                     pantallas.iter().find(|d| !d.is_primary)
                 } else {
-                    // Ninguna marcada (bug de display-info en Linux/Wayland)
-                    // La pantalla principal siempre está en coordenadas (0,0)
-                    println!("  ⚠ Ninguna pantalla marcada como primaria");
-                    println!("    → Usando heurística: la pantalla principal es la de (0,0)");
                     pantallas.iter().find(|d| !(d.x == 0 && d.y == 0))
                 };
 
                 if let Some(segunda) = segunda {
-                    println!("  → Pantalla secundaria: {}x{} en ({},{})", 
-                        segunda.width, segunda.height, segunda.x, segunda.y);
                     let w = (segunda.width as f32 * segunda.scale_factor) as u32;
                     let h = (segunda.height as f32 * segunda.scale_factor) as u32;
                     *segunda_pantalla.lock().unwrap() = Some((segunda.x, segunda.y, w, h));
-                } else {
-                    println!("  → Solo hay una pantalla disponible");
                 }
             }
             Err(e) => println!("No se pudieron detectar pantallas: {}", e),
@@ -360,18 +438,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ui.invoke_focus_panel();
     });
 
-
-    //-------------------------------------------------
-
     let state_clone = Arc::clone(&state);
-    let state_clone2 = Arc::clone(&state);  // segundo clone para el refresh
+    let state_clone2 = Arc::clone(&state); 
     let c_clone = cargar_cantos.clone();
     let ui_handle_guardar = ui.as_weak();
     let proyector_handle_guardar = proyector.as_weak();
 
-
     ui.on_guardar_canto(move |id, titulo, letra| {
-        // 1. Guardar en BD
         {
             let estado = state_clone.lock().unwrap();
             if id == -1 {
@@ -380,67 +453,43 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 estado.update_canto(id, &titulo, &letra);
             }
         }
-
-        // 2. Recargar lista sidebar
         c_clone(String::new());
-
-        // 3. Si era una edición (id != -1), refrescar panel central y proyector
         if id != -1 {
             let ui = ui_handle_guardar.unwrap();
             let p = proyector_handle_guardar.unwrap();
             let estado = state_clone2.lock().unwrap();
-
             let titulo_guardado = estado.get_canto_titulo(id);
             let titulo_en_panel = ui.get_elemento_seleccionado().to_string();
-
-            // Solo refrescar si este canto es el que está activo en el panel
-            // Comparamos con el título viejo (titulo param) y el nuevo (titulo_guardado)
-            let es_canto_activo = titulo_en_panel == titulo.to_string() 
-                || titulo_en_panel == titulo_guardado;
+            let es_canto_activo = titulo_en_panel == titulo.to_string() || titulo_en_panel == titulo_guardado;
 
             if es_canto_activo {
-                // Recargar diapositivas frescas de la BD
                 let nuevas_diapos = estado.get_canto_diapositivas(id);
                 let diapos_slint: Vec<DiapositivaUI> = nuevas_diapos.iter()
                     .map(|d| DiapositivaUI {
                         orden: SharedString::from(d.orden.to_string()),
                         texto: SharedString::from(d.texto.clone()),
-                    })
-                    .collect();
+                    }).collect();
 
-                // Guardar índice activo antes de actualizar
                 let active_idx = ui.get_active_estrofa_index();
-
-                // Actualizar título y estrofas en el panel central
                 ui.set_elemento_seleccionado(SharedString::from(&titulo_guardado));
                 ui.set_estrofas_actuales(ModelRc::from(Rc::new(VecModel::from(diapos_slint.clone()))));
 
-                // Actualizar proyector con la estrofa activa (o la primera si no hay)
                 let idx_a_proyectar = if active_idx >= 0 && (active_idx as usize) < diapos_slint.len() {
                     active_idx as usize
                 } else if !diapos_slint.is_empty() {
-                    ui.set_active_estrofa_index(0);
-                    0
+                    ui.set_active_estrofa_index(0); 0
                 } else {
                     return;
                 };
 
                 let texto_nuevo = diapos_slint[idx_a_proyectar].texto.clone();
-                let len = texto_nuevo.len();
-                let font_size = if len >= 450 { 32.0 } 
-                    else if len >= 320 { 38.0 } 
-                    else if len >= 220 { 46.0 } 
-                    else if len >= 120 { 56.0 } 
-                    else if len >= 60  { 68.0 } 
-                    else { 85.0 };
-
+                let font_size = calcular_font_size(&texto_nuevo, false);
                 p.set_texto_proyeccion(texto_nuevo);
                 p.set_tamano_letra(font_size);
                 p.set_referencia(SharedString::from(""));
             }
         }
     });
-
 
     let state_clone = Arc::clone(&state);
     let c_clone = cargar_cantos.clone();
@@ -479,9 +528,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ui.set_mostrar_confirmar_eliminar(true);
     });
 
-    // ═══════════════════════════════════════════════════════
-    // ABRIR PROYECTOR → SEGUNDA PANTALLA (multi-OS)
-    // ═══════════════════════════════════════════════════════
     let proyector_handle = proyector.as_weak();
     let segunda_pantalla_clone = Arc::clone(&segunda_pantalla);
     ui.on_abrir_proyector(move || {
@@ -490,9 +536,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         if let Some((x, y, width, height)) = info {
             p.show().unwrap();
-            // Llamar función que maneja delays por OS
             mover_proyector_a_pantalla(p.as_weak(), x, y, width, height);
-            println!("Proyector → segunda pantalla {}x{} @ ({},{})", width, height, x, y);
         } else {
             p.show().unwrap();
             let p_weak = p.as_weak();
@@ -502,7 +546,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     if let Some(p) = p_weak.upgrade() { p.window().set_maximized(true); }
                 });
             });
-            println!("Proyector → pantalla principal (única pantalla)");
         }
     });
 
@@ -511,7 +554,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ui.on_proyectar_estrofa(move |texto, referencia| {
         let p = proyector_handle.unwrap();
         p.set_texto_proyeccion(texto.clone());
-
         let mut ref_str = referencia.to_string();
         if !ref_str.is_empty() {
             let sigla = state_clone.lock().unwrap().get_sigla_actual();
@@ -520,8 +562,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         p.set_referencia(SharedString::from(ref_str.clone()));
-
-        // Pasar si hay referencia para reservar espacio en el cálculo
         let tiene_referencia = !ref_str.is_empty();
         let font_size = calcular_font_size(&texto, tiene_referencia);
         p.set_tamano_letra(font_size);
@@ -649,22 +689,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
+    // ══════════════════════════════════════════════════════════
+    // SYNC ESTILOS — Ahora integra de verdad Video vs Imagen
+    // ══════════════════════════════════════════════════════════
     let ui_h_sync = ui.as_weak();
     let p_h_sync = proyector.as_weak();
+    let vp_sync = Arc::clone(&video_player);
+    
     ui.on_sync_estilos(move || {
         let ui = ui_h_sync.unwrap();
         let p = p_h_sync.unwrap();
         let is_biblia = ui.get_active_tab() == "biblias";
+        
         let bg_type = if is_biblia { ui.get_biblias_bg_type() } else { ui.get_cantos_bg_type() };
         let font_color = if is_biblia { ui.get_biblias_font_color() } else { ui.get_cantos_font_color() };
+        
         p.set_text_color(font_color);
+        
+        // Detener video por defecto y reiniciar estado
+        vp_sync.lock().unwrap().detener();
+        p.set_es_video(false);
+
         if bg_type == "negro" {
             p.set_bg_color(slint::Color::from_rgb_u8(0, 0, 0));
             p.set_mostrar_imagen(false);
         } else if bg_type == "blanco" {
             p.set_bg_color(slint::Color::from_rgb_u8(255, 255, 255));
             p.set_mostrar_imagen(false);
-        } else if bg_type == "imagen" || bg_type == "video" {
+        } else if bg_type == "imagen" {
             p.set_bg_color(slint::Color::from_rgb_u8(0, 0, 0));
             if is_biblia && ui.get_biblias_has_image() {
                 p.set_fondo_imagen(ui.get_biblias_bg_image());
@@ -675,24 +727,52 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             } else {
                 p.set_mostrar_imagen(false);
             }
+        } else if bg_type == "video" {
+            p.set_bg_color(slint::Color::from_rgb_u8(0, 0, 0));
+            p.set_mostrar_imagen(false);
+            p.set_es_video(true);
+
+            let ruta = if is_biblia { ui.get_biblias_video_path() } else { ui.get_cantos_video_path() };
+            if !ruta.is_empty() {
+                vp_sync.lock().unwrap().reproducir(&ruta, p.as_weak());
+            }
         }
     });
 
+    // ══════════════════════════════════════════════════════════
+    // SELECTOR DE ARCHIVOS — Distingue imagen o video
+    // ══════════════════════════════════════════════════════════
     let ui_h_media = ui.as_weak();
     ui.on_cargar_fondo_media(move |tipo| {
         let ui = ui_h_media.unwrap();
-        if let Some(path) = rfd::FileDialog::new().add_filter("Imágenes", &["png", "jpg", "jpeg", "webp"]).pick_file() {
-            if let Ok(img) = slint::Image::load_from_path(&path) {
-                if tipo == "biblias" {
-                    ui.set_biblias_bg_image(img);
-                    ui.set_biblias_has_image(true);
-                    ui.set_biblias_bg_type(SharedString::from("imagen"));
+        // Si el string incluye "video", abrimos un video
+        if tipo.ends_with("-video") {
+            if let Some(path) = rfd::FileDialog::new().add_filter("Videos", &["mp4", "mov", "mkv", "webm"]).pick_file() {
+                let path_str = path.to_string_lossy().to_string();
+                if tipo.starts_with("biblias") {
+                    ui.set_biblias_video_path(SharedString::from(&path_str));
+                    ui.set_biblias_bg_type(SharedString::from("video"));
                 } else {
-                    ui.set_cantos_bg_image(img);
-                    ui.set_cantos_has_image(true);
-                    ui.set_cantos_bg_type(SharedString::from("imagen"));
+                    ui.set_cantos_video_path(SharedString::from(&path_str));
+                    ui.set_cantos_bg_type(SharedString::from("video"));
                 }
                 ui.invoke_sync_estilos();
+            }
+        } else {
+            // Lógica existente para imágenes
+            if let Some(path) = rfd::FileDialog::new().add_filter("Imágenes", &["png", "jpg", "jpeg", "webp"]).pick_file() {
+                if let Ok(img) = slint::Image::load_from_path(&path) {
+                    if tipo.starts_with("biblias") {
+                        ui.set_biblias_bg_image(img);
+                        ui.set_biblias_has_image(true);
+                        ui.set_biblias_bg_type(SharedString::from("imagen"));
+                    } else {
+                        ui.set_cantos_bg_image(img);
+                        ui.set_cantos_has_image(true);
+                        ui.set_cantos_bg_type(SharedString::from("imagen"));
+                    }
+                    ui.invoke_sync_estilos();
+                }
             }
         }
     });

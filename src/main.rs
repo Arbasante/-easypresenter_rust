@@ -7,7 +7,6 @@ use std::thread;
 use regex::Regex;
 use display_info::DisplayInfo;
 
-// ── IMPORTS DE GSTREAMER CON SUS ALIAS CORRECTOS ──
 use gstreamer as gst;
 use gstreamer_app as gst_app;
 use gstreamer_video as gst_video;
@@ -52,7 +51,11 @@ fn buscar_libro_inteligente(query: &str) -> Option<(i32, String)> {
 struct AppState {
     cantos_db: Connection, biblias_db: Connection,
     versiones: Vec<VersionInfo>, current_version_id: i32,
-    chapter_cache: HashMap<CacheKey, Vec<VersiculoDB>>
+    chapter_cache: HashMap<CacheKey, Vec<VersiculoDB>>,
+    biblias_image_paths: Vec<String>,
+    cantos_image_paths: Vec<String>,
+    biblias_video_paths: Vec<String>,
+    cantos_video_paths: Vec<String>,
 }
 
 impl AppState {
@@ -61,7 +64,17 @@ impl AppState {
         let biblias_db = Connection::open("data/biblias.db")?;
         cantos_db.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;")?;
         biblias_db.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;")?;
-        let mut state = Self { cantos_db, biblias_db, versiones: Vec::new(), current_version_id: 1, chapter_cache: HashMap::new() };
+        let mut state = Self { 
+            cantos_db, 
+            biblias_db, 
+            versiones: Vec::new(), 
+            current_version_id: 1, 
+            chapter_cache: HashMap::new(),
+            biblias_image_paths: Vec::new(),
+            cantos_image_paths: Vec::new(),
+            biblias_video_paths: Vec::new(),
+            cantos_video_paths: Vec::new(),
+        };
         state.procesar_versiones();
         Ok(state)
     }
@@ -232,41 +245,35 @@ impl NativeVideoPlayer {
     }
 
     fn reproducir(&mut self, ruta: &str, proj_weak: slint::Weak<ProjectorWindow>) {
-        self.detener(); // Detiene cualquier video previo
+        self.detener();
 
-        // Convertir ruta local a formato URI (file:///...)
         let path = std::path::Path::new(ruta).canonicalize().unwrap_or_else(|_| std::path::PathBuf::from(ruta));
         let uri = gst::glib::filename_to_uri(&path, None).expect("No se pudo convertir la ruta a URI");
 
-        // playbin3 es el gestor automático de GStreamer
         let pipeline = gst::ElementFactory::make("playbin")
             .property("uri", &uri)
             .build()
             .expect("No se pudo crear playbin");
 
-        // appsink extrae los fotogramas para pasarlos a Slint
         let appsink = gst_app::AppSink::builder()
             .caps(
                 &gst::Caps::builder("video/x-raw")
-                    .field("format", "RGBA") // Slint usa RGBA
-                    
+                    .field("format", "RGBA")
                     .build(),
             )
-            .max_buffers(1) // FUNDAMENTAL: Solo guarda 1 fotograma en memoria a la vez
+            .max_buffers(1)
             .drop(true)
             .build();
 
         pipeline.set_property("video-sink", &appsink);
         
-        // Silenciar el video de fondo
         let audio_sink = gst::ElementFactory::make("fakesink")
-            .property("sync", false) // No perder tiempo sincronizando audio que no se va a escuchar
+            .property("sync", false)
             .build()
             .expect("No se pudo crear fakesink para el audio");
 
         pipeline.set_property("audio-sink", &audio_sink);
 
-        // Callback súper rápido cuando hay un nuevo fotograma
         appsink.set_callbacks(
             gst_app::AppSinkCallbacks::builder()
                 .new_sample(move |appsink| {
@@ -282,7 +289,6 @@ impl NativeVideoPlayer {
                     let width = info.width();
                     let height = info.height();
 
-                    // Mapeo de memoria cero-copias donde sea posible
                     let map = buffer.map_readable().unwrap();
 
                     let mut pixel_buffer = SharedPixelBuffer::<Rgba8Pixel>::new(width, height);
@@ -295,12 +301,10 @@ impl NativeVideoPlayer {
                         dest_u8.copy_from_slice(map.as_slice());
                     }
 
-                    
                     let proj_clone = proj_weak.clone();
                     
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(p) = proj_clone.upgrade() {
-                            // ¡La imagen se crea AQUÍ ADENTRO, en el hilo correcto!
                             let image = slint::Image::from_rgba8(pixel_buffer);
                             p.set_fondo_video_frame(image);
                         }
@@ -313,7 +317,6 @@ impl NativeVideoPlayer {
 
         pipeline.set_state(gst::State::Playing).unwrap();
 
-        // Manejar el bucle (cuando el video termina, vuelve a empezar)
         let bus = pipeline.bus().unwrap();
         let pipeline_clone = pipeline.clone();
         
@@ -321,7 +324,6 @@ impl NativeVideoPlayer {
             for msg in bus.iter_timed(gst::ClockTime::NONE) {
                 match msg.view() {
                     gst::MessageView::Eos(..) => {
-                        // Repetir el video
                         let _ = pipeline_clone.seek_simple(
                             gst::SeekFlags::FLUSH | gst::SeekFlags::KEY_UNIT,
                             gst::ClockTime::ZERO,
@@ -352,6 +354,61 @@ impl Drop for NativeVideoPlayer {
     }
 }
 
+// ══════════════════════════════════════════════════════════════
+// NUEVA FUNCIÓN MAESTRA: Aplica estilos a prueba de balas
+// ══════════════════════════════════════════════════════════════
+fn aplicar_estilos(ui: &AppWindow, p: &ProjectorWindow, vp: &Arc<Mutex<NativeVideoPlayer>>, modo: &str, forzar_reinicio_video: bool) {
+    let is_biblia = modo == "biblias";
+    
+    // Leemos estrictamente de las variables correspondientes al modo
+    let bg_type = if is_biblia { ui.get_biblias_bg_type() } else { ui.get_cantos_bg_type() };
+    let font_color = if is_biblia { ui.get_biblias_font_color() } else { ui.get_cantos_font_color() };
+    let opacity = if is_biblia { ui.get_biblias_fondo_opacity() } else { ui.get_cantos_fondo_opacity() };
+    
+    p.set_text_color(font_color);
+    p.set_fondo_opacity(opacity);
+
+    if bg_type == "negro" {
+        vp.lock().unwrap().detener();
+        p.set_es_video(false);
+        p.set_bg_color(slint::Color::from_rgb_u8(0, 0, 0));
+        p.set_mostrar_imagen(false);
+    } else if bg_type == "blanco" {
+        vp.lock().unwrap().detener();
+        p.set_es_video(false);
+        p.set_bg_color(slint::Color::from_rgb_u8(255, 255, 255));
+        p.set_mostrar_imagen(false);
+    } else if bg_type == "imagen" {
+        vp.lock().unwrap().detener();
+        p.set_es_video(false);
+        p.set_bg_color(slint::Color::from_rgb_u8(0, 0, 0));
+        
+        if is_biblia && ui.get_biblias_has_image() {
+            p.set_fondo_imagen(ui.get_biblias_bg_image());
+            p.set_mostrar_imagen(true);
+        } else if !is_biblia && ui.get_cantos_has_image() {
+            p.set_fondo_imagen(ui.get_cantos_bg_image());
+            p.set_mostrar_imagen(true);
+        } else {
+            p.set_mostrar_imagen(false);
+        }
+    } else if bg_type == "video" {
+        p.set_bg_color(slint::Color::from_rgb_u8(0, 0, 0));
+        p.set_mostrar_imagen(false);
+        p.set_es_video(true);
+        
+        if forzar_reinicio_video {
+            let ruta = if is_biblia { ui.get_biblias_video_path() } else { ui.get_cantos_video_path() };
+            if !ruta.is_empty() {
+                vp.lock().unwrap().reproducir(ruta.as_str(), p.as_weak());
+            } else {
+                vp.lock().unwrap().detener();
+            }
+        }
+    }
+}
+
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     gst::init().expect("Error al inicializar GStreamer. ¿Están instaladas las librerías?");
@@ -369,8 +426,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let current_biblia_capitulo = Arc::new(Mutex::new(-1i32));
 
     let segunda_pantalla: Arc<Mutex<Option<(i32, i32, u32, u32)>>> = Arc::new(Mutex::new(None));
-    
-    
 
     let state = Arc::new(Mutex::new(AppState::new()?));
     let ui = AppWindow::new()?;
@@ -554,10 +609,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
+    // ══════════════════════════════════════════════════════════════
+    // EVENTO: PROYECTAR ESTROFA (Sincronización Automática)
+    // ══════════════════════════════════════════════════════════════
     let proyector_handle = proyector.as_weak();
     let state_clone = Arc::clone(&state);
+    
+    let ui_h_proy = ui.as_weak();
+    let vp_proy = Arc::clone(&video_player);
+    let last_modo = Arc::new(Mutex::new(String::new()));
+
     ui.on_proyectar_estrofa(move |texto, referencia| {
         let p = proyector_handle.unwrap();
+        let ui = ui_h_proy.unwrap();
+        
         p.set_texto_proyeccion(texto.clone());
         let mut ref_str = referencia.to_string();
         if !ref_str.is_empty() {
@@ -567,9 +632,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         p.set_referencia(SharedString::from(ref_str.clone()));
+        
         let tiene_referencia = !ref_str.is_empty();
         let font_size = calcular_font_size(&texto, tiene_referencia);
         p.set_tamano_letra(font_size);
+
+        // AQUÍ LA MAGIA: Al proyectar, detectamos si es un canto o una biblia
+        let modo_actual = if tiene_referencia { "biblias" } else { "cantos" };
+        let mut l_modo = last_modo.lock().unwrap();
+        
+        // Solo ordenamos que el video reinicie SI cambiamos de categoría (ej: Canto -> Biblia)
+        let forzar_video = *l_modo != modo_actual; 
+        *l_modo = modo_actual.to_string();
+        
+        // Aplicamos el estilo que corresponde automáticamente
+        aplicar_estilos(&ui, &p, &vp_proy, modo_actual, forzar_video);
     });
 
     let ui_h = ui.as_weak();
@@ -694,9 +771,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    // ══════════════════════════════════════════════════════════
-    // SYNC ESTILOS — Ahora integra de verdad Video vs Imagen
-    // ══════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════
+    // EVENTO: PERSONALIZACIÓN (El usuario hace click en colores/fondos)
+    // ══════════════════════════════════════════════════════════════
     let ui_h_sync = ui.as_weak();
     let p_h_sync = proyector.as_weak();
     let vp_sync = Arc::clone(&video_player);
@@ -704,95 +781,197 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ui.on_sync_estilos(move || {
         let ui = ui_h_sync.unwrap();
         let p = p_h_sync.unwrap();
-        let is_biblia = ui.get_active_tab() == "biblias";
         
-        let bg_type = if is_biblia { ui.get_biblias_bg_type() } else { ui.get_cantos_bg_type() };
-        let font_color = if is_biblia { ui.get_biblias_font_color() } else { ui.get_cantos_font_color() };
+        // BUG CORREGIDO: Extraemos `modal_tab` en lugar de `active_tab`
+        // De esta forma los clics en la personalización reaccionan a lo que
+        // estás mirando en el menú (Biblias o Cantos) sin equivocarse de variables.
+        let modo = ui.get_modal_tab();
         
-        p.set_text_color(font_color);
-        
-        // Detener video por defecto y reiniciar estado
-        vp_sync.lock().unwrap().detener();
-        p.set_es_video(false);
+        aplicar_estilos(&ui, &p, &vp_sync, modo.as_str(), true);
+    });
 
-        if bg_type == "negro" {
-            p.set_bg_color(slint::Color::from_rgb_u8(0, 0, 0));
-            p.set_mostrar_imagen(false);
-        } else if bg_type == "blanco" {
-            p.set_bg_color(slint::Color::from_rgb_u8(255, 255, 255));
-            p.set_mostrar_imagen(false);
-        } else if bg_type == "imagen" {
-            p.set_bg_color(slint::Color::from_rgb_u8(0, 0, 0));
-            if is_biblia && ui.get_biblias_has_image() {
-                p.set_fondo_imagen(ui.get_biblias_bg_image());
-                p.set_mostrar_imagen(true);
-            } else if !is_biblia && ui.get_cantos_has_image() {
-                p.set_fondo_imagen(ui.get_cantos_bg_image());
-                p.set_mostrar_imagen(true);
-            } else {
-                p.set_mostrar_imagen(false);
-            }
-        } else if bg_type == "video" {
-            p.set_bg_color(slint::Color::from_rgb_u8(0, 0, 0));
-            p.set_mostrar_imagen(false);
-            p.set_es_video(true);
+    // ══════════════════════════════════════════
+    // GALERÍA — Agregar archivo
+    // ══════════════════════════════════════════
+    let ui_h_gal = ui.as_weak();
+    let state_gal = Arc::clone(&state);
+    ui.on_agregar_a_galeria(move |tipo| {
+        let ui = ui_h_gal.unwrap();
+        let tipo_str = tipo.to_string();
+        let es_video = tipo_str.ends_with("-vid");
 
-            let ruta = if is_biblia { ui.get_biblias_video_path() } else { ui.get_cantos_video_path() };
-            if !ruta.is_empty() {
-                vp_sync.lock().unwrap().reproducir(&ruta, p.as_weak());
+        let dialog = if es_video {
+            rfd::FileDialog::new().add_filter("Videos", &["mp4", "mov", "mkv", "webm"]).pick_file()
+        } else {
+            rfd::FileDialog::new().add_filter("Imágenes", &["png", "jpg", "jpeg", "webp"]).pick_file()
+        };
+
+        if let Some(path) = dialog {
+            let path_str = path.to_string_lossy().to_string();
+            let mut estado = state_gal.lock().unwrap();
+
+            if tipo_str == "biblias-img" {
+                if let Ok(img) = slint::Image::load_from_path(&path) {
+                    estado.biblias_image_paths.push(path_str.clone());
+                    let idx = estado.biblias_image_paths.len() as i32 - 1;
+                    let paths_copia: Vec<String> = estado.biblias_image_paths.clone();
+                    drop(estado);
+                    let images: Vec<slint::Image> = paths_copia.iter().filter_map(|p| slint::Image::load_from_path(std::path::Path::new(p)).ok()).collect();
+                    ui.set_biblias_image_data(ModelRc::from(Rc::new(VecModel::from(images))));
+                    ui.set_biblias_selected_img(idx);
+                    ui.set_biblias_bg_image(img);
+                    ui.set_biblias_has_image(true);
+                    ui.set_biblias_bg_type(SharedString::from("imagen"));
+                    ui.invoke_sync_estilos();
+                }
+            } else if tipo_str == "cantos-img" {
+                if let Ok(img) = slint::Image::load_from_path(&path) {
+                    estado.cantos_image_paths.push(path_str.clone());
+                    let idx = estado.cantos_image_paths.len() as i32 - 1;
+                    let paths_copia: Vec<String> = estado.cantos_image_paths.clone();
+                    drop(estado);
+                    let images: Vec<slint::Image> = paths_copia.iter().filter_map(|p| slint::Image::load_from_path(std::path::Path::new(p)).ok()).collect();
+                    ui.set_cantos_image_data(ModelRc::from(Rc::new(VecModel::from(images))));
+                    ui.set_cantos_selected_img(idx);
+                    ui.set_cantos_bg_image(img);
+                    ui.set_cantos_has_image(true);
+                    ui.set_cantos_bg_type(SharedString::from("imagen"));
+                    ui.invoke_sync_estilos();
+                }
+            } else if tipo_str == "biblias-vid" {
+                estado.biblias_video_paths.push(path_str.clone());
+                let names: Vec<SharedString> = estado.biblias_video_paths.iter().map(|p| SharedString::from(std::path::Path::new(p).file_name().unwrap().to_string_lossy().to_string())).collect();
+                let idx = estado.biblias_video_paths.len() as i32 - 1;
+                drop(estado);
+                ui.set_biblias_video_names(ModelRc::from(Rc::new(VecModel::from(names))));
+                ui.set_biblias_selected_vid(idx);
+                ui.set_biblias_video_path(SharedString::from(&path_str));
+                ui.set_biblias_bg_type(SharedString::from("video"));
+                ui.invoke_sync_estilos();
+            } else if tipo_str == "cantos-vid" {
+                estado.cantos_video_paths.push(path_str.clone());
+                let names: Vec<SharedString> = estado.cantos_video_paths.iter().map(|p| SharedString::from(std::path::Path::new(p).file_name().unwrap().to_string_lossy().to_string())).collect();
+                let idx = estado.cantos_video_paths.len() as i32 - 1;
+                drop(estado);
+                ui.set_cantos_video_names(ModelRc::from(Rc::new(VecModel::from(names))));
+                ui.set_cantos_selected_vid(idx);
+                ui.set_cantos_video_path(SharedString::from(&path_str));
+                ui.set_cantos_bg_type(SharedString::from("video"));
+                ui.invoke_sync_estilos();
             }
         }
     });
 
-    // ══════════════════════════════════════════════════════════
-    // SELECTOR DE ARCHIVOS — Distingue imagen o video
-    // ══════════════════════════════════════════════════════════
-    let ui_h_media = ui.as_weak();
-    ui.on_cargar_fondo_media(move |tipo| {
-        let ui = ui_h_media.unwrap();
-        // Si el string incluye "video", abrimos un video
-        if tipo.ends_with("-video") {
-            if let Some(path) = rfd::FileDialog::new().add_filter("Videos", &["mp4", "mov", "mkv", "webm"]).pick_file() {
-                let path_str = path.to_string_lossy().to_string();
-                if tipo.starts_with("biblias") {
-                    ui.set_biblias_video_path(SharedString::from(&path_str));
-                    ui.set_biblias_bg_type(SharedString::from("video"));
-                } else {
-                    ui.set_cantos_video_path(SharedString::from(&path_str));
-                    ui.set_cantos_bg_type(SharedString::from("video"));
-                }
-                ui.invoke_sync_estilos();
-            }
-        } else {
-            // Lógica existente para imágenes
-            if let Some(path) = rfd::FileDialog::new().add_filter("Imágenes", &["png", "jpg", "jpeg", "webp"]).pick_file() {
-                if let Ok(img) = slint::Image::load_from_path(&path) {
-                    if tipo.starts_with("biblias") {
-                        ui.set_biblias_bg_image(img);
-                        ui.set_biblias_has_image(true);
-                        ui.set_biblias_bg_type(SharedString::from("imagen"));
-                    } else {
-                        ui.set_cantos_bg_image(img);
-                        ui.set_cantos_has_image(true);
-                        ui.set_cantos_bg_type(SharedString::from("imagen"));
-                    }
+    // ══════════════════════════════════════════
+    // GALERÍA — Seleccionar item existente
+    // ══════════════════════════════════════════
+    let ui_h_sel = ui.as_weak();
+    let state_sel = Arc::clone(&state);
+    ui.on_seleccionar_galeria_item(move |tipo, idx| {
+        let ui = ui_h_sel.unwrap();
+        let estado = state_sel.lock().unwrap();
+        let tipo_str = tipo.to_string();
+        let idx_usize = idx as usize;
+
+        if tipo_str == "biblias-img" {
+            if let Some(p) = estado.biblias_image_paths.get(idx_usize) {
+                if let Ok(img) = slint::Image::load_from_path(std::path::Path::new(p)) {
+                    ui.set_biblias_selected_img(idx);
+                    ui.set_biblias_bg_image(img);
+                    ui.set_biblias_has_image(true);
+                    ui.set_biblias_bg_type(SharedString::from("imagen"));
                     ui.invoke_sync_estilos();
                 }
             }
+        } else if tipo_str == "cantos-img" {
+            if let Some(p) = estado.cantos_image_paths.get(idx_usize) {
+                if let Ok(img) = slint::Image::load_from_path(std::path::Path::new(p)) {
+                    ui.set_cantos_selected_img(idx);
+                    ui.set_cantos_bg_image(img);
+                    ui.set_cantos_has_image(true);
+                    ui.set_cantos_bg_type(SharedString::from("imagen"));
+                    ui.invoke_sync_estilos();
+                }
+            }
+        } else if tipo_str == "biblias-vid" {
+            if let Some(p) = estado.biblias_video_paths.get(idx_usize) {
+                ui.set_biblias_selected_vid(idx);
+                ui.set_biblias_video_path(SharedString::from(p.as_str()));
+                ui.set_biblias_bg_type(SharedString::from("video"));
+                ui.invoke_sync_estilos();
+            }
+        } else if tipo_str == "cantos-vid" {
+            if let Some(p) = estado.cantos_video_paths.get(idx_usize) {
+                ui.set_cantos_selected_vid(idx);
+                ui.set_cantos_video_path(SharedString::from(p.as_str()));
+                ui.set_cantos_bg_type(SharedString::from("video"));
+                ui.invoke_sync_estilos();
+            }
         }
     });
 
-    let ui_h_rm = ui.as_weak();
-    ui.on_quitar_fondo_media(move |tipo| {
-        let ui = ui_h_rm.unwrap();
-        if tipo == "biblias" {
-            ui.set_biblias_has_image(false);
-            ui.set_biblias_bg_type(SharedString::from("negro"));
-        } else {
-            ui.set_cantos_has_image(false);
-            ui.set_cantos_bg_type(SharedString::from("negro"));
+    // ══════════════════════════════════════════
+    // GALERÍA — Eliminar item
+    // ══════════════════════════════════════════
+    let ui_h_del = ui.as_weak();
+    let state_del = Arc::clone(&state);
+    ui.on_eliminar_galeria_item(move |tipo, idx| {
+        let ui = ui_h_del.unwrap();
+        let mut estado = state_del.lock().unwrap();
+        let tipo_str = tipo.to_string();
+        let idx_usize = idx as usize;
+
+        if tipo_str == "biblias-img" && idx_usize < estado.biblias_image_paths.len() {
+            estado.biblias_image_paths.remove(idx_usize);
+            if estado.biblias_image_paths.is_empty() {
+                drop(estado);
+                ui.set_biblias_image_data(ModelRc::from(Rc::new(VecModel::<slint::Image>::from(vec![]))));
+                ui.set_biblias_has_image(false);
+                ui.set_biblias_bg_type(SharedString::from("negro"));
+                ui.invoke_sync_estilos();
+            } else {
+                let paths: Vec<slint::Image> = estado.biblias_image_paths.iter().filter_map(|p| slint::Image::load_from_path(std::path::Path::new(p)).ok()).collect();
+                drop(estado);
+                ui.set_biblias_image_data(ModelRc::from(Rc::new(VecModel::from(paths))));
+                ui.set_biblias_selected_img(0);
+                ui.invoke_seleccionar_galeria_item(SharedString::from("biblias-img"), 0);
+            }
+        } else if tipo_str == "cantos-img" && idx_usize < estado.cantos_image_paths.len() {
+            estado.cantos_image_paths.remove(idx_usize);
+            if estado.cantos_image_paths.is_empty() {
+                drop(estado);
+                ui.set_cantos_image_data(ModelRc::from(Rc::new(VecModel::<slint::Image>::from(vec![]))));
+                ui.set_cantos_has_image(false);
+                ui.set_cantos_bg_type(SharedString::from("negro"));
+                ui.invoke_sync_estilos();
+            } else {
+                let paths: Vec<slint::Image> = estado.cantos_image_paths.iter().filter_map(|p| slint::Image::load_from_path(std::path::Path::new(p)).ok()).collect();
+                drop(estado);
+                ui.set_cantos_image_data(ModelRc::from(Rc::new(VecModel::from(paths))));
+                ui.set_cantos_selected_img(0);
+                ui.invoke_seleccionar_galeria_item(SharedString::from("cantos-img"), 0);
+            }
+        } else if tipo_str == "biblias-vid" && idx_usize < estado.biblias_video_paths.len() {
+            estado.biblias_video_paths.remove(idx_usize);
+            let names: Vec<SharedString> = estado.biblias_video_paths.iter().map(|p| SharedString::from(std::path::Path::new(p).file_name().unwrap().to_string_lossy().to_string())).collect();
+            let is_empty = estado.biblias_video_paths.is_empty();
+            drop(estado);
+            ui.set_biblias_video_names(ModelRc::from(Rc::new(VecModel::from(names))));
+            if is_empty {
+                ui.set_biblias_bg_type(SharedString::from("negro"));
+                ui.invoke_sync_estilos();
+            }
+        } else if tipo_str == "cantos-vid" && idx_usize < estado.cantos_video_paths.len() {
+            estado.cantos_video_paths.remove(idx_usize);
+            let names: Vec<SharedString> = estado.cantos_video_paths.iter().map(|p| SharedString::from(std::path::Path::new(p).file_name().unwrap().to_string_lossy().to_string())).collect();
+            let is_empty = estado.cantos_video_paths.is_empty();
+            drop(estado);
+            ui.set_cantos_video_names(ModelRc::from(Rc::new(VecModel::from(names))));
+            if is_empty {
+                ui.set_cantos_bg_type(SharedString::from("negro"));
+                ui.invoke_sync_estilos();
+            }
         }
-        ui.invoke_sync_estilos();
     });
 
     ui.run()?;

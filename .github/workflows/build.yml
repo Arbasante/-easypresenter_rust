@@ -83,27 +83,40 @@ jobs:
         run: |
           $GstPath = "C:\gstreamer\1.0\msvc_x86_64"
 
-          # FIX pkg-config: apuntar al ejecutable directamente
           echo "PKG_CONFIG=$GstPath\bin\pkg-config.exe"  >> $env:GITHUB_ENV
           echo "PKG_CONFIG_PATH=$GstPath\lib\pkgconfig"  >> $env:GITHUB_ENV
           echo "GSTREAMER_1_0_ROOT_X86_64=$GstPath"      >> $env:GITHUB_ENV
           echo "$GstPath\bin"                             >> $env:GITHUB_PATH
 
       # ── PREPARACIÓN WIN 7 ──────────────────────────────────────────────────
-      - name: Preparar dependencias para Win 7 (bajar Slint a 1.8.0)
+      #
+      # RAÍZ DEL PROBLEMA:
+      #   slint = "1.8.0" en Cargo.toml significa ^1.8.0 (cualquier versión >= 1.8, < 2).
+      #   Cargo resuelve AMBOS (slint y slint-build) a la más nueva → 1.15.1.
+      #   slint 1.8.0  necesita i-slint-compiler = 1.8.0
+      #   slint-build 1.15.1 necesita i-slint-compiler = 1.15.1  → CONFLICTO.
+      #
+      # SOLUCIÓN:
+      #   Reescribir Cargo.toml en el runner para usar versiones EXACTAS (=1.8.0).
+      #   El signo "=" le dice a Cargo "exactamente esta versión, sin subir nunca".
+      #   Con ambos en =1.8.0 no hay conflicto posible.
+      # ──────────────────────────────────────────────────────────────────────
+      - name: Fijar Slint en versión exacta 1.8.0 para Win 7
         if: matrix.is_win7
         shell: bash
         run: |
-          # Eliminamos el lock existente (puede tener slint 1.15 cacheado)
+          # Cambia  slint = "1.8.0"       →  slint = "=1.8.0"
+          # Cambia  slint-build = "1.8.0" →  slint-build = "=1.8.0"
+          # El "=" delante del número es la sintaxis de Cargo para versión exacta.
+          sed -i 's/slint = "1\.8\.0"/slint = "=1.8.0"/' Cargo.toml
+          sed -i 's/slint-build = "1\.8\.0"/slint-build = "=1.8.0"/' Cargo.toml
+
+          # Eliminar Cargo.lock para que Cargo resuelva desde cero con las versiones exactas
           rm -f Cargo.lock
 
-          # Bajamos Slint y sus sub-crates a 1.8.0 antes de compilar.
-          # IMPORTANTE: tu Cargo.toml debe tener slint = "1" (no "=1.15.x")
-          cargo +1.77.2 update -p slint               --precise 1.8.0
-          cargo +1.77.2 update -p slint-build          --precise 1.8.0
-          cargo +1.77.2 update -p i-slint-core         --precise 1.8.0 || true
-          cargo +1.77.2 update -p i-slint-compiler     --precise 1.8.0 || true
-          cargo +1.77.2 update -p i-slint-backend-winit --precise 1.8.0 || true
+          # Verificar que el reemplazo se hizo bien
+          echo "--- Cargo.toml después del sed ---"
+          grep -E "slint" Cargo.toml
 
       # ── COMPILACIÓN ────────────────────────────────────────────────────────
       - name: Compilar Proyecto (Release)

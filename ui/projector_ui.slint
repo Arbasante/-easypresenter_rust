@@ -48,12 +48,16 @@ export component ProjectorWindow inherits Window {
         Rectangle {
             vertical-stretch: 1;
             background: transparent;
+            clip: true;
+            min-height: 0px;
+            min-width: 0px;
             Text {
                 text: root.texto_proyeccion;
                 color: root.text_color;
                 font-size: root.tamano_letra * 1px;
                 font-weight: 900;
                 wrap: word-wrap;
+                overflow: elide;
                 horizontal-alignment: center;
                 vertical-alignment: center;
                 width: parent.width;

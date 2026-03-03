@@ -408,6 +408,12 @@ fn aplicar_estilos(ui: &AppWindow, p: &ProjectorWindow, vp: &Arc<Mutex<NativeVid
     }
 }
 
+struct MediaData {
+    path: String,
+    name: String,
+    aspecto: String,
+}
+
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
 
@@ -431,6 +437,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ui = AppWindow::new()?;
     let proyector = ProjectorWindow::new()?;
     let video_player = Arc::new(Mutex::new(NativeVideoPlayer::new()));
+    let multimedia_state = Arc::new(Mutex::new(Vec::<MediaData>::new()));
 
     {
         match DisplayInfo::all() {
@@ -970,6 +977,100 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if is_empty {
                 ui.set_cantos_bg_type(SharedString::from("negro"));
                 ui.invoke_sync_estilos();
+            }
+        }
+    });
+
+
+    // ══════════════════════════════════════════════════════════════
+    // LÓGICA DE MULTIMEDIA (IMÁGENES)
+    // ══════════════════════════════════════════════════════════════
+    let refresh_multimedia = {
+        let ui_handle = ui.as_weak();
+        let state_arc = Arc::clone(&multimedia_state);
+        move || {
+            let ui = ui_handle.unwrap();
+            let items = state_arc.lock().unwrap();
+            let mut slint_items = Vec::new();
+            for (i, item) in items.iter().enumerate() {
+                if let Ok(img) = slint::Image::load_from_path(std::path::Path::new(&item.path)) {
+                    slint_items.push(MediaItem {
+                        id: i as i32,
+                        nombre: SharedString::from(&item.name),
+                        path: SharedString::from(&item.path),
+                        img,
+                        aspecto: SharedString::from(&item.aspecto),
+                    });
+                }
+            }
+            ui.set_multimedia_items(ModelRc::from(Rc::new(VecModel::from(slint_items))));
+        }
+    };
+
+    // 1. Agregar Imagen
+    let multi_state = Arc::clone(&multimedia_state);
+    let refresh_clone = refresh_multimedia.clone();
+    ui.on_agregar_multimedia(move || {
+        if let Some(path) = rfd::FileDialog::new().add_filter("Imágenes", &["png", "jpg", "jpeg", "webp"]).pick_file() {
+            let file_name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+            let path_str = path.to_string_lossy().to_string();
+            multi_state.lock().unwrap().push(MediaData {
+                path: path_str,
+                name: file_name,
+                aspecto: "centro".to_string(), // Inicia ajustado al centro
+            });
+            refresh_clone();
+        }
+    });
+
+    // 2. Cambiar Aspecto
+    let multi_state = Arc::clone(&multimedia_state);
+    let refresh_clone = refresh_multimedia.clone();
+    ui.on_cambiar_aspecto_multimedia(move |idx, aspecto| {
+        let mut state = multi_state.lock().unwrap();
+        if let Some(item) = state.get_mut(idx as usize) {
+            item.aspecto = aspecto.to_string();
+        }
+        drop(state);
+        refresh_clone();
+    });
+
+    // 3. Eliminar Imagen
+    let multi_state = Arc::clone(&multimedia_state);
+    let refresh_clone = refresh_multimedia.clone();
+    let ui_handle = ui.as_weak();
+    ui.on_eliminar_multimedia(move |idx| {
+        let mut state = multi_state.lock().unwrap();
+        if (idx as usize) < state.len() {
+            state.remove(idx as usize);
+        }
+        drop(state);
+        let ui = ui_handle.unwrap();
+        ui.set_selected_media_idx(-1);
+        refresh_clone();
+    });
+
+    // 4. Proyectar (Doble clic a la pantalla secundaria)
+    let p_handle = proyector.as_weak();
+    let multi_state = Arc::clone(&multimedia_state);
+    let vp_sync = Arc::clone(&video_player);
+    ui.on_proyectar_multimedia(move |idx| {
+        let p = p_handle.unwrap();
+        let state = multi_state.lock().unwrap();
+        if let Some(item) = state.get(idx as usize) {
+            if let Ok(img) = slint::Image::load_from_path(std::path::Path::new(&item.path)) {
+                // Quitamos cualquier otro modo de video o texto
+                vp_sync.lock().unwrap().detener();
+                p.set_es_video(false);
+                p.set_bg_color(slint::Color::from_rgb_u8(0, 0, 0));
+                p.set_texto_proyeccion(slint::SharedString::from("")); 
+                p.set_referencia(slint::SharedString::from(""));
+                
+                // Aplicamos la imagen directamente sin panel oscuro (Opacidad Cero)
+                p.set_fondo_opacity(0.0);
+                p.set_fondo_imagen_aspecto(slint::SharedString::from(&item.aspecto));
+                p.set_fondo_imagen(img);
+                p.set_mostrar_imagen(true);
             }
         }
     });

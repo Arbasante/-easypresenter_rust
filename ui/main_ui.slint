@@ -17,6 +17,7 @@ export struct Canto { id: int, titulo: string, letra: string }
 export struct BookInfo { id: int, nombre: string, capitulos: int }
 export struct DiapositivaUI { orden: string, texto: string } 
 export struct ChapterRow { caps: [int] } 
+export struct MediaItem { id: int, nombre: string, path: string, img: image, aspecto: string }
 
 component MenuButton inherits Rectangle {
     in property <string> text; in property <string> icon; in property <bool> active: false; callback clicked;
@@ -92,6 +93,21 @@ export component AppWindow inherits Window {
     in-out property <int> biblias_selected_vid: -1;
     in-out property <int> cantos_selected_vid: -1;
 
+    // --- VARIABLES DE MULTIMEDIA (IMÁGENES GENERALES) ---
+    in property <[MediaItem]> multimedia_items: [];
+    in-out property <int> selected_media_idx: -1;
+    
+    // Para el clic derecho (Menú contextual)
+    in-out property <bool> mostrar_menu_media: false;
+    in-out property <int> menu_media_idx: -1;
+    in-out property <length> menu_media_x: 0px;
+    in-out property <length> menu_media_y: 0px;
+
+    callback agregar_multimedia();
+    callback eliminar_multimedia(int);
+    callback cambiar_aspecto_multimedia(int, string);
+    callback proyectar_multimedia(int);
+
     // Callbacks Galería y Legacy
     callback agregar_a_galeria(string);
     callback seleccionar_galeria_item(string, int);
@@ -158,12 +174,34 @@ export component AppWindow inherits Window {
                         HorizontalLayout { padding-left: 16px; padding-right: 16px; spacing: 8px; Text { text: "🖥️"; font-size: 16px; vertical-alignment: center; color: #0ea5e9; } Text { text: "EASY PRESENTER"; color: #f3f4f6; font-size: 13px; font-weight: 900; vertical-alignment: center; } }
                         Rectangle { y: parent.height - 1px; height: 1px; background: rgba(255, 255, 255, 0.08); }
                     }
-                    VerticalLayout { 
-                        padding-left: 12px; padding-right: 12px; padding-top: 12px; spacing: 4px; 
-                        MenuButton { icon: "🎵"; text: "Cantos"; active: root.active-tab == "cantos"; clicked => { root.active-tab = "cantos"; root.sync_estilos(); } } 
-                        MenuButton { icon: "📖"; text: "Biblias"; active: root.active-tab == "biblias"; clicked => { root.active-tab = "biblias"; root.sync_estilos(); } } 
-                        VerticalLayout { padding-top: 20px; padding-bottom: 6px; Text { text: "MULTIMEDIA"; color: #4b5563; font-size: 9px; font-weight: 700; } } 
-                        MenuButton { icon: "🖼️"; text: "Presentaciones"; active: false; } 
+                    VerticalLayout {
+                        padding-left: 12px; padding-right: 12px; padding-top: 12px; spacing: 4px;
+                        
+                        MenuButton { icon: "🎵"; text: "Cantos"; active: root.active-tab == "cantos"; clicked => { root.active-tab = "cantos"; root.sync_estilos(); } }
+                        MenuButton { icon: "📖"; text: "Biblias"; active: root.active-tab == "biblias"; clicked => { root.active-tab = "biblias"; root.sync_estilos(); } }
+
+                        // --- NUEVA SECCIÓN MULTIMEDIA ---
+                        VerticalLayout { padding-top: 20px; padding-bottom: 6px; Text { text: "MULTIMEDIA"; color: #4b5563; font-size: 9px; font-weight: 700; } }
+                        MenuButton { icon: "🖼️"; text: "Imágenes"; active: root.active-tab == "imagenes"; clicked => { root.active-tab = "imagenes"; root.sync_estilos(); } }
+                        MenuButton { icon: "🎞️"; text: "Videos"; active: root.active-tab == "videos"; clicked => { root.active-tab = "videos"; root.sync_estilos(); } }
+                        MenuButton { icon: "📄"; text: "Presentación PDF"; active: root.active-tab == "pdf"; clicked => { root.active-tab = "pdf"; root.sync_estilos(); } }
+
+                        // --- NUEVA SECCIÓN FAVORITOS ---
+                        VerticalLayout { padding-top: 20px; padding-bottom: 6px; Text { text: "FAVORITOS"; color: #4b5563; font-size: 9px; font-weight: 700; } }
+                        Rectangle {
+                            height: 120px; 
+                            background: #18181b; 
+                            border-radius: 6px;
+                            border-width: 1px;
+                            border-color: rgba(255, 255, 255, 0.05);
+                            Text {
+                                text: "Sin favoritos";
+                                color: #4b5563;
+                                font-size: 10px;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
                     }
                     Rectangle { vertical-stretch: 1; }
                 }
@@ -244,6 +282,21 @@ export component AppWindow inherits Window {
                                             }
                                         }
                                     }
+                                }
+                            }
+
+                            // ── VISTA PANEL CENTRAL PARA IMÁGENES MULTIMEDIA ──
+                            if (root.active-tab == "imagenes") : Rectangle {
+                                width: 100%; height: 100%; background: #18181b;
+                                if (root.selected_media_idx >= 0 && root.selected_media_idx < root.multimedia_items.length) : Image {
+                                    source: root.multimedia_items[root.selected_media_idx].img;
+                                    width: 100%; height: 100%;
+                                    image-fit: root.multimedia_items[root.selected_media_idx].aspecto == "rellenar" ? cover : (root.multimedia_items[root.selected_media_idx].aspecto == "estirar" ? fill : contain);
+                                }
+                                if (root.selected_media_idx == -1 || root.multimedia_items.length == 0) : VerticalLayout {
+                                    alignment: center; spacing: 16px;
+                                    Text { text: "🖼️"; color: #374151; font-size: 48px; horizontal-alignment: center; }
+                                    Text { text: "SELECCIONA UNA IMAGEN DE LA BIBLIOTECA"; color: #374151; font-size: 13px; font-weight: 700; horizontal-alignment: center; }
                                 }
                             }
                         }
@@ -383,6 +436,54 @@ export component AppWindow inherits Window {
                                 }
                             }
                         }
+
+                        // ── TAB IMÁGENES MULTIMEDIA ──
+                        if (root.active-tab == "imagenes") : Rectangle {
+                            vertical-stretch: 1; background: rgba(0, 0, 0, 0.3);
+                            TouchArea {
+                                // Clic derecho en el fondo vacío para agregar
+                                pointer-event(e) => {
+                                    if (e.button == PointerEventButton.right && e.kind == PointerEventKind.up) {
+                                        root.menu_media_idx = -1; // -1 significa que no se seleccionó ninguna en específico
+                                        root.menu_media_x = self.absolute-position.x + self.mouse-x;
+                                        root.menu_media_y = self.absolute-position.y + self.mouse-y;
+                                        root.mostrar_menu_media = true;
+                                    }
+                                }
+                                ScrollView {
+                                    VerticalLayout {
+                                        padding: 8px; spacing: 8px;
+                                        for item[idx] in root.multimedia_items : Rectangle {
+                                            height: 52px; border-radius: 6px;
+                                            background: root.selected_media_idx == idx ? rgba(14, 165, 233, 0.2) : (touch-media.has-hover ? rgba(255, 255, 255, 0.05) : transparent);
+                                            touch-media := TouchArea {
+                                                clicked => { root.selected_media_idx = idx; }
+                                                double-clicked => { root.proyectar_multimedia(idx); }
+                                                pointer-event(e) => {
+                                                    if (e.button == PointerEventButton.right && e.kind == PointerEventKind.up) {
+                                                        root.menu_media_idx = idx;
+                                                        root.menu_media_x = self.absolute-position.x + self.mouse-x;
+                                                        root.menu_media_y = self.absolute-position.y + self.mouse-y;
+                                                        root.mostrar_menu_media = true;
+                                                    }
+                                                }
+                                            }
+                                            HorizontalLayout {
+                                                padding: 6px; spacing: 12px;
+                                                Rectangle {
+                                                    width: 72px; height: 40px; border-radius: 4px; clip: true; background: #000;
+                                                    Image { 
+                                                        source: item.img; width: 100%; height: 100%; 
+                                                        image-fit: item.aspecto == "rellenar" ? cover : (item.aspecto == "estirar" ? fill : contain); 
+                                                    }
+                                                }
+                                                Text { text: item.nombre; color: #f3f4f6; font-size: 11px; font-weight: 700; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
 
                     // Botón personalizar
@@ -408,6 +509,60 @@ export component AppWindow inherits Window {
                             touch-proyector := TouchArea { clicked => { root.abrir_proyector(); } }
                             HorizontalLayout { alignment: center; spacing: 8px; Text { text: "📽"; font-size: 14px; color: white; vertical-alignment: center; } Text { text: "ABRIR PROYECTOR"; font-size: 11px; font-weight: 800; letter-spacing: 1px; color: white; vertical-alignment: center; } }
                         }
+                    }
+                }
+            }
+        }
+    }
+
+
+    // ══════════════════════════════════════════
+    // MENÚ CONTEXTUAL MULTIMEDIA IMÁGENES
+    // ══════════════════════════════════════════
+    if (root.mostrar_menu_media) : Rectangle {
+        width: 100%; height: 100%; background: transparent;
+        TouchArea { clicked => { root.mostrar_menu_media = false; } }
+        Rectangle {
+            x: root.menu_media_x; y: root.menu_media_y;
+            width: 170px; height: root.menu_media_idx != -1 ? 144px : 40px;
+            background: #1e1e1e; border-radius: 8px; border-width: 1px; border-color: #374151;
+            drop-shadow-color: rgba(0,0,0,0.6); drop-shadow-blur: 16px;
+            TouchArea {} // Evitar clics falsos hacia atrás
+            VerticalLayout {
+                padding: 4px;
+                // AGREGAR
+                Rectangle {
+                    height: 32px; background: touch-add-m.has-hover ? rgba(14,165,233,0.15) : transparent; border-radius: 4px;
+                    touch-add-m := TouchArea { clicked => { root.mostrar_menu_media = false; root.agregar_multimedia(); } }
+                    HorizontalLayout { padding-left: 10px; spacing: 8px; Text { text: "+"; color: #0ea5e9; font-weight: 900; vertical-alignment: center; font-size: 14px;} Text { text: "Agregar imagen"; color: white; font-size: 11px; vertical-alignment: center; font-weight: 600; } }
+                }
+                if (root.menu_media_idx != -1) : Rectangle { height: 1px; background: #2d2d2d; }
+                
+                if (root.menu_media_idx != -1) : VerticalLayout {
+                    // ASPECTO CENTRO
+                    Rectangle {
+                        height: 32px; background: touch-asp-c.has-hover ? rgba(255,255,255,0.05) : transparent; border-radius: 4px;
+                        touch-asp-c := TouchArea { clicked => { root.mostrar_menu_media = false; root.cambiar_aspecto_multimedia(root.menu_media_idx, "centro"); } }
+                        Text { text: "Aspecto: Centro"; color: white; font-size: 11px; vertical-alignment: center; x: 10px; font-weight: 600;}
+                    }
+                    // ASPECTO RELLENAR
+                    Rectangle {
+                        height: 32px; background: touch-asp-r.has-hover ? rgba(255,255,255,0.05) : transparent; border-radius: 4px;
+                        touch-asp-r := TouchArea { clicked => { root.mostrar_menu_media = false; root.cambiar_aspecto_multimedia(root.menu_media_idx, "rellenar"); } }
+                        Text { text: "Aspecto: Rellenar"; color: white; font-size: 11px; vertical-alignment: center; x: 10px; font-weight: 600;}
+                    }
+                    // ASPECTO ESTIRAR
+                    Rectangle {
+                        height: 32px; background: touch-asp-e.has-hover ? rgba(255,255,255,0.05) : transparent; border-radius: 4px;
+                        touch-asp-e := TouchArea { clicked => { root.mostrar_menu_media = false; root.cambiar_aspecto_multimedia(root.menu_media_idx, "estirar"); } }
+                        Text { text: "Aspecto: Estirar"; color: white; font-size: 11px; vertical-alignment: center; x: 10px; font-weight: 600;}
+                    }
+                    Rectangle { height: 1px; background: #2d2d2d; }
+                    // ELIMINAR
+                    Rectangle {
+                        height: 32px; background: touch-del-m.has-hover ? rgba(220,38,38,0.15) : transparent; border-radius: 4px;
+                        touch-del-m := TouchArea { clicked => { root.mostrar_menu_media = false; root.eliminar_multimedia(root.menu_media_idx); } }
+                        Text { text: "Eliminar imagen"; color: #f87171; font-size: 11px; vertical-alignment: center; x: 10px; font-weight: 700;}
                     }
                 }
             }

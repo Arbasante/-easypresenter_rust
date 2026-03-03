@@ -1,5 +1,5 @@
 use rusqlite::{Connection, Result};
-use slint::{ModelRc, SharedString, VecModel, ComponentHandle, Image, SharedPixelBuffer, Rgba8Pixel};
+use slint::{ModelRc, SharedString, VecModel, ComponentHandle, SharedPixelBuffer, Rgba8Pixel};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::rc::Rc;
@@ -197,11 +197,18 @@ fn mover_proyector_a_pantalla(p_weak: slint::Weak<ProjectorWindow>, x: i32, y: i
     }
 }
 
-fn calcular_font_size(texto: &str, tiene_referencia: bool) -> f32 {
-    let ancho_util: f32 = 1280.0 - 120.0; 
-    let alto_util: f32 = if tiene_referencia { 720.0 - 180.0 } else { 720.0 - 120.0 };
-    let char_width_factor: f32 = 0.58;
-    let line_height_factor: f32 = 1.40;
+fn calcular_font_size(texto: &str, tiene_referencia: bool, screen_w: f32, screen_h: f32) -> f32 {
+    // 1. Definimos márgenes (padding) razonables
+    let padding_w: f32 = 140.0; // 70px a cada lado
+    let padding_h: f32 = if tiene_referencia { 200.0 } else { 120.0 }; 
+    
+    // Si por algún motivo falla la detección, asumimos un mínimo de seguridad
+    let ancho_util = (screen_w - padding_w).max(800.0);
+    let alto_util = (screen_h - padding_h).max(600.0);
+
+    // 2. Factores de fuente Sans-Serif (ancho de letra e interlineado)
+    let char_width_factor: f32 = 0.55; 
+    let line_height_factor: f32 = 1.25;
 
     let estimar_lineas = |font_size: f32| -> f32 {
         let chars_por_linea = (ancho_util / (font_size * char_width_factor)).floor().max(1.0);
@@ -209,7 +216,7 @@ fn calcular_font_size(texto: &str, tiene_referencia: bool) -> f32 {
         for linea in texto.lines() {
             let chars = linea.chars().count() as f32;
             if chars == 0.0 {
-                total_lineas += 0.5;
+                total_lineas += 0.3; // Salto de línea vacío
             } else {
                 total_lineas += (chars / chars_por_linea).ceil();
             }
@@ -218,21 +225,30 @@ fn calcular_font_size(texto: &str, tiene_referencia: bool) -> f32 {
     };
 
     let mut min_size: f32 = 20.0;
-    let mut max_size: f32 = 160.0;
+    let mut max_size: f32 = 300.0; // Aumentamos el techo para pantallas 1080p o 4K
 
-    for _ in 0..25 {
+    for _ in 0..30 { // Más iteraciones para mayor precisión
         let mid = (min_size + max_size) / 2.0;
         let lineas = estimar_lineas(mid);
         let alto_necesario = lineas * mid * line_height_factor;
 
-        if alto_necesario <= alto_util {
+        // Validamos que la palabra más larga no se corte horizontalmente
+        let max_word_len = texto.split_whitespace().map(|w| w.chars().count()).max().unwrap_or(1) as f32;
+        let ancho_max_palabra = max_word_len * mid * char_width_factor;
+
+        if alto_necesario <= alto_util && ancho_max_palabra <= ancho_util {
             min_size = mid;
         } else {
             max_size = mid;
         }
     }
 
-    (min_size * 0.90).clamp(26.0, 150.0)
+    // 3. Aplicamos un multiplicador de seguridad (92% del tamaño máximo posible)
+    let size_final = min_size * 0.92;
+    
+    // Limitamos a un máximo del 18% del alto de la pantalla para que versículos
+    // de 3 palabras no se vean grotescamente gigantes.
+    size_final.clamp(30.0, screen_h * 0.18)
 }
 
 struct NativeVideoPlayer {
@@ -550,7 +566,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 };
 
                 let texto_nuevo = diapos_slint[idx_a_proyectar].texto.clone();
-                let font_size = calcular_font_size(&texto_nuevo, false);
+                let font_size = calcular_font_size(&texto_nuevo, false, 1920.0, 1080.0);
                 p.set_texto_proyeccion(texto_nuevo);
                 p.set_tamano_letra(font_size);
                 p.set_referencia(SharedString::from(""));
@@ -626,6 +642,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let vp_proy = Arc::clone(&video_player);
     let last_modo = Arc::new(Mutex::new(String::new()));
 
+    let segunda_pantalla_proy = Arc::clone(&segunda_pantalla);
+
     ui.on_proyectar_estrofa(move |texto, referencia| {
         let p = proyector_handle.unwrap();
         let ui = ui_h_proy.unwrap();
@@ -641,18 +659,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         p.set_referencia(SharedString::from(ref_str.clone()));
         
         let tiene_referencia = !ref_str.is_empty();
-        let font_size = calcular_font_size(&texto, tiene_referencia);
+
+        // ¡NUEVO! Obtenemos el ancho y alto real de la pantalla
+        let info = *segunda_pantalla_proy.lock().unwrap();
+        let (screen_w, screen_h) = if let Some((_, _, w, h)) = info {
+            (w as f32, h as f32)
+        } else {
+            (1280.0, 720.0) // Resolución de emergencia por defecto
+        };
+
+        // Pasamos las medidas al calculador
+        let font_size = calcular_font_size(&texto, tiene_referencia, screen_w, screen_h);
         p.set_tamano_letra(font_size);
 
-        // AQUÍ LA MAGIA: Al proyectar, detectamos si es un canto o una biblia
         let modo_actual = if tiene_referencia { "biblias" } else { "cantos" };
         let mut l_modo = last_modo.lock().unwrap();
         
-        // Solo ordenamos que el video reinicie SI cambiamos de categoría (ej: Canto -> Biblia)
         let forzar_video = *l_modo != modo_actual; 
         *l_modo = modo_actual.to_string();
         
-        // Aplicamos el estilo que corresponde automáticamente
         aplicar_estilos(&ui, &p, &vp_proy, modo_actual, forzar_video);
     });
 

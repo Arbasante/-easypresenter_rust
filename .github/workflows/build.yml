@@ -7,29 +7,29 @@ on:
 
 jobs:
   build:
-    name: Compilar en ${{ matrix.os_name }}
+    name: Compilar para ${{ matrix.target_name }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os_name: Linux (Ubuntu)
-            os: ubuntu-22.04
+          - target_name: Linux (Ubuntu)
+            os: ubuntu-latest
             rust_version: stable
             artifact_name: EasyPresenter-Linux.deb
             is_linux: true
             is_windows: false
 
-          - os_name: Windows 10-11
+          - target_name: Windows 10-11
             os: windows-latest
             rust_version: stable
             artifact_name: EasyPresenter-Win10-11.exe
             is_linux: false
             is_windows: true
 
-          - os_name: Windows 7
-            os: windows-2019
-            rust_version: 1.77.2 # Versión máxima para compatibilidad con Win 7
+          - target_name: Windows 7
+            os: windows-latest # 🟢 CAMBIADO: Ahora usa la VM rápida
+            rust_version: 1.77.2 # 🟢 CLAVE: Esta versión mantiene la compatibilidad
             artifact_name: EasyPresenter-Win7.exe
             is_linux: false
             is_windows: true
@@ -50,7 +50,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libx11-dev libxkbcommon-dev libfontconfig1-dev libasound2-dev libsqlite3-dev libunwind-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
 
-      # --- BLOQUE WINDOWS ---
+      # --- BLOQUE WINDOWS (Igual para ambos Windows) ---
       - name: Instalar GStreamer (Windows)
         if: matrix.is_windows
         run: |
@@ -65,12 +65,13 @@ jobs:
           echo "PKG_CONFIG_PATH=C:\gstreamer\1.0\msvc_x86_64\lib\pkgconfig" >> $env:GITHUB_ENV
           echo "PATH=C:\gstreamer\1.0\msvc_x86_64\bin;C:\gstreamer\1.0\msvc_x86_64\lib;$env:PATH" >> $env:GITHUB_ENV
 
-      - name: Descargar MSI de GStreamer para el Instalador (Windows)
+      - name: Descargar MSI de GStreamer (Saltando el Bloqueo)
         if: matrix.is_windows
         shell: pwsh
         run: |
-          # Descargamos el Runtime que Inno Setup meterá dentro del .exe final
-          Invoke-WebRequest -Uri "https://gstreamer.freedesktop.org/data/pkg/windows/1.22.10/msvc/gstreamer-1.0-msvc-x86_64-1.22.10.msi" -OutFile "gstreamer-runtime.msi"
+          curl.exe -L -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" `
+          -o "gstreamer-runtime.msi" `
+          "https://gstreamer.freedesktop.org/data/pkg/windows/1.22.10/msvc/gstreamer-1.0-msvc-x86_64-1.22.10.msi"
 
       # --- COMPILACIÓN RUST ---
       - name: Compilar Proyecto (Release)

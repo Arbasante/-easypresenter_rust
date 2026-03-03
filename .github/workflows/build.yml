@@ -14,7 +14,7 @@ jobs:
       matrix:
         include:
           - target_name: Linux (Ubuntu)
-            os: ubuntu-latest
+            os: ubuntu-22.04
             rust_version: stable
             artifact_name: EasyPresenter-Linux.deb
             is_linux: true
@@ -51,37 +51,42 @@ jobs:
           sudo apt-get install -y libx11-dev libxkbcommon-dev libfontconfig1-dev libasound2-dev libsqlite3-dev libunwind-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
 
       # --- BLOQUE WINDOWS ---
-      - name: Instalar GStreamer y PkgConf (Windows)
-        if: matrix.is_windows
-        run: |
-          # 🟢 FIX: Usamos pkgconf (moderno) en lugar de pkgconfiglite (obsoleto)
-          choco install pkgconf -y
-          choco install gstreamer gstreamer-devel -y
-
-      - name: Configurar Variables de Entorno (Windows)
+      - name: Descargar e Instalar GStreamer (Windows)
         if: matrix.is_windows
         shell: pwsh
         run: |
-          # 🟢 FIX: Le decimos a Rust que use explícitamente el nuevo pkgconf
-          echo "PKG_CONFIG=pkgconf" >> $env:GITHUB_ENV
-          echo "GSTREAMER_1_0_ROOT_X86_64=C:\gstreamer\1.0\msvc_x86_64\" >> $env:GITHUB_ENV
-          echo "PKG_CONFIG_PATH=C:\gstreamer\1.0\msvc_x86_64\lib\pkgconfig" >> $env:GITHUB_ENV
-          echo "PATH=C:\gstreamer\1.0\msvc_x86_64\bin;C:\gstreamer\1.0\msvc_x86_64\lib;$env:PATH" >> $env:GITHUB_ENV
+          $Version = "1.22.10"
+          $RuntimeUrl = "https://gstreamer.freedesktop.org/data/pkg/windows/${Version}/msvc/gstreamer-1.0-msvc-x86_64-${Version}.msi"
+          $DevelUrl = "https://gstreamer.freedesktop.org/data/pkg/windows/${Version}/msvc/gstreamer-1.0-devel-msvc-x86_64-${Version}.msi"
+          
+          echo "Descargando instaladores oficiales de GStreamer..."
+          curl.exe -L -A "Mozilla/5.0" -o runtime.msi $RuntimeUrl
+          curl.exe -L -A "Mozilla/5.0" -o devel.msi $DevelUrl
+          
+          echo "Instalando Runtime (Silencioso)..."
+          Start-Process msiexec.exe -Wait -ArgumentList '/i runtime.msi /quiet /norestart'
+          
+          echo "Instalando Devel (Silencioso)..."
+          Start-Process msiexec.exe -Wait -ArgumentList '/i devel.msi /quiet /norestart'
+          
+          echo "Copiando runtime para el empaquetador Inno Setup..."
+          Copy-Item runtime.msi "gstreamer-runtime.msi"
 
-      - name: Descargar MSI de GStreamer (Saltando el Bloqueo)
+      - name: Configurar Entorno GStreamer (Windows)
         if: matrix.is_windows
         shell: pwsh
         run: |
-          curl.exe -L -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" `
-          -o "gstreamer-runtime.msi" `
-          "https://gstreamer.freedesktop.org/data/pkg/windows/1.22.10/msvc/gstreamer-1.0-msvc-x86_64-1.22.10.msi"
+          $GstPath = "C:\gstreamer\1.0\msvc_x86_64"
+          echo "GSTREAMER_1_0_ROOT_X86_64=$GstPath" >> $env:GITHUB_ENV
+          echo "PKG_CONFIG_PATH=$GstPath\lib\pkgconfig" >> $env:GITHUB_ENV
+          # GStreamer trae su propio pkg-config.exe, lo ponemos de primero en el PATH
+          echo "$GstPath\bin" >> $env:GITHUB_PATH
 
-      # --- 🟢 FIX DEL CARGO.LOCK PARA WINDOWS 7 ---
-      - name: Borrar Cargo.lock incompatible (Solo Win 7)
+      # --- REPARACIÓN DE CARGO.LOCK PARA WINDOWS 7 ---
+      - name: Eliminar Cargo.lock (Compatibilidad Win 7)
         if: matrix.target_name == 'Windows 7'
-        shell: pwsh
-        run: |
-          if (Test-Path "Cargo.lock") { Remove-Item "Cargo.lock" }
+        shell: bash
+        run: rm -f Cargo.lock
 
       # --- COMPILACIÓN RUST ---
       - name: Compilar Proyecto (Release)
@@ -95,11 +100,12 @@ jobs:
           cargo deb
           cp target/debian/*.deb ${{ matrix.artifact_name }}
 
-      - name: Generar Instalador .exe (Windows)
+      - name: Generar Instalador Inno Setup (Windows)
         if: matrix.is_windows
-        uses: joncloud/makensis-action@v4
-        with:
-          script-file: "installer.iss"
+        shell: pwsh
+        run: |
+          # FIX: Usamos Inno Setup (ISCC.exe) directamente, ya viene instalado en GitHub!
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
 
       - name: Mover y Renombrar Instalador (Windows)
         if: matrix.is_windows

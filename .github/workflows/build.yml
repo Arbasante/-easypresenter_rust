@@ -19,6 +19,7 @@ jobs:
             artifact_name: EasyPresenter-Linux.deb
             is_linux: true
             is_windows: false
+            is_win7: false
 
           - target_name: Windows 10-11
             os: windows-latest
@@ -26,13 +27,15 @@ jobs:
             artifact_name: EasyPresenter-Win10-11.exe
             is_linux: false
             is_windows: true
+            is_win7: false
 
           - target_name: Windows 7
             os: windows-latest
-            rust_version: 1.77.2
+            rust_version: "1.77.2"
             artifact_name: EasyPresenter-Win7.exe
             is_linux: false
             is_windows: true
+            is_win7: true
 
     steps:
       - name: Descargar el código
@@ -43,33 +46,35 @@ jobs:
         with:
           toolchain: ${{ matrix.rust_version }}
 
-      # --- BLOQUE LINUX ---
+      # ── LINUX ──────────────────────────────────────────────────────────────
       - name: Instalar Dependencias (Linux)
         if: matrix.is_linux
         run: |
           sudo apt-get update
-          sudo apt-get install -y libx11-dev libxkbcommon-dev libfontconfig1-dev libasound2-dev libsqlite3-dev libunwind-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
+          sudo apt-get install -y \
+            libx11-dev libxkbcommon-dev libfontconfig1-dev \
+            libasound2-dev libsqlite3-dev libunwind-dev \
+            libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
 
-      # --- BLOQUE WINDOWS ---
+      # ── WINDOWS ────────────────────────────────────────────────────────────
       - name: Descargar e Instalar GStreamer (Windows)
         if: matrix.is_windows
         shell: pwsh
         run: |
           $Version = "1.22.10"
           $RuntimeUrl = "https://gstreamer.freedesktop.org/data/pkg/windows/${Version}/msvc/gstreamer-1.0-msvc-x86_64-${Version}.msi"
-          $DevelUrl = "https://gstreamer.freedesktop.org/data/pkg/windows/${Version}/msvc/gstreamer-1.0-devel-msvc-x86_64-${Version}.msi"
-          
-          echo "Descargando instaladores oficiales de GStreamer..."
+          $DevelUrl   = "https://gstreamer.freedesktop.org/data/pkg/windows/${Version}/msvc/gstreamer-1.0-devel-msvc-x86_64-${Version}.msi"
+
+          Write-Host "Descargando GStreamer $Version..."
           curl.exe -L -A "Mozilla/5.0" -o runtime.msi $RuntimeUrl
-          curl.exe -L -A "Mozilla/5.0" -o devel.msi $DevelUrl
-          
-          echo "Instalando Runtime (Silencioso)..."
+          curl.exe -L -A "Mozilla/5.0" -o devel.msi   $DevelUrl
+
+          Write-Host "Instalando Runtime..."
           Start-Process msiexec.exe -Wait -ArgumentList '/i runtime.msi /quiet /norestart'
-          
-          echo "Instalando Devel (Silencioso)..."
+
+          Write-Host "Instalando Devel..."
           Start-Process msiexec.exe -Wait -ArgumentList '/i devel.msi /quiet /norestart'
-          
-          echo "Copiando runtime para el empaquetador Inno Setup..."
+
           Copy-Item runtime.msi "gstreamer-runtime.msi"
 
       - name: Configurar Entorno GStreamer (Windows)
@@ -77,22 +82,34 @@ jobs:
         shell: pwsh
         run: |
           $GstPath = "C:\gstreamer\1.0\msvc_x86_64"
-          echo "GSTREAMER_1_0_ROOT_X86_64=$GstPath" >> $env:GITHUB_ENV
-          echo "PKG_CONFIG_PATH=$GstPath\lib\pkgconfig" >> $env:GITHUB_ENV
-          # GStreamer trae su propio pkg-config.exe, lo ponemos de primero en el PATH
-          echo "$GstPath\bin" >> $env:GITHUB_PATH
 
-      # --- REPARACIÓN DE CARGO.LOCK PARA WINDOWS 7 ---
-      - name: Eliminar Cargo.lock (Compatibilidad Win 7)
-        if: matrix.target_name == 'Windows 7'
+          # FIX pkg-config: apuntar al ejecutable directamente
+          echo "PKG_CONFIG=$GstPath\bin\pkg-config.exe"  >> $env:GITHUB_ENV
+          echo "PKG_CONFIG_PATH=$GstPath\lib\pkgconfig"  >> $env:GITHUB_ENV
+          echo "GSTREAMER_1_0_ROOT_X86_64=$GstPath"      >> $env:GITHUB_ENV
+          echo "$GstPath\bin"                             >> $env:GITHUB_PATH
+
+      # ── PREPARACIÓN WIN 7 ──────────────────────────────────────────────────
+      - name: Preparar dependencias para Win 7 (bajar Slint a 1.8.0)
+        if: matrix.is_win7
         shell: bash
-        run: rm -f Cargo.lock
+        run: |
+          # Eliminamos el lock existente (puede tener slint 1.15 cacheado)
+          rm -f Cargo.lock
 
-      # --- COMPILACIÓN RUST ---
+          # Bajamos Slint y sus sub-crates a 1.8.0 antes de compilar.
+          # IMPORTANTE: tu Cargo.toml debe tener slint = "1" (no "=1.15.x")
+          cargo +1.77.2 update -p slint               --precise 1.8.0
+          cargo +1.77.2 update -p slint-build          --precise 1.8.0
+          cargo +1.77.2 update -p i-slint-core         --precise 1.8.0 || true
+          cargo +1.77.2 update -p i-slint-compiler     --precise 1.8.0 || true
+          cargo +1.77.2 update -p i-slint-backend-winit --precise 1.8.0 || true
+
+      # ── COMPILACIÓN ────────────────────────────────────────────────────────
       - name: Compilar Proyecto (Release)
         run: cargo build --release
 
-      # --- CREACIÓN DE INSTALADORES ---
+      # ── EMPAQUETADO ────────────────────────────────────────────────────────
       - name: Generar .deb (Linux)
         if: matrix.is_linux
         run: |
@@ -104,10 +121,9 @@ jobs:
         if: matrix.is_windows
         shell: pwsh
         run: |
-          # FIX: Usamos Inno Setup (ISCC.exe) directamente, ya viene instalado en GitHub!
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
 
-      - name: Mover y Renombrar Instalador (Windows)
+      - name: Mover Instalador (Windows)
         if: matrix.is_windows
         shell: pwsh
         run: |
@@ -115,7 +131,7 @@ jobs:
             Move-Item "Output/Instalar_EasyPresenter_v1.0.exe" "${{ matrix.artifact_name }}"
           }
 
-      # --- SUBIDA DE RESULTADOS ---
+      # ── ARTEFACTOS ─────────────────────────────────────────────────────────
       - name: Subir Artefacto Terminado
         uses: actions/upload-artifact@v4
         with:

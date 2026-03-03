@@ -1,6 +1,5 @@
 name: Compilar EasyPresenter Release
 
-# Solo se ejecuta cuando subes un tag que empiece con "v" (ej: v1.0.0, v2.1)
 on:
   push:
     tags:
@@ -14,27 +13,17 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # --- 1. LINUX (.deb) ---
           - os_name: Linux (Ubuntu)
             os: ubuntu-22.04
-            rust_version: stable
+            rust_version: 1.15.1 # Usamos la misma de Slint
             artifact_name: EasyPresenter-Linux.deb
             is_linux: true
             is_windows: false
 
-          # --- 2. WINDOWS 10/11 (Rust Nuevo) ---
           - os_name: Windows 10/11
             os: windows-latest
             rust_version: stable
-            artifact_name: EasyPresenter-Win10-11.zip
-            is_linux: false
-            is_windows: true
-
-          # --- 3. WINDOWS 7 (Rust Antiguo) ---
-          - os_name: Windows 7
-            os: windows-2019 # Usamos un runner un poco más antiguo por estabilidad
-            rust_version: 1.77.2 # ÚLTIMA VERSIÓN DE RUST QUE SOPORTA WIN 7
-            artifact_name: EasyPresenter-Win7.zip
+            artifact_name: EasyPresenter-Win10-11.exe # Ahora será el instalador
             is_linux: false
             is_windows: true
 
@@ -42,19 +31,19 @@ jobs:
       - name: Descargar el código
         uses: actions/checkout@v4
 
-      - name: Configurar Rust (${{ matrix.rust_version }})
+      - name: Configurar Rust
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ matrix.rust_version }}
 
-      # Dependencias para compilar en Linux
+      # SOLUCIÓN AL ERROR DE DEPENDENCIAS EN LINUX
       - name: Instalar Dependencias (Linux)
         if: matrix.is_linux
         run: |
           sudo apt-get update
-          sudo apt-get install -y libx11-dev libxkbcommon-dev libfontconfig1-dev libasound2-dev libsqlite3-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
+          sudo apt-get install -y --fix-broken
+          sudo apt-get install -y libx11-dev libxkbcommon-dev libfontconfig1-dev libasound2-dev libsqlite3-dev libunwind-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
 
-      # Dependencias para compilar en Windows
       - name: Instalar Dependencias (Windows)
         if: matrix.is_windows
         run: |
@@ -64,7 +53,7 @@ jobs:
       - name: Compilar Proyecto (Release)
         run: cargo build --release
 
-      # Creación del paquete .deb para Linux
+      # EMPAQUETADO LINUX
       - name: Empaquetar .deb (Linux)
         if: matrix.is_linux
         run: |
@@ -72,12 +61,16 @@ jobs:
           cargo deb
           cp target/debian/*.deb ${{ matrix.artifact_name }}
 
-      # Creación del ZIP para Windows (como base para tu futuro instalador)
-      - name: Empaquetar Binario (Windows)
+      # EMPAQUETADO WINDOWS CON INNO SETUP
+      - name: Compilar Instalador Inno Setup
         if: matrix.is_windows
-        run: |
-          # Reemplaza 'easy-presenter-slint' por el nombre exacto de tu ejecutable si es distinto
-          Compress-Archive -Path target\release\easy-presenter-slint.exe -DestinationPath ${{ matrix.artifact_name }}
+        uses: joncloud/makensis-action@v4
+        with:
+          script-file: "installer.iss" # Asegúrate de que el archivo se llame así en tu repo
+
+      - name: Renombrar Instalador (Windows)
+        if: matrix.is_windows
+        run: mv Output/Instalar_EasyPresenter_v1.0.exe ${{ matrix.artifact_name }}
 
       - name: Subir Artefacto Terminado
         uses: actions/upload-artifact@v4

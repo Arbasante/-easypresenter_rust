@@ -15,15 +15,22 @@ jobs:
         include:
           - os_name: Linux (Ubuntu)
             os: ubuntu-22.04
-            rust_version: 1.15.1 # Usamos la misma de Slint
+            rust_version: stable
             artifact_name: EasyPresenter-Linux.deb
             is_linux: true
             is_windows: false
 
-          - os_name: Windows 10/11
+          - os_name: Windows 10-11
             os: windows-latest
             rust_version: stable
-            artifact_name: EasyPresenter-Win10-11.exe # Ahora será el instalador
+            artifact_name: EasyPresenter-Win10-11.exe
+            is_linux: false
+            is_windows: true
+
+          - os_name: Windows 7
+            os: windows-2019
+            rust_version: 1.77.2 # Versión máxima para compatibilidad con Win 7
+            artifact_name: EasyPresenter-Win7.exe
             is_linux: false
             is_windows: true
 
@@ -31,47 +38,67 @@ jobs:
       - name: Descargar el código
         uses: actions/checkout@v4
 
-      - name: Configurar Rust
+      - name: Configurar Rust (${{ matrix.rust_version }})
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ matrix.rust_version }}
 
-      # SOLUCIÓN AL ERROR DE DEPENDENCIAS EN LINUX
+      # --- BLOQUE LINUX ---
       - name: Instalar Dependencias (Linux)
         if: matrix.is_linux
         run: |
           sudo apt-get update
-          sudo apt-get install -y --fix-broken
           sudo apt-get install -y libx11-dev libxkbcommon-dev libfontconfig1-dev libasound2-dev libsqlite3-dev libunwind-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
 
-      - name: Instalar Dependencias (Windows)
+      # --- BLOQUE WINDOWS ---
+      - name: Instalar GStreamer (Windows)
         if: matrix.is_windows
         run: |
           choco install pkgconfiglite
-          choco install gstreamer gstreamer-devel
+          choco install gstreamer gstreamer-devel -y
 
+      - name: Configurar Variables de Entorno (Windows)
+        if: matrix.is_windows
+        shell: pwsh
+        run: |
+          echo "GSTREAMER_1_0_ROOT_X86_64=C:\gstreamer\1.0\msvc_x86_64\" >> $env:GITHUB_ENV
+          echo "PKG_CONFIG_PATH=C:\gstreamer\1.0\msvc_x86_64\lib\pkgconfig" >> $env:GITHUB_ENV
+          echo "PATH=C:\gstreamer\1.0\msvc_x86_64\bin;C:\gstreamer\1.0\msvc_x86_64\lib;$env:PATH" >> $env:GITHUB_ENV
+
+      - name: Descargar MSI de GStreamer para el Instalador (Windows)
+        if: matrix.is_windows
+        shell: pwsh
+        run: |
+          # Descargamos el Runtime que Inno Setup meterá dentro del .exe final
+          Invoke-WebRequest -Uri "https://gstreamer.freedesktop.org/data/pkg/windows/1.22.10/msvc/gstreamer-1.0-msvc-x86_64-1.22.10.msi" -OutFile "gstreamer-runtime.msi"
+
+      # --- COMPILACIÓN RUST ---
       - name: Compilar Proyecto (Release)
         run: cargo build --release
 
-      # EMPAQUETADO LINUX
-      - name: Empaquetar .deb (Linux)
+      # --- CREACIÓN DE INSTALADORES ---
+      - name: Generar .deb (Linux)
         if: matrix.is_linux
         run: |
           cargo install cargo-deb
           cargo deb
           cp target/debian/*.deb ${{ matrix.artifact_name }}
 
-      # EMPAQUETADO WINDOWS CON INNO SETUP
-      - name: Compilar Instalador Inno Setup
+      - name: Generar Instalador .exe (Windows)
         if: matrix.is_windows
         uses: joncloud/makensis-action@v4
         with:
-          script-file: "installer.iss" # Asegúrate de que el archivo se llame así en tu repo
+          script-file: "installer.iss"
 
-      - name: Renombrar Instalador (Windows)
+      - name: Mover y Renombrar Instalador (Windows)
         if: matrix.is_windows
-        run: mv Output/Instalar_EasyPresenter_v1.0.exe ${{ matrix.artifact_name }}
+        shell: pwsh
+        run: |
+          if (Test-Path "Output/Instalar_EasyPresenter_v1.0.exe") {
+            Move-Item "Output/Instalar_EasyPresenter_v1.0.exe" "${{ matrix.artifact_name }}"
+          }
 
+      # --- SUBIDA DE RESULTADOS ---
       - name: Subir Artefacto Terminado
         uses: actions/upload-artifact@v4
         with:

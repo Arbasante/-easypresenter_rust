@@ -28,8 +28,8 @@ jobs:
             is_windows: true
 
           - target_name: Windows 7
-            os: windows-latest # 🟢 CAMBIADO: Ahora usa la VM rápida
-            rust_version: 1.77.2 # 🟢 CLAVE: Esta versión mantiene la compatibilidad
+            os: windows-latest
+            rust_version: 1.77.2
             artifact_name: EasyPresenter-Win7.exe
             is_linux: false
             is_windows: true
@@ -50,17 +50,20 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libx11-dev libxkbcommon-dev libfontconfig1-dev libasound2-dev libsqlite3-dev libunwind-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
 
-      # --- BLOQUE WINDOWS (Igual para ambos Windows) ---
-      - name: Instalar GStreamer (Windows)
+      # --- BLOQUE WINDOWS ---
+      - name: Instalar GStreamer y PkgConf (Windows)
         if: matrix.is_windows
         run: |
-          choco install pkgconfiglite
+          # 🟢 FIX: Usamos pkgconf (moderno) en lugar de pkgconfiglite (obsoleto)
+          choco install pkgconf -y
           choco install gstreamer gstreamer-devel -y
 
       - name: Configurar Variables de Entorno (Windows)
         if: matrix.is_windows
         shell: pwsh
         run: |
+          # 🟢 FIX: Le decimos a Rust que use explícitamente el nuevo pkgconf
+          echo "PKG_CONFIG=pkgconf" >> $env:GITHUB_ENV
           echo "GSTREAMER_1_0_ROOT_X86_64=C:\gstreamer\1.0\msvc_x86_64\" >> $env:GITHUB_ENV
           echo "PKG_CONFIG_PATH=C:\gstreamer\1.0\msvc_x86_64\lib\pkgconfig" >> $env:GITHUB_ENV
           echo "PATH=C:\gstreamer\1.0\msvc_x86_64\bin;C:\gstreamer\1.0\msvc_x86_64\lib;$env:PATH" >> $env:GITHUB_ENV
@@ -72,6 +75,13 @@ jobs:
           curl.exe -L -A "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" `
           -o "gstreamer-runtime.msi" `
           "https://gstreamer.freedesktop.org/data/pkg/windows/1.22.10/msvc/gstreamer-1.0-msvc-x86_64-1.22.10.msi"
+
+      # --- 🟢 FIX DEL CARGO.LOCK PARA WINDOWS 7 ---
+      - name: Borrar Cargo.lock incompatible (Solo Win 7)
+        if: matrix.target_name == 'Windows 7'
+        shell: pwsh
+        run: |
+          if (Test-Path "Cargo.lock") { Remove-Item "Cargo.lock" }
 
       # --- COMPILACIÓN RUST ---
       - name: Compilar Proyecto (Release)

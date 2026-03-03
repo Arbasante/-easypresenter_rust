@@ -1,27 +1,86 @@
-name: Compilar Multiplataforma
-on: [push]
+name: Compilar EasyPresenter Release
+
+# Solo se ejecuta cuando subes un tag que empiece con "v" (ej: v1.0.0, v2.1)
+on:
+  push:
+    tags:
+      - 'v*'
+
 jobs:
   build:
-    strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest]
+    name: Compilar en ${{ matrix.os_name }}
     runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # --- 1. LINUX (.deb) ---
+          - os_name: Linux (Ubuntu)
+            os: ubuntu-22.04
+            rust_version: stable
+            artifact_name: EasyPresenter-Linux.deb
+            is_linux: true
+            is_windows: false
+
+          # --- 2. WINDOWS 10/11 (Rust Nuevo) ---
+          - os_name: Windows 10/11
+            os: windows-latest
+            rust_version: stable
+            artifact_name: EasyPresenter-Win10-11.zip
+            is_linux: false
+            is_windows: true
+
+          # --- 3. WINDOWS 7 (Rust Antiguo) ---
+          - os_name: Windows 7
+            os: windows-2019 # Usamos un runner un poco más antiguo por estabilidad
+            rust_version: 1.77.2 # ÚLTIMA VERSIÓN DE RUST QUE SOPORTA WIN 7
+            artifact_name: EasyPresenter-Win7.zip
+            is_linux: false
+            is_windows: true
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Dependencias Linux
-        if: runner.os == 'Linux'
+      - name: Descargar el código
+        uses: actions/checkout@v4
+
+      - name: Configurar Rust (${{ matrix.rust_version }})
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust_version }}
+
+      # Dependencias para compilar en Linux
+      - name: Instalar Dependencias (Linux)
+        if: matrix.is_linux
         run: |
-          sudo apt update
-          sudo apt install -y libx11-dev libxkbcommon-dev libfontconfig1-dev libasound2-dev libsqlite3-dev
-      - name: Configurar y Compilar
+          sudo apt-get update
+          sudo apt-get install -y libx11-dev libxkbcommon-dev libfontconfig1-dev libasound2-dev libsqlite3-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
+
+      # Dependencias para compilar en Windows
+      - name: Instalar Dependencias (Windows)
+        if: matrix.is_windows
         run: |
-          cmake -B build -DCMAKE_BUILD_TYPE=Release
-          cmake --build build --config Release
-      - name: Subir Artefactos
+          choco install pkgconfiglite
+          choco install gstreamer gstreamer-devel
+
+      - name: Compilar Proyecto (Release)
+        run: cargo build --release
+
+      # Creación del paquete .deb para Linux
+      - name: Empaquetar .deb (Linux)
+        if: matrix.is_linux
+        run: |
+          cargo install cargo-deb
+          cargo deb
+          cp target/debian/*.deb ${{ matrix.artifact_name }}
+
+      # Creación del ZIP para Windows (como base para tu futuro instalador)
+      - name: Empaquetar Binario (Windows)
+        if: matrix.is_windows
+        run: |
+          # Reemplaza 'easy-presenter-slint' por el nombre exacto de tu ejecutable si es distinto
+          Compress-Archive -Path target\release\easy-presenter-slint.exe -DestinationPath ${{ matrix.artifact_name }}
+
+      - name: Subir Artefacto Terminado
         uses: actions/upload-artifact@v4
         with:
-          name: EasyPresenter-${{ runner.os }}
-          path: |
-            build/Release/*.exe
-            build/*.deb
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_name }}

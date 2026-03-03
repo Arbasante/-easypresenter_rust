@@ -4,9 +4,8 @@ version = "1.0.0"
 edition = "2021"
 build = "build.rs"
 
-
 [dependencies]
-slint = "1.8.0"
+slint = "1.15.1" # VERSIÓN ACTUALIZADA
 rusqlite = { version = "0.31.0", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -14,7 +13,7 @@ pdfium-render = "0.8.20"
 rayon = "1.10"
 image = "0.25"
 directories = "5.0"
-rfd = "0.14" # NUEVO: Para abrir diálogos de selección de archivos nativos
+rfd = "0.14" 
 regex = "1"
 display-info = "0.4"
 gstreamer = "0.22"
@@ -22,4 +21,14 @@ gstreamer-app = "0.22"
 gstreamer-video = "0.22"
 
 [build-dependencies]
-slint-build = "1.8.0"
+slint-build = "1.15.1" # VERSIÓN ACTUALIZADA
+
+# --- CONFIGURACIÓN PARA EL INSTALADOR DE LINUX (.deb) ---
+[package.metadata.deb]
+maintainer = "Arbasante"
+copyright = "2026, MIT LICENSE"
+extended-description = """
+EasyPresenter: Software de presentación multimedia, letras y Biblias 
+con soporte de video nativo mediante GStreamer.
+"""
+depends = "$auto, libgstreamer1.0-0, gstreamer1.0-plugins-base, gstreamer1.0-plugins-good, gstreamer1.0-plugins-bad, gstreamer1.0-plugins-ugly, gstreamer1.0-libav"

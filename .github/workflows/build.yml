@@ -142,7 +142,7 @@ jobs:
             }
           }
 
-      # ── PREPARACIÓN WIN 7 (ÚNICO CAMBIO: ESTRATEGIA LOCKFILE) ──────────────
+      # ── PREPARACIÓN WIN 7 (ESTRATEGIA LOCKFILE) ──────────────
       - name: Generar Cargo.lock compatible para Win 7
         if: matrix.is_win7
         shell: bash
@@ -157,7 +157,7 @@ jobs:
           # 3. Forzar el downgrade de TODAS las librerías "topo" directo al lockfile
           cargo +stable update -p pxfm --precise 0.1.27
           cargo +stable update -p moxcms --precise 0.7.9
-          cargo +stable update -p home --precise 0.5.11
+          # 🟢 ELIMINAMOS LA LÍNEA DE 'home' PORQUE YA NO ES UNA DEPENDENCIA
 
           # 4. Truco de magia: Convertir el Lockfile v4 a formato antiguo (v3)
           sed -i 's/version = 4/version = 3/g' Cargo.lock

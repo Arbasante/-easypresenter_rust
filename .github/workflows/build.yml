@@ -56,117 +56,128 @@ jobs:
             libasound2-dev libsqlite3-dev libunwind-dev \
             libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
 
-      # ── WINDOWS: INSTALAR GSTREAMER VÍA CHOCOLATEY ────────────────────────
+      # ── WINDOWS: INSTALAR GSTREAMER ────────────────────────────────────────
       #
-      # PROBLEMA ANTERIOR: gstreamer.freedesktop.org bloquea las IPs de
-      # GitHub Actions → curl recibe timeout o una página HTML de error.
+      # LECCIONES APRENDIDAS:
+      #   - 1.22.10 ya no existe en freedesktop.org → 404
+      #   - La versión actual disponible es 1.26.x
+      #   - Sin pin de versión, choco instala la última disponible sin errores
+      #   - La ruta de instalación es "C:\Program Files\gstreamer\..." (no C:\gstreamer)
       #
-      # SOLUCIÓN: Chocolatey está pre-instalado en TODOS los runners de GitHub
-      # y descarga GStreamer desde sus propios mirrors CDN sin restricciones.
-      # Instalamos runtime + devel en un solo paso.
+      # ESTRATEGIA: instalar sin pin de versión y detectar la ruta dinámicamente.
       # ──────────────────────────────────────────────────────────────────────
       - name: Instalar GStreamer vía Chocolatey (Windows)
         if: matrix.is_windows
         shell: pwsh
         run: |
-          Write-Host "Instalando GStreamer runtime..."
-          choco install gstreamer --version=1.22.10 -y --no-progress
+          # Sin --version: choco instala la última versión disponible (1.26.x)
+          # gstreamer-devel tiene como dependencia gstreamer, así que instala ambos
+          choco install gstreamer-devel -y --no-progress
 
-          Write-Host "Instalando GStreamer devel (headers + pkg-config)..."
-          choco install gstreamer-devel --version=1.22.10 -y --no-progress
+          # Detectar la ruta real de instalación (puede variar según la versión de choco)
+          $possiblePaths = @(
+            "C:\Program Files\gstreamer\1.0\msvc_x86_64",
+            "C:\gstreamer\1.0\msvc_x86_64",
+            "$env:GSTREAMER_1_0_ROOT_MSVC_X86_64"
+          )
 
-          # Chocolatey instala GStreamer en C:\gstreamer\1.0\msvc_x86_64
-          # Verificar instalación
-          if (Test-Path "C:\gstreamer\1.0\msvc_x86_64\bin") {
-            Write-Host "✅ GStreamer instalado correctamente"
-          } else {
-            Write-Error "❌ GStreamer no se instaló en la ruta esperada"
+          $GstPath = $null
+          foreach ($p in $possiblePaths) {
+            if ($p -and (Test-Path "$p\bin\gst-launch-1.0.exe")) {
+              $GstPath = $p
+              break
+            }
+          }
+
+          # Si todavía no lo encontramos, buscar recursivamente
+          if (-not $GstPath) {
+            $found = Get-ChildItem "C:\Program Files" -Recurse -Filter "gst-launch-1.0.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($found) { $GstPath = $found.DirectoryName -replace "\\bin$", "" }
+          }
+          if (-not $GstPath) {
+            $found = Get-ChildItem "C:\" -Recurse -Filter "gst-launch-1.0.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($found) { $GstPath = $found.DirectoryName -replace "\\bin$", "" }
+          }
+
+          if (-not $GstPath) {
+            Write-Error "❌ No se pudo localizar GStreamer tras la instalación"
             exit 1
           }
 
-      - name: Preparar runtime MSI para Inno Setup (Windows)
-        if: matrix.is_windows
-        shell: pwsh
-        run: |
-          # Inno Setup necesita el runtime.msi para incluirlo en el instalador.
-          # Como choco ya lo descargó, lo buscamos en su caché local.
-          # Si no está en caché, lo descargamos desde el CDN de Choco (distinto
-          # al de freedesktop.org, por eso funciona).
-          $GstVersion = "1.22.10"
-          $CachedMsi = Get-ChildItem "C:\ProgramData\chocolatey\lib\gstreamer\tools\*runtime*.msi" -ErrorAction SilentlyContinue | Select-Object -First 1
+          Write-Host "✅ GStreamer encontrado en: $GstPath"
 
-          if ($CachedMsi) {
-            Write-Host "Usando runtime MSI desde caché de Chocolatey: $($CachedMsi.FullName)"
-            Copy-Item $CachedMsi.FullName "gstreamer-runtime.msi"
-          } else {
-            # Fallback: descarga desde el CDN alternativo de choco
-            Write-Host "MSI no encontrado en caché, descargando desde CDN alternativo..."
-            $MsiUrl = "https://packages.chocolatey.org/gstreamer.$GstVersion.nupkg"
-
-            # Intentamos con Invoke-WebRequest (maneja mejor los redirects que curl en Windows)
-            $ProgressPreference = 'SilentlyContinue'
-            $attempt = 0
-            $maxAttempts = 3
-            $downloaded = $false
-
-            while ($attempt -lt $maxAttempts -and -not $downloaded) {
-              $attempt++
-              try {
-                Write-Host "Intento $attempt de $maxAttempts..."
-                # Descargamos el MSI directamente del servidor de GStreamer con retry
-                $RuntimeUrl = "https://gstreamer.freedesktop.org/data/pkg/windows/$GstVersion/msvc/gstreamer-1.0-msvc-x86_64-$GstVersion.msi"
-                Invoke-WebRequest -Uri $RuntimeUrl -OutFile "gstreamer-runtime.msi" -UseBasicParsing -TimeoutSec 60
-                $downloaded = $true
-              } catch {
-                Write-Warning "Intento $attempt falló: $_"
-                if ($attempt -lt $maxAttempts) { Start-Sleep -Seconds 10 }
-              }
-            }
-
-            if (-not $downloaded) {
-              # Si no pudimos descargar el MSI, creamos un script de instalación
-              # alternativo que usará el GStreamer ya instalado por choco
-              Write-Host "⚠️ No se pudo obtener el MSI. Creando instalador alternativo..."
-              # Marcamos para que Inno Setup use el método alternativo
-              echo "USE_CHOCO_GSTREAMER=true" >> $env:GITHUB_ENV
-            }
-          }
-
-          # Verificar que tenemos el archivo o la variable alternativa
-          if (Test-Path "gstreamer-runtime.msi") {
-            $size = (Get-Item "gstreamer-runtime.msi").Length
-            Write-Host "✅ gstreamer-runtime.msi listo ($([math]::Round($size/1MB, 1)) MB)"
-          }
+          # Exportar la ruta para los pasos siguientes
+          echo "GSTREAMER_ROOT=$GstPath" >> $env:GITHUB_ENV
 
       - name: Configurar Entorno GStreamer (Windows)
         if: matrix.is_windows
         shell: pwsh
         run: |
-          $GstPath = "C:\gstreamer\1.0\msvc_x86_64"
+          $GstPath = $env:GSTREAMER_ROOT
 
-          # pkgconfiglite: pkg-config independiente que no necesita DLLs externas
+          # pkgconfiglite: binario estático, no necesita DLLs de GStreamer para correr
           choco install pkgconfiglite -y --no-progress
 
           echo "PKG_CONFIG_PATH=$GstPath\lib\pkgconfig"  >> $env:GITHUB_ENV
           echo "GSTREAMER_1_0_ROOT_X86_64=$GstPath"      >> $env:GITHUB_ENV
           echo "$GstPath\bin"                             >> $env:GITHUB_PATH
 
-          # Verificar que pkg-config encuentra glib
+          # Verificar que pkg-config encuentra glib (si falla aquí el build fallará)
           $env:PKG_CONFIG_PATH = "$GstPath\lib\pkgconfig"
-          pkg-config --modversion glib-2.0
+          $ver = pkg-config --modversion glib-2.0
+          Write-Host "✅ glib-2.0 version: $ver"
+
+      - name: Obtener runtime MSI para Inno Setup (Windows)
+        if: matrix.is_windows
+        shell: pwsh
+        run: |
+          # Buscar el MSI del runtime en el caché de Chocolatey
+          $cached = Get-ChildItem "C:\ProgramData\chocolatey\lib\gstreamer\tools\" -Filter "*runtime*.msi" -ErrorAction SilentlyContinue | Select-Object -First 1
+
+          if (-not $cached) {
+            # Buscar en la carpeta temporal de choco
+            $cached = Get-ChildItem "$env:TEMP" -Filter "gstreamer-1.0-msvc*.msi" -ErrorAction SilentlyContinue | Select-Object -First 1
+          }
+
+          if ($cached) {
+            Write-Host "✅ MSI encontrado en caché: $($cached.FullName)"
+            Copy-Item $cached.FullName "gstreamer-runtime.msi"
+          } else {
+            # El runtime ya está instalado por choco como dependencia de devel.
+            # Buscamos el MSI que choco descargó en su directorio de trabajo.
+            $msiSearch = Get-ChildItem "C:\ProgramData\chocolatey" -Recurse -Filter "*gstreamer*msvc*.msi" -ErrorAction SilentlyContinue |
+                         Where-Object { $_.Name -notmatch "devel" } |
+                         Select-Object -First 1
+
+            if ($msiSearch) {
+              Write-Host "✅ MSI encontrado: $($msiSearch.FullName)"
+              Copy-Item $msiSearch.FullName "gstreamer-runtime.msi"
+            } else {
+              # Último recurso: re-descargar usando la versión que choco instaló
+              $installedVer = choco list gstreamer --local-only | Select-String "gstreamer \d" | ForEach-Object { ($_ -split " ")[1] }
+              Write-Host "Versión instalada de GStreamer: $installedVer"
+              $MsiUrl = "https://gstreamer.freedesktop.org/data/pkg/windows/$installedVer/msvc/gstreamer-1.0-msvc-x86_64-$installedVer.msi"
+              Write-Host "Descargando desde: $MsiUrl"
+              $ProgressPreference = 'SilentlyContinue'
+              Invoke-WebRequest -Uri $MsiUrl -OutFile "gstreamer-runtime.msi" -UseBasicParsing
+            }
+          }
+
+          $size = (Get-Item "gstreamer-runtime.msi" -ErrorAction SilentlyContinue).Length
+          if ($size -gt 1MB) {
+            Write-Host "✅ gstreamer-runtime.msi listo ($([math]::Round($size/1MB,1)) MB)"
+          } else {
+            Write-Warning "⚠️ gstreamer-runtime.msi es muy pequeño ($size bytes), puede estar corrupto"
+          }
 
       # ── PREPARACIÓN WIN 7 ──────────────────────────────────────────────────
       - name: Adaptar Cargo.toml para Win 7 (versiones compatibles con Rust 1.77)
         if: matrix.is_win7
         shell: bash
         run: |
-          # Fijar slint y slint-build a versión EXACTA (evita que Cargo suba a 1.15.x)
           sed -i 's/slint = "1\.8\.0"/slint = "=1.8.0"/'             Cargo.toml
           sed -i 's/slint-build = "1\.8\.0"/slint-build = "=1.8.0"/' Cargo.toml
-
-          # image 0.25 → moxcms 0.7.11 usa edition2024, bajar a 0.24.9
-          sed -i 's/image = "0\.25"/image = "=0.24.9"/' Cargo.toml
-
+          sed -i 's/image = "0\.25"/image = "=0.24.9"/'               Cargo.toml
           rm -f Cargo.lock
 
           echo "--- Cambios aplicados ---"

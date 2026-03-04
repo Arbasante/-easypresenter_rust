@@ -144,56 +144,51 @@ jobs:
 
       # ── PREPARACIÓN WIN 7 ──────────────────────────────────────────────────
       #
-      # ESTRATEGIA DEFINITIVA para Win7 + Rust 1.77:
+      # ESTRATEGIA para Win7 + Rust 1.77:
       #
-      # En lugar de ir parcheando con sed cada vez que aparece un crate nuevo
-      # con edition2024, usamos DOS mecanismos combinados:
+      # 1. sed  → fijar dependencias DIRECTAS (slint, image, display-info)
+      # 2. cargo generate-lockfile → crear Cargo.lock inicial
+      # 3. cargo update --precise  → bajar dependencias TRANSITIVAS
+      #    (pxfm viene de display-info; --precise no modifica Cargo.toml,
+      #     solo sobreescribe la entrada en Cargo.lock)
       #
-      # 1. sed para las dependencias DIRECTAS de Cargo.toml (slint, image)
-      # 2. [patch.crates-io] para las dependencias TRANSITIVAS problemáticas
-      #    (pxfm que viene de display-info, moxcms que viene de image, etc.)
-      #
-      # El bloque [patch.crates-io] le dice a Cargo: "cuando cualquier crate
-      # pida X, usa esta versión exacta en su lugar", sin importar qué tan
-      # profundo esté en el árbol de dependencias.
-      #
-      # Versiones seguras para Rust 1.77 (edition2021 o anterior):
-      #   pxfm:    0.1.27 → sin edition2024 (0.1.28 la introdujo)
-      #   moxcms:  no existía en image 0.24.x (por eso bajamos image)
+      # NOTA: [patch.crates-io] NO sirve para cambiar versiones dentro del
+      # mismo registry. Solo funciona para apuntar a fuentes distintas (git,
+      # path local). Por eso usamos cargo update --precise en su lugar.
       # ──────────────────────────────────────────────────────────────────────
       - name: Adaptar Cargo.toml para Win 7 (versiones compatibles con Rust 1.77)
         if: matrix.is_win7
         shell: bash
         run: |
-          # ── 1. Fijar dependencias DIRECTAS a versiones exactas ────────────
+          # ── 1. Fijar dependencias DIRECTAS ────────────────────────────────
 
-          # slint/slint-build: "1.8.0" = ^1.8.0 → Cargo sube a 1.15.x sin esto
+          # slint/slint-build: "1.8.0" = ^1.8.0 → Cargo resuelve a 1.15.x
           sed -i 's/slint = "1\.8\.0"/slint = "=1.8.0"/'             Cargo.toml
           sed -i 's/slint-build = "1\.8\.0"/slint-build = "=1.8.0"/' Cargo.toml
 
-          # image 0.25 → moxcms 0.7.11 (edition2024). Bajamos a 0.24.x
+          # image 0.25 → dep transitiva moxcms 0.7.11 usa edition2024
           sed -i 's/image = "0\.25"/image = "=0.24.9"/'               Cargo.toml
 
-          # display-info: la versión 0.4.x puede resolver a pxfm >= 0.1.28
-          # Bajamos a 0.4.4 que es la última que usa pxfm < 0.1.28
+          # display-info 0.4.x puede resolver a pxfm >= 0.1.28 (edition2024)
+          # 0.4.4 es la última versión que depende de pxfm < 0.1.28
           sed -i 's/display-info = "0\.4"/display-info = "=0.4.4"/'   Cargo.toml
 
-          # ── 2. Parchear dependencias TRANSITIVAS con [patch.crates-io] ───
-          # Esto cubre cualquier crate que pida pxfm sin importar la profundidad
-          cat >> Cargo.toml << 'EOF'
+          echo "--- Cargo.toml tras sed ---"
+          grep -E "slint|image|display-info" Cargo.toml
 
-          # ── PARCHE WIN7: forzar versiones sin edition2024 ─────────────────
-          # Este bloque es añadido automáticamente por el CI para Windows 7.
-          # No lo elimines manualmente si usas el workflow de release.
-          [patch.crates-io]
-          pxfm = { version = "=0.1.27" }
-          EOF
-
-          # ── 3. Limpiar Cargo.lock para resolver desde cero ────────────────
+          # ── 2. Eliminar Cargo.lock y generar uno nuevo ────────────────────
           rm -f Cargo.lock
+          cargo +1.77.2 generate-lockfile
 
-          echo "--- Cargo.toml tras los cambios ---"
-          grep -E "slint|image|display-info|patch" Cargo.toml
+          # ── 3. Bajar deps TRANSITIVAS con edition2024 usando --precise ────
+          # cargo update --precise solo toca el Cargo.lock, no el Cargo.toml.
+          # Si pxfm 0.1.27 no satisface el rango que pide display-info,
+          # el paso de display-info con sed (arriba) lo resuelve forzando
+          # una versión que sí pida pxfm < 0.1.28.
+          cargo +1.77.2 update -p pxfm --precise 0.1.27
+
+          echo "--- pxfm en Cargo.lock ---"
+          grep "pxfm" Cargo.lock
 
       # ── COMPILACIÓN ────────────────────────────────────────────────────────
       - name: Compilar Proyecto (Release)

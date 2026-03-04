@@ -56,7 +56,7 @@ jobs:
             libasound2-dev libsqlite3-dev libunwind-dev \
             libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
 
-      # ── WINDOWS: INSTALAR GSTREAMER ────────────────────────────────────────
+      # ── WINDOWS: INSTALAR GSTREAMER (TU CÓDIGO ORIGINAL) ───────────────────
       - name: Instalar GStreamer vía Chocolatey (Windows)
         if: matrix.is_windows
         shell: pwsh
@@ -142,15 +142,15 @@ jobs:
             }
           }
 
-      # ── PREPARACIÓN WIN 7 (ESTRATEGIA JEDI DE LOCKFILE) ────────────────────
-      - name: Generar Cargo.lock compatible (Doble Compilador)
+      # ── PREPARACIÓN WIN 7 (ÚNICO CAMBIO: ESTRATEGIA LOCKFILE) ──────────────
+      - name: Generar Cargo.lock compatible para Win 7
         if: matrix.is_win7
         shell: bash
         run: |
           # 1. Instalar Rust estable temporalmente solo para esta tarea
           rustup toolchain install stable
 
-          # 2. Generar el lockfile con stable (que no crashea leyendo catálogos)
+          # 2. Generar el lockfile con stable (que no crashea leyendo catálogos de 2024)
           rm -f Cargo.lock
           cargo +stable generate-lockfile
 
@@ -160,14 +160,12 @@ jobs:
           cargo +stable update -p home --precise 0.5.11
 
           # 4. Truco de magia: Convertir el Lockfile v4 a formato antiguo (v3)
-          # Esto engaña a Rust 1.77.2 para que lo lea sin quejarse
           sed -i 's/version = 4/version = 3/g' Cargo.lock
 
           echo "✅ Lockfile parcheado, domado y listo para Rust 1.77.2"
 
       # ── COMPILACIÓN ────────────────────────────────────────────────────────
       - name: Compilar Proyecto (Release)
-        # Aquí se usará automáticamente la versión 1.77.2 configurada en matrix
         run: cargo build --release
 
       # ── EMPAQUETADO ────────────────────────────────────────────────────────

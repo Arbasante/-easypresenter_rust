@@ -149,14 +149,14 @@ jobs:
         shell: bash
         run: |
           # ── 1. Fijar dependencias DIRECTAS ────────────────────────────────
-          # Usamos un regex más flexible (-E)
           sed -i -E 's/slint = .*/slint = "=1.8.0"/' Cargo.toml
           sed -i -E 's/slint-build = .*/slint-build = "=1.8.0"/' Cargo.toml
           sed -i -E 's/image = .*/image = "=0.24.9"/' Cargo.toml
           sed -i -E 's/display-info = .*/display-info = "=0.4.4"/' Cargo.toml
 
           # ── EL TRUCO DEFINITIVO PARA PXFM ──────────────────────────────
-          # Al agregarlo directamente al Cargo.toml forzamos 0.1.27
+          # FIX: Forzamos un salto de línea (Enter) por si el archivo no lo tiene
+          echo "" >> Cargo.toml
           echo 'pxfm = "=0.1.27"' >> Cargo.toml
 
           echo "--- Cargo.toml tras la inyección ---"

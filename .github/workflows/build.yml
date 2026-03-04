@@ -143,7 +143,6 @@ jobs:
           }
 
       # ── PREPARACIÓN WIN 7 ──────────────────────────────────────────────────
-      # ESTRATEGIA para Win7 + Rust 1.77: Inyectar dependencias estrictas en TOML
       - name: Adaptar Cargo.toml para Win 7 (versiones compatibles con Rust 1.77)
         if: matrix.is_win7
         shell: bash
@@ -154,13 +153,13 @@ jobs:
           sed -i -E 's/image = .*/image = "=0.24.9"/' Cargo.toml
           sed -i -E 's/display-info = .*/display-info = "=0.4.4"/' Cargo.toml
 
-          # ── EL TRUCO DEFINITIVO PARA PXFM ──────────────────────────────
-          # FIX: Forzamos un salto de línea (Enter) por si el archivo no lo tiene
+          # ──  EL TRUCO DEFINITIVO PARA DEPENDENCIAS REBELDES ──────────────
           echo "" >> Cargo.toml
           echo 'pxfm = "=0.1.27"' >> Cargo.toml
+          echo 'moxcms = "=0.7.9"' >> Cargo.toml
 
           echo "--- Cargo.toml tras la inyección ---"
-          grep -E "slint|image|display-info|pxfm" Cargo.toml
+          grep -E "slint|image|display-info|pxfm|moxcms" Cargo.toml
 
           # ── 2. Eliminar Cargo.lock y generar uno nuevo ────────────────────
           rm -f Cargo.lock

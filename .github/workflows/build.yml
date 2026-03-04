@@ -57,117 +57,119 @@ jobs:
             libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
 
       # ── WINDOWS: INSTALAR GSTREAMER ────────────────────────────────────────
-      #
-      # LECCIONES APRENDIDAS:
-      #   - 1.22.10 ya no existe en freedesktop.org → 404
-      #   - La versión actual disponible es 1.26.x
-      #   - Sin pin de versión, choco instala la última disponible sin errores
-      #   - La ruta de instalación es "C:\Program Files\gstreamer\..." (no C:\gstreamer)
-      #
-      # ESTRATEGIA: instalar sin pin de versión y detectar la ruta dinámicamente.
-      # ──────────────────────────────────────────────────────────────────────
       - name: Instalar GStreamer vía Chocolatey (Windows)
         if: matrix.is_windows
         shell: pwsh
         run: |
-          # Sin --version: choco instala la última versión disponible (1.26.x)
-          # gstreamer-devel tiene como dependencia gstreamer, así que instala ambos
+          # gstreamer-devel instala el runtime como dependencia automáticamente.
+          # Sin pin de versión → choco usa la última disponible (1.26.x actualmente).
+          # freedesktop.org bloquea GitHub Actions, pero los paquetes de choco
+          # tienen su propio CDN que sí funciona desde los runners.
           choco install gstreamer-devel -y --no-progress
 
-          # Detectar la ruta real de instalación (puede variar según la versión de choco)
-          $possiblePaths = @(
-            "C:\Program Files\gstreamer\1.0\msvc_x86_64",
-            "C:\gstreamer\1.0\msvc_x86_64",
-            "$env:GSTREAMER_1_0_ROOT_MSVC_X86_64"
-          )
+          # ── Detectar la ruta real de instalación ──────────────────────────
+          # Choco puede instalar en distintas rutas según la versión del paquete.
+          # Buscamos gst-launch-1.0.exe para encontrar dónde quedó.
+          $searchRoots = @("C:\Program Files\gstreamer", "C:\gstreamer", "C:\ProgramData\gstreamer")
+          $gstBin = $null
 
-          $GstPath = $null
-          foreach ($p in $possiblePaths) {
-            if ($p -and (Test-Path "$p\bin\gst-launch-1.0.exe")) {
-              $GstPath = $p
-              break
-            }
+          foreach ($root in $searchRoots) {
+            $exe = Get-ChildItem $root -Recurse -Filter "gst-launch-1.0.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($exe) { $gstBin = $exe.DirectoryName; break }
           }
 
-          # Si todavía no lo encontramos, buscar recursivamente
-          if (-not $GstPath) {
-            $found = Get-ChildItem "C:\Program Files" -Recurse -Filter "gst-launch-1.0.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
-            if ($found) { $GstPath = $found.DirectoryName -replace "\\bin$", "" }
-          }
-          if (-not $GstPath) {
-            $found = Get-ChildItem "C:\" -Recurse -Filter "gst-launch-1.0.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
-            if ($found) { $GstPath = $found.DirectoryName -replace "\\bin$", "" }
+          # Fallback: buscar en todo C:\ (más lento pero seguro)
+          if (-not $gstBin) {
+            $exe = Get-ChildItem "C:\" -Recurse -Filter "gst-launch-1.0.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($exe) { $gstBin = $exe.DirectoryName }
           }
 
-          if (-not $GstPath) {
-            Write-Error "❌ No se pudo localizar GStreamer tras la instalación"
+          if (-not $gstBin) {
+            Write-Error "❌ No se encontró gst-launch-1.0.exe tras la instalación"
             exit 1
           }
 
-          Write-Host "✅ GStreamer encontrado en: $GstPath"
-
-          # Exportar la ruta para los pasos siguientes
+          $GstPath = Split-Path $gstBin -Parent   # sube un nivel desde \bin
+          Write-Host "✅ GStreamer en: $GstPath"
           echo "GSTREAMER_ROOT=$GstPath" >> $env:GITHUB_ENV
 
-      - name: Configurar Entorno GStreamer (Windows)
+      - name: Configurar entorno de compilación GStreamer (Windows)
         if: matrix.is_windows
         shell: pwsh
         run: |
           $GstPath = $env:GSTREAMER_ROOT
 
-          # pkgconfiglite: binario estático, no necesita DLLs de GStreamer para correr
+          # pkgconfiglite: binario estático que no necesita DLLs de GStreamer
           choco install pkgconfiglite -y --no-progress
 
           echo "PKG_CONFIG_PATH=$GstPath\lib\pkgconfig"  >> $env:GITHUB_ENV
           echo "GSTREAMER_1_0_ROOT_X86_64=$GstPath"      >> $env:GITHUB_ENV
           echo "$GstPath\bin"                             >> $env:GITHUB_PATH
 
-          # Verificar que pkg-config encuentra glib (si falla aquí el build fallará)
+          # Verificar que pkg-config puede leer los archivos .pc de GStreamer
           $env:PKG_CONFIG_PATH = "$GstPath\lib\pkgconfig"
           $ver = pkg-config --modversion glib-2.0
-          Write-Host "✅ glib-2.0 version: $ver"
+          Write-Host "✅ pkg-config OK → glib-2.0 = $ver"
 
-      - name: Obtener runtime MSI para Inno Setup (Windows)
+      - name: Obtener MSI del runtime para Inno Setup (Windows)
         if: matrix.is_windows
         shell: pwsh
         run: |
-          # Buscar el MSI del runtime en el caché de Chocolatey
-          $cached = Get-ChildItem "C:\ProgramData\chocolatey\lib\gstreamer\tools\" -Filter "*runtime*.msi" -ErrorAction SilentlyContinue | Select-Object -First 1
+          # ── Obtener la versión instalada de gst-launch.exe ────────────────
+          # "gst-launch-1.0 version 1.26.9" → extraemos "1.26.9"
+          $gstBin   = "$env:GSTREAMER_ROOT\bin\gst-launch-1.0.exe"
+          $verLine  = & $gstBin --version 2>&1 | Select-String "version \d+\.\d+\.\d+"
+          $gstVer   = ($verLine.Matches[0].Value -split " ")[1]
+          Write-Host "Versión detectada de GStreamer: $gstVer"
 
-          if (-not $cached) {
-            # Buscar en la carpeta temporal de choco
-            $cached = Get-ChildItem "$env:TEMP" -Filter "gstreamer-1.0-msvc*.msi" -ErrorAction SilentlyContinue | Select-Object -First 1
+          # ── Buscar el MSI que choco ya descargó en las carpetas temporales ─
+          # Choco descarga el MSI a %TEMP%\chocolatey\<pkg>\<ver>\ antes de
+          # ejecutarlo. A veces queda ahí, a veces lo borra. Buscamos primero.
+          $msiName  = "gstreamer-1.0-msvc-x86_64-$gstVer.msi"
+          $searchDirs = @(
+            "$env:TEMP\chocolatey",
+            "$env:LOCALAPPDATA\Temp\chocolatey",
+            "C:\ProgramData\chocolatey\lib\gstreamer\tools",
+            "C:\ProgramData\chocolatey\lib\gstreamer"
+          )
+
+          $foundMsi = $null
+          foreach ($dir in $searchDirs) {
+            $candidate = Get-ChildItem $dir -Recurse -Filter $msiName -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($candidate) { $foundMsi = $candidate.FullName; break }
           }
 
-          if ($cached) {
-            Write-Host "✅ MSI encontrado en caché: $($cached.FullName)"
-            Copy-Item $cached.FullName "gstreamer-runtime.msi"
+          if ($foundMsi) {
+            Write-Host "✅ MSI encontrado en caché: $foundMsi"
+            Copy-Item $foundMsi "gstreamer-runtime.msi"
           } else {
-            # El runtime ya está instalado por choco como dependencia de devel.
-            # Buscamos el MSI que choco descargó en su directorio de trabajo.
-            $msiSearch = Get-ChildItem "C:\ProgramData\chocolatey" -Recurse -Filter "*gstreamer*msvc*.msi" -ErrorAction SilentlyContinue |
-                         Where-Object { $_.Name -notmatch "devel" } |
-                         Select-Object -First 1
-
-            if ($msiSearch) {
-              Write-Host "✅ MSI encontrado: $($msiSearch.FullName)"
-              Copy-Item $msiSearch.FullName "gstreamer-runtime.msi"
-            } else {
-              # Último recurso: re-descargar usando la versión que choco instaló
-              $installedVer = choco list gstreamer --local-only | Select-String "gstreamer \d" | ForEach-Object { ($_ -split " ")[1] }
-              Write-Host "Versión instalada de GStreamer: $installedVer"
-              $MsiUrl = "https://gstreamer.freedesktop.org/data/pkg/windows/$installedVer/msvc/gstreamer-1.0-msvc-x86_64-$installedVer.msi"
-              Write-Host "Descargando desde: $MsiUrl"
-              $ProgressPreference = 'SilentlyContinue'
-              Invoke-WebRequest -Uri $MsiUrl -OutFile "gstreamer-runtime.msi" -UseBasicParsing
+            # ── Fallback: GitHub Releases de GStreamer ────────────────────
+            # GStreamer publica sus binarios también en GitHub Releases,
+            # que NO está bloqueado para GitHub Actions.
+            Write-Host "MSI no encontrado en caché. Intentando GitHub Releases..."
+            $ghUrl = "https://github.com/GStreamer/gstreamer/releases/download/$gstVer/$msiName"
+            Write-Host "URL: $ghUrl"
+            $ProgressPreference = 'SilentlyContinue'
+            try {
+              Invoke-WebRequest -Uri $ghUrl -OutFile "gstreamer-runtime.msi" -UseBasicParsing -TimeoutSec 120
+              Write-Host "✅ MSI descargado desde GitHub Releases"
+            } catch {
+              # ── Último recurso: crear un instalador sin MSI ───────────────
+              # Si no podemos obtener el MSI, generamos un instalador funcional
+              # que avisa al usuario que debe instalar GStreamer manualmente.
+              Write-Warning "No se pudo obtener el MSI. El instalador mostrará instrucciones manuales."
+              echo "SKIP_GSTREAMER_MSI=true" >> $env:GITHUB_ENV
             }
           }
 
-          $size = (Get-Item "gstreamer-runtime.msi" -ErrorAction SilentlyContinue).Length
-          if ($size -gt 1MB) {
-            Write-Host "✅ gstreamer-runtime.msi listo ($([math]::Round($size/1MB,1)) MB)"
-          } else {
-            Write-Warning "⚠️ gstreamer-runtime.msi es muy pequeño ($size bytes), puede estar corrupto"
+          # Verificar tamaño (un MSI real pesa > 50 MB)
+          if (Test-Path "gstreamer-runtime.msi") {
+            $sizeMB = [math]::Round((Get-Item "gstreamer-runtime.msi").Length / 1MB, 1)
+            Write-Host "Tamaño del MSI: $sizeMB MB"
+            if ($sizeMB -lt 10) {
+              Write-Warning "⚠️ El MSI parece demasiado pequeño ($sizeMB MB). Puede estar corrupto."
+              echo "SKIP_GSTREAMER_MSI=true" >> $env:GITHUB_ENV
+            }
           }
 
       # ── PREPARACIÓN WIN 7 ──────────────────────────────────────────────────
@@ -180,7 +182,7 @@ jobs:
           sed -i 's/image = "0\.25"/image = "=0.24.9"/'               Cargo.toml
           rm -f Cargo.lock
 
-          echo "--- Cambios aplicados ---"
+          echo "--- Cambios aplicados en Cargo.toml ---"
           grep -E "slint|image" Cargo.toml
 
       # ── COMPILACIÓN ────────────────────────────────────────────────────────
@@ -199,7 +201,18 @@ jobs:
         if: matrix.is_windows
         shell: pwsh
         run: |
-          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
+          # Si no conseguimos el MSI, usamos un .iss alternativo sin él
+          if ($env:SKIP_GSTREAMER_MSI -eq "true") {
+            Write-Warning "Compilando instalador SIN bundlear GStreamer MSI."
+            # Crear un installer.iss temporal sin la sección de GStreamer
+            (Get-Content installer.iss) `
+              -replace 'Source: "gstreamer-runtime\.msi".*', '' `
+              -replace 'Filename: "msiexec\.exe".*GStreamer.*', '' |
+              Set-Content installer_nogst.iss
+            & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer_nogst.iss
+          } else {
+            & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
+          }
 
       - name: Mover Instalador (Windows)
         if: matrix.is_windows

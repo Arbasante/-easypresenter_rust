@@ -150,19 +150,21 @@ jobs:
           # 1. Instalar Rust estable temporalmente solo para esta tarea
           rustup toolchain install stable
 
-          # 2. Generar el lockfile con stable (que no crashea leyendo catálogos de 2024)
+          # 2. Generar el lockfile con stable
           rm -f Cargo.lock
           cargo +stable generate-lockfile
 
-          # 3. Forzar el downgrade de TODAS las librerías "topo" directo al lockfile
+          # 3. Forzar el downgrade de las librerías "topo"
+          # 🟢 AÑADIMOS LAS PIEZAS DE SLINT QUE USAN EDITION 2024
           cargo +stable update -p pxfm --precise 0.1.27
           cargo +stable update -p moxcms --precise 0.7.9
-          # 🟢 ELIMINAMOS LA LÍNEA DE 'home' PORQUE YA NO ES UNA DEPENDENCIA
+          cargo +stable update -p i-slint-backend-winit --precise 1.15.0
+          cargo +stable update -p i-slint-backend-qt --precise 1.15.0
 
           # 4. Truco de magia: Convertir el Lockfile v4 a formato antiguo (v3)
           sed -i 's/version = 4/version = 3/g' Cargo.lock
 
-          echo "✅ Lockfile parcheado, domado y listo para Rust 1.77.2"
+          echo "✅ Lockfile parcheado con Slint 1.15.0 y listo para Rust 1.77.2"
 
       # ── COMPILACIÓN ────────────────────────────────────────────────────────
       - name: Compilar Proyecto (Release)

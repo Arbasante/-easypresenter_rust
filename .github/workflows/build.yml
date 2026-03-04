@@ -157,9 +157,10 @@ jobs:
           echo "" >> Cargo.toml
           echo 'pxfm = "=0.1.27"' >> Cargo.toml
           echo 'moxcms = "=0.7.9"' >> Cargo.toml
+          echo 'home = "=0.5.11"' >> Cargo.toml #  ¡NUEVO TOPO APLASTADO!
 
           echo "--- Cargo.toml tras la inyección ---"
-          grep -E "slint|image|display-info|pxfm|moxcms" Cargo.toml
+          grep -E "slint|image|display-info|pxfm|moxcms|home" Cargo.toml
 
           # ── 2. Eliminar Cargo.lock y generar uno nuevo ────────────────────
           rm -f Cargo.lock

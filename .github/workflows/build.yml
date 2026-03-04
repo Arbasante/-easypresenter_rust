@@ -201,7 +201,7 @@ jobs:
             Move-Item "Output/Instalar_EasyPresenter_v1.0.exe" "${{ matrix.artifact_name }}"
           }
 
-      # ── ARTEFACTOS ─────────────────────────────────────────────────────────
+      # ── ARTEFACTOS ────────────────────────────────────────────
       - name: Subir Artefacto Terminado
         uses: actions/upload-artifact@v4
         with:

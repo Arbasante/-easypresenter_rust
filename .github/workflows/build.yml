@@ -73,10 +73,10 @@ jobs:
             $exe = Get-ChildItem "C:\" -Recurse -Filter "gst-launch-1.0.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
             if ($exe) { $gstBin = $exe.DirectoryName }
           }
-          if (-not $gstBin) { Write-Error " GStreamer no encontrado"; exit 1 }
+          if (-not $gstBin) { Write-Error "❌ GStreamer no encontrado"; exit 1 }
 
           $GstPath = Split-Path $gstBin -Parent
-          Write-Host " GStreamer en: $GstPath"
+          Write-Host "✅ GStreamer en: $GstPath"
           echo "GSTREAMER_ROOT=$GstPath" >> $env:GITHUB_ENV
 
       - name: Configurar entorno de compilación GStreamer (Windows)
@@ -92,7 +92,7 @@ jobs:
 
           $env:PKG_CONFIG_PATH = "$GstPath\lib\pkgconfig"
           $ver = pkg-config --modversion glib-2.0
-          Write-Host " pkg-config OK → glib-2.0 = $ver"
+          Write-Host "✅ pkg-config OK → glib-2.0 = $ver"
 
       - name: Obtener MSI del runtime para Inno Setup (Windows)
         if: matrix.is_windows
@@ -118,7 +118,7 @@ jobs:
           }
 
           if ($foundMsi) {
-            Write-Host " MSI en caché: $foundMsi"
+            Write-Host "✅ MSI en caché: $foundMsi"
             Copy-Item $foundMsi "gstreamer-runtime.msi"
           } else {
             Write-Host "Intentando GitHub Releases..."
@@ -126,7 +126,7 @@ jobs:
             $ProgressPreference = 'SilentlyContinue'
             try {
               Invoke-WebRequest -Uri $ghUrl -OutFile "gstreamer-runtime.msi" -UseBasicParsing -TimeoutSec 120
-              Write-Host " MSI descargado desde GitHub Releases"
+              Write-Host "✅ MSI descargado desde GitHub Releases"
             } catch {
               Write-Warning "No se pudo obtener el MSI. El instalador se generará sin él."
               echo "SKIP_GSTREAMER_MSI=true" >> $env:GITHUB_ENV
@@ -137,41 +137,37 @@ jobs:
             $sizeMB = [math]::Round((Get-Item "gstreamer-runtime.msi").Length / 1MB, 1)
             Write-Host "Tamaño MSI: $sizeMB MB"
             if ($sizeMB -lt 10) {
-              Write-Warning " MSI demasiado pequeño, puede estar corrupto"
+              Write-Warning "⚠️ MSI demasiado pequeño, puede estar corrupto"
               echo "SKIP_GSTREAMER_MSI=true" >> $env:GITHUB_ENV
             }
           }
 
-     # ── PREPARACIÓN WIN 7 (BOMBA NUCLEAR DE DEPENDENCIAS) ──────────────────
-      - name: Adaptar Cargo.toml para Win 7 (Congelación masiva)
+      # ── PREPARACIÓN WIN 7 (ESTRATEGIA JEDI DE LOCKFILE) ────────────────────
+      - name: Generar Cargo.lock compatible (Doble Compilador)
         if: matrix.is_win7
         shell: bash
         run: |
-          # 1. Downgrade agresivo de las dependencias principales a versiones de 2023/2024
-          sed -i -E 's/slint = .*/slint = "=1.8.0"/' Cargo.toml
-          sed -i -E 's/slint-build = .*/slint-build = "=1.8.0"/' Cargo.toml
-          sed -i -E 's/image = .*/image = "=0.24.7"/' Cargo.toml
-          sed -i -E 's/display-info = .*/display-info = "=0.4.1"/' Cargo.toml
-          sed -i -E 's/rfd = .*/rfd = "=0.12.1"/' Cargo.toml
-          sed -i -E 's/directories = .*/directories = "=5.0.0"/' Cargo.toml
+          # 1. Instalar Rust estable temporalmente solo para esta tarea
+          rustup toolchain install stable
 
-          # 2. Inyección de TODAS las dependencias de sistema problemáticas conocidas
-          echo "" >> Cargo.toml
-          echo 'pxfm = "=0.1.27"' >> Cargo.toml
-          echo 'moxcms = "=0.7.9"' >> Cargo.toml
-          echo 'home = "=0.5.11"' >> Cargo.toml
-          echo 'windows-sys = "=0.52.0"' >> Cargo.toml
-          echo 'windows-targets = "=0.52.4"' >> Cargo.toml
-
-          echo "--- Cargo.toml tras la congelación masiva ---"
-          cat Cargo.toml
-
-          # 3. Eliminar Cargo.lock y generar uno nuevo blindado
+          # 2. Generar el lockfile con stable (que no crashea leyendo catálogos)
           rm -f Cargo.lock
-          cargo +1.77.2 generate-lockfile
+          cargo +stable generate-lockfile
+
+          # 3. Forzar el downgrade de TODAS las librerías "topo" directo al lockfile
+          cargo +stable update -p pxfm --precise 0.1.27
+          cargo +stable update -p moxcms --precise 0.7.9
+          cargo +stable update -p home --precise 0.5.11
+
+          # 4. Truco de magia: Convertir el Lockfile v4 a formato antiguo (v3)
+          # Esto engaña a Rust 1.77.2 para que lo lea sin quejarse
+          sed -i 's/version = 4/version = 3/g' Cargo.lock
+
+          echo "✅ Lockfile parcheado, domado y listo para Rust 1.77.2"
 
       # ── COMPILACIÓN ────────────────────────────────────────────────────────
       - name: Compilar Proyecto (Release)
+        # Aquí se usará automáticamente la versión 1.77.2 configurada en matrix
         run: cargo build --release
 
       # ── EMPAQUETADO ────────────────────────────────────────────────────────
@@ -205,7 +201,7 @@ jobs:
             Move-Item "Output/Instalar_EasyPresenter_v1.0.exe" "${{ matrix.artifact_name }}"
           }
 
-      # ── ARTEFACTOS ────────────────────────────────────────────
+      # ── ARTEFACTOS ─────────────────────────────────────────────────────────
       - name: Subir Artefacto Terminado
         uses: actions/upload-artifact@v4
         with:

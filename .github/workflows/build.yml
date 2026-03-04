@@ -77,46 +77,79 @@ jobs:
 
           Copy-Item runtime.msi "gstreamer-runtime.msi"
 
+          # Verificar que el directorio de GStreamer existe
+          if (Test-Path "C:\gstreamer\1.0\msvc_x86_64\bin") {
+            Write-Host "✅ GStreamer instalado correctamente"
+            Get-ChildItem "C:\gstreamer\1.0\msvc_x86_64\bin\pkg-config*"
+          } else {
+            Write-Error "❌ GStreamer no se instaló en la ruta esperada"
+          }
+
+      - name: Instalar pkg-config independiente (Windows)
+        if: matrix.is_windows
+        shell: pwsh
+        run: |
+          # FIX DEFINITIVO para pkg-config en Windows CI:
+          #
+          # El pkg-config.exe que viene con GStreamer necesita cargar sus propias
+          # DLLs para ejecutarse. Aunque lo añadamos al PATH, hay condiciones de
+          # carrera y dependencias de MSVC runtime que hacen que falle.
+          #
+          # La solución es instalar pkgconfiglite (un pkg-config independiente y
+          # estático) que NO necesita ninguna DLL externa para funcionar.
+          # Luego lo configuramos para que lea los archivos .pc de GStreamer.
+
+          choco install pkgconfiglite -y --no-progress
+
+          # Verificar que funciona
+          pkg-config --version
+
       - name: Configurar Entorno GStreamer (Windows)
         if: matrix.is_windows
         shell: pwsh
         run: |
           $GstPath = "C:\gstreamer\1.0\msvc_x86_64"
 
-          echo "PKG_CONFIG=$GstPath\bin\pkg-config.exe"  >> $env:GITHUB_ENV
+          # pkg-config independiente de choco + apuntar sus búsquedas a GStreamer
           echo "PKG_CONFIG_PATH=$GstPath\lib\pkgconfig"  >> $env:GITHUB_ENV
           echo "GSTREAMER_1_0_ROOT_X86_64=$GstPath"      >> $env:GITHUB_ENV
-          echo "$GstPath\bin"                             >> $env:GITHUB_PATH
+
+          # El bin de GStreamer en PATH para que los .dll sean localizables en runtime
+          echo "$GstPath\bin" >> $env:GITHUB_PATH
+
+          # Verificar archivos .pc disponibles
+          Write-Host "Archivos .pc en GStreamer:"
+          Get-ChildItem "$GstPath\lib\pkgconfig\glib*" | Select-Object Name
 
       # ── PREPARACIÓN WIN 7 ──────────────────────────────────────────────────
       #
-      # RAÍZ DEL PROBLEMA:
-      #   slint = "1.8.0" en Cargo.toml significa ^1.8.0 (cualquier versión >= 1.8, < 2).
-      #   Cargo resuelve AMBOS (slint y slint-build) a la más nueva → 1.15.1.
-      #   slint 1.8.0  necesita i-slint-compiler = 1.8.0
-      #   slint-build 1.15.1 necesita i-slint-compiler = 1.15.1  → CONFLICTO.
+      # Problema 1: slint/slint-build "1.8.0" = ^1.8.0 → Cargo resuelve a 1.15.x
+      #   Fix: reemplazar por "=1.8.0" (versión exacta) en Cargo.toml
       #
-      # SOLUCIÓN:
-      #   Reescribir Cargo.toml en el runner para usar versiones EXACTAS (=1.8.0).
-      #   El signo "=" le dice a Cargo "exactamente esta versión, sin subir nunca".
-      #   Con ambos en =1.8.0 no hay conflicto posible.
+      # Problema 2: image = "0.25" → su dep moxcms 0.7.11 usa edition2024
+      #   Fix: bajar image a "=0.24.9" que no tiene esa dependencia
+      #
       # ──────────────────────────────────────────────────────────────────────
-      - name: Fijar Slint en versión exacta 1.8.0 para Win 7
+      - name: Adaptar Cargo.toml para Win 7 (versiones compatibles con Rust 1.77)
         if: matrix.is_win7
         shell: bash
         run: |
-          # Cambia  slint = "1.8.0"       →  slint = "=1.8.0"
-          # Cambia  slint-build = "1.8.0" →  slint-build = "=1.8.0"
-          # El "=" delante del número es la sintaxis de Cargo para versión exacta.
-          sed -i 's/slint = "1\.8\.0"/slint = "=1.8.0"/' Cargo.toml
+          # ── Fijar slint y slint-build a versión EXACTA ──────────────────
+          sed -i 's/slint = "1\.8\.0"/slint = "=1.8.0"/'             Cargo.toml
           sed -i 's/slint-build = "1\.8\.0"/slint-build = "=1.8.0"/' Cargo.toml
 
-          # Eliminar Cargo.lock para que Cargo resuelva desde cero con las versiones exactas
+          # ── Bajar image a 0.24.9 (moxcms no existe en esa versión) ──────
+          # image 0.25 introdujo moxcms como dependencia (edition2024).
+          # image 0.24.9 es la última versión de la rama 0.24 y es compatible
+          # con Rust 1.70+ sin requerir edition2024 en ninguna dependencia.
+          sed -i 's/image = "0\.25"/image = "=0.24.9"/' Cargo.toml
+
+          # Eliminar Cargo.lock para que Cargo resuelva desde cero
           rm -f Cargo.lock
 
-          # Verificar que el reemplazo se hizo bien
-          echo "--- Cargo.toml después del sed ---"
-          grep -E "slint" Cargo.toml
+          # Verificar cambios
+          echo "--- Líneas modificadas en Cargo.toml ---"
+          grep -E "slint|image" Cargo.toml
 
       # ── COMPILACIÓN ────────────────────────────────────────────────────────
       - name: Compilar Proyecto (Release)

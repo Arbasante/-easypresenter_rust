@@ -61,35 +61,21 @@ jobs:
         if: matrix.is_windows
         shell: pwsh
         run: |
-          # gstreamer-devel instala el runtime como dependencia automáticamente.
-          # Sin pin de versión → choco usa la última disponible (1.26.x actualmente).
-          # freedesktop.org bloquea GitHub Actions, pero los paquetes de choco
-          # tienen su propio CDN que sí funciona desde los runners.
           choco install gstreamer-devel -y --no-progress
 
-          # ── Detectar la ruta real de instalación ──────────────────────────
-          # Choco puede instalar en distintas rutas según la versión del paquete.
-          # Buscamos gst-launch-1.0.exe para encontrar dónde quedó.
           $searchRoots = @("C:\Program Files\gstreamer", "C:\gstreamer", "C:\ProgramData\gstreamer")
           $gstBin = $null
-
           foreach ($root in $searchRoots) {
             $exe = Get-ChildItem $root -Recurse -Filter "gst-launch-1.0.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
             if ($exe) { $gstBin = $exe.DirectoryName; break }
           }
-
-          # Fallback: buscar en todo C:\ (más lento pero seguro)
           if (-not $gstBin) {
             $exe = Get-ChildItem "C:\" -Recurse -Filter "gst-launch-1.0.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
             if ($exe) { $gstBin = $exe.DirectoryName }
           }
+          if (-not $gstBin) { Write-Error "❌ GStreamer no encontrado"; exit 1 }
 
-          if (-not $gstBin) {
-            Write-Error "❌ No se encontró gst-launch-1.0.exe tras la instalación"
-            exit 1
-          }
-
-          $GstPath = Split-Path $gstBin -Parent   # sube un nivel desde \bin
+          $GstPath = Split-Path $gstBin -Parent
           Write-Host "✅ GStreamer en: $GstPath"
           echo "GSTREAMER_ROOT=$GstPath" >> $env:GITHUB_ENV
 
@@ -98,15 +84,12 @@ jobs:
         shell: pwsh
         run: |
           $GstPath = $env:GSTREAMER_ROOT
-
-          # pkgconfiglite: binario estático que no necesita DLLs de GStreamer
           choco install pkgconfiglite -y --no-progress
 
           echo "PKG_CONFIG_PATH=$GstPath\lib\pkgconfig"  >> $env:GITHUB_ENV
           echo "GSTREAMER_1_0_ROOT_X86_64=$GstPath"      >> $env:GITHUB_ENV
           echo "$GstPath\bin"                             >> $env:GITHUB_PATH
 
-          # Verificar que pkg-config puede leer los archivos .pc de GStreamer
           $env:PKG_CONFIG_PATH = "$GstPath\lib\pkgconfig"
           $ver = pkg-config --modversion glib-2.0
           Write-Host "✅ pkg-config OK → glib-2.0 = $ver"
@@ -115,17 +98,12 @@ jobs:
         if: matrix.is_windows
         shell: pwsh
         run: |
-          # ── Obtener la versión instalada de gst-launch.exe ────────────────
-          # "gst-launch-1.0 version 1.26.9" → extraemos "1.26.9"
-          $gstBin   = "$env:GSTREAMER_ROOT\bin\gst-launch-1.0.exe"
-          $verLine  = & $gstBin --version 2>&1 | Select-String "version \d+\.\d+\.\d+"
-          $gstVer   = ($verLine.Matches[0].Value -split " ")[1]
-          Write-Host "Versión detectada de GStreamer: $gstVer"
+          $gstBin  = "$env:GSTREAMER_ROOT\bin\gst-launch-1.0.exe"
+          $verLine = & $gstBin --version 2>&1 | Select-String "version \d+\.\d+\.\d+"
+          $gstVer  = ($verLine.Matches[0].Value -split " ")[1]
+          Write-Host "Versión GStreamer: $gstVer"
 
-          # ── Buscar el MSI que choco ya descargó en las carpetas temporales ─
-          # Choco descarga el MSI a %TEMP%\chocolatey\<pkg>\<ver>\ antes de
-          # ejecutarlo. A veces queda ahí, a veces lo borra. Buscamos primero.
-          $msiName  = "gstreamer-1.0-msvc-x86_64-$gstVer.msi"
+          $msiName = "gstreamer-1.0-msvc-x86_64-$gstVer.msi"
           $searchDirs = @(
             "$env:TEMP\chocolatey",
             "$env:LOCALAPPDATA\Temp\chocolatey",
@@ -135,55 +113,87 @@ jobs:
 
           $foundMsi = $null
           foreach ($dir in $searchDirs) {
-            $candidate = Get-ChildItem $dir -Recurse -Filter $msiName -ErrorAction SilentlyContinue | Select-Object -First 1
-            if ($candidate) { $foundMsi = $candidate.FullName; break }
+            $c = Get-ChildItem $dir -Recurse -Filter $msiName -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($c) { $foundMsi = $c.FullName; break }
           }
 
           if ($foundMsi) {
-            Write-Host "✅ MSI encontrado en caché: $foundMsi"
+            Write-Host "✅ MSI en caché: $foundMsi"
             Copy-Item $foundMsi "gstreamer-runtime.msi"
           } else {
-            # ── Fallback: GitHub Releases de GStreamer ────────────────────
-            # GStreamer publica sus binarios también en GitHub Releases,
-            # que NO está bloqueado para GitHub Actions.
-            Write-Host "MSI no encontrado en caché. Intentando GitHub Releases..."
+            Write-Host "Intentando GitHub Releases..."
             $ghUrl = "https://github.com/GStreamer/gstreamer/releases/download/$gstVer/$msiName"
-            Write-Host "URL: $ghUrl"
             $ProgressPreference = 'SilentlyContinue'
             try {
               Invoke-WebRequest -Uri $ghUrl -OutFile "gstreamer-runtime.msi" -UseBasicParsing -TimeoutSec 120
               Write-Host "✅ MSI descargado desde GitHub Releases"
             } catch {
-              # ── Último recurso: crear un instalador sin MSI ───────────────
-              # Si no podemos obtener el MSI, generamos un instalador funcional
-              # que avisa al usuario que debe instalar GStreamer manualmente.
-              Write-Warning "No se pudo obtener el MSI. El instalador mostrará instrucciones manuales."
+              Write-Warning "No se pudo obtener el MSI. El instalador se generará sin él."
               echo "SKIP_GSTREAMER_MSI=true" >> $env:GITHUB_ENV
             }
           }
 
-          # Verificar tamaño (un MSI real pesa > 50 MB)
           if (Test-Path "gstreamer-runtime.msi") {
             $sizeMB = [math]::Round((Get-Item "gstreamer-runtime.msi").Length / 1MB, 1)
-            Write-Host "Tamaño del MSI: $sizeMB MB"
+            Write-Host "Tamaño MSI: $sizeMB MB"
             if ($sizeMB -lt 10) {
-              Write-Warning "⚠️ El MSI parece demasiado pequeño ($sizeMB MB). Puede estar corrupto."
+              Write-Warning "⚠️ MSI demasiado pequeño, puede estar corrupto"
               echo "SKIP_GSTREAMER_MSI=true" >> $env:GITHUB_ENV
             }
           }
 
       # ── PREPARACIÓN WIN 7 ──────────────────────────────────────────────────
+      #
+      # ESTRATEGIA DEFINITIVA para Win7 + Rust 1.77:
+      #
+      # En lugar de ir parcheando con sed cada vez que aparece un crate nuevo
+      # con edition2024, usamos DOS mecanismos combinados:
+      #
+      # 1. sed para las dependencias DIRECTAS de Cargo.toml (slint, image)
+      # 2. [patch.crates-io] para las dependencias TRANSITIVAS problemáticas
+      #    (pxfm que viene de display-info, moxcms que viene de image, etc.)
+      #
+      # El bloque [patch.crates-io] le dice a Cargo: "cuando cualquier crate
+      # pida X, usa esta versión exacta en su lugar", sin importar qué tan
+      # profundo esté en el árbol de dependencias.
+      #
+      # Versiones seguras para Rust 1.77 (edition2021 o anterior):
+      #   pxfm:    0.1.27 → sin edition2024 (0.1.28 la introdujo)
+      #   moxcms:  no existía en image 0.24.x (por eso bajamos image)
+      # ──────────────────────────────────────────────────────────────────────
       - name: Adaptar Cargo.toml para Win 7 (versiones compatibles con Rust 1.77)
         if: matrix.is_win7
         shell: bash
         run: |
+          # ── 1. Fijar dependencias DIRECTAS a versiones exactas ────────────
+
+          # slint/slint-build: "1.8.0" = ^1.8.0 → Cargo sube a 1.15.x sin esto
           sed -i 's/slint = "1\.8\.0"/slint = "=1.8.0"/'             Cargo.toml
           sed -i 's/slint-build = "1\.8\.0"/slint-build = "=1.8.0"/' Cargo.toml
+
+          # image 0.25 → moxcms 0.7.11 (edition2024). Bajamos a 0.24.x
           sed -i 's/image = "0\.25"/image = "=0.24.9"/'               Cargo.toml
+
+          # display-info: la versión 0.4.x puede resolver a pxfm >= 0.1.28
+          # Bajamos a 0.4.4 que es la última que usa pxfm < 0.1.28
+          sed -i 's/display-info = "0\.4"/display-info = "=0.4.4"/'   Cargo.toml
+
+          # ── 2. Parchear dependencias TRANSITIVAS con [patch.crates-io] ───
+          # Esto cubre cualquier crate que pida pxfm sin importar la profundidad
+          cat >> Cargo.toml << 'EOF'
+
+          # ── PARCHE WIN7: forzar versiones sin edition2024 ─────────────────
+          # Este bloque es añadido automáticamente por el CI para Windows 7.
+          # No lo elimines manualmente si usas el workflow de release.
+          [patch.crates-io]
+          pxfm = { version = "=0.1.27" }
+          EOF
+
+          # ── 3. Limpiar Cargo.lock para resolver desde cero ────────────────
           rm -f Cargo.lock
 
-          echo "--- Cambios aplicados en Cargo.toml ---"
-          grep -E "slint|image" Cargo.toml
+          echo "--- Cargo.toml tras los cambios ---"
+          grep -E "slint|image|display-info|patch" Cargo.toml
 
       # ── COMPILACIÓN ────────────────────────────────────────────────────────
       - name: Compilar Proyecto (Release)
@@ -201,10 +211,8 @@ jobs:
         if: matrix.is_windows
         shell: pwsh
         run: |
-          # Si no conseguimos el MSI, usamos un .iss alternativo sin él
           if ($env:SKIP_GSTREAMER_MSI -eq "true") {
-            Write-Warning "Compilando instalador SIN bundlear GStreamer MSI."
-            # Crear un installer.iss temporal sin la sección de GStreamer
+            Write-Warning "Compilando instalador SIN GStreamer MSI."
             (Get-Content installer.iss) `
               -replace 'Source: "gstreamer-runtime\.msi".*', '' `
               -replace 'Filename: "msiexec\.exe".*GStreamer.*', '' |

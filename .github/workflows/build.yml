@@ -142,29 +142,31 @@ jobs:
             }
           }
 
-      # ── PREPARACIÓN WIN 7 (ESTRATEGIA LOCKFILE) ──────────────
+      # ── PREPARACIÓN WIN 7 (ESTRATEGIA LOCKFILE + SED) ──────────────
       - name: Generar Cargo.lock compatible para Win 7
         if: matrix.is_win7
         shell: bash
         run: |
-          # 1. Instalar Rust estable temporalmente solo para esta tarea
+          # 1. Instalar Rust estable temporalmente
           rustup toolchain install stable
 
-          # 2. Generar el lockfile con stable
+          # 2. 🟢 EL TRUCO DEL SIGNO IGUAL: Le prohibimos a Rust actualizar Slint a escondidas
+          # Reemplazamos 'slint = "1.8.0"' por 'slint = "=1.8.0"'
+          sed -i -E 's/slint = .*/slint = "=1.8.0"/' Cargo.toml
+          sed -i -E 's/slint-build = .*/slint-build = "=1.8.0"/' Cargo.toml
+
+          # 3. Generar el lockfile inicial con stable
           rm -f Cargo.lock
           cargo +stable generate-lockfile
 
-          # 3. Forzar el downgrade de las librerías "topo"
-          # 🟢 AÑADIMOS LAS PIEZAS DE SLINT QUE USAN EDITION 2024
+          # 4. Forzar el downgrade de las otras dos librerías que sí se actualizaron
           cargo +stable update -p pxfm --precise 0.1.27
           cargo +stable update -p moxcms --precise 0.7.9
-          cargo +stable update -p i-slint-backend-winit --precise 1.15.0
-          cargo +stable update -p i-slint-backend-qt --precise 1.15.0
 
-          # 4. Truco de magia: Convertir el Lockfile v4 a formato antiguo (v3)
+          # 5. Truco de magia: Convertir el Lockfile v4 a formato antiguo (v3)
           sed -i 's/version = 4/version = 3/g' Cargo.lock
 
-          echo "✅ Lockfile parcheado con Slint 1.15.0 y listo para Rust 1.77.2"
+          echo "✅ Lockfile parcheado (Slint 1.8.0 ESTRICTO, pxfm 0.1.27, moxcms 0.7.9)"
 
       # ── COMPILACIÓN ────────────────────────────────────────────────────────
       - name: Compilar Proyecto (Release)

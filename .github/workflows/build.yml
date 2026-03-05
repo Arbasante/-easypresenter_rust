@@ -142,34 +142,35 @@ jobs:
             }
           }
 
-      # ── PREPARACIÓN WIN 7 (MSRV + FRANCOTIRADOR) ──────────────
+      # ── PREPARACIÓN WIN 7 (TALANDO EL TRONCO: IMAGE 0.24) ──────────────
       - name: Generar Cargo.lock compatible para Win 7
         if: matrix.is_win7
         shell: bash
         run: |
-          # 1. Instalar Rust estable temporalmente
           rustup toolchain install stable
 
-          # 2. MSRV: Filtro automático para el 99% de las librerías
+          # MSRV
           sed -i -E '/^edition = .*/a rust-version = "1.77.2"' Cargo.toml
+
+          # Congelamos Slint a 1.8.0
           sed -i -E 's/slint = .*/slint = "=1.8.0"/' Cargo.toml
           sed -i -E 's/slint-build = .*/slint-build = "=1.8.0"/' Cargo.toml
 
-          # 3. Generar el lockfile con stable
+          # 🟢 TALANDO EL TRONCO: Bajamos 'image' a 0.24.7 para eliminar la rama de AV1
+          sed -i -E 's/image = .*/image = "=0.24.7"/' Cargo.toml
+
+          # Generar Lockfile
           rm -f Cargo.lock
           cargo +stable generate-lockfile
 
-          # 4. 🟢 FRANCOTIRADOR: Degradar manualmente a los "topos mentirosos".
-          # El '|| true' evita que el script falle si la librería ya no se usa.
+          # Mantenemos las correcciones manuales para los que no están dentro de 'image'
           cargo +stable update -p pxfm --precise 0.1.27 || true
-          cargo +stable update -p moxcms --precise 0.7.9 || true
           cargo +stable update -p home --precise 0.5.11 || true
-          cargo +stable update -p aligned --precise 0.4.1 || true
 
-          # 5. Convertir el Lockfile v4 a formato antiguo (v3)
+          # Convertir Lockfile
           sed -i 's/version = 4/version = 3/g' Cargo.lock
 
-          echo "✅ Lockfile blindado y listo para Rust 1.77.2"
+          echo "✅ Lockfile generado con image 0.24.7"
 
       # ── COMPILACIÓN ────────────────────────────────────────────────────────
       - name: Compilar Proyecto (Release)

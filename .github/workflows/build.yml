@@ -142,7 +142,7 @@ jobs:
             }
           }
 
-      # ── PREPARACIÓN WIN 7 (ESTRATEGIA LOCKFILE + SED) ──────────────
+      # ── PREPARACIÓN WIN 7 (RESOLUTOR INTELIGENTE MSRV) ──────────────
       - name: Generar Cargo.lock compatible para Win 7
         if: matrix.is_win7
         shell: bash
@@ -150,23 +150,24 @@ jobs:
           # 1. Instalar Rust estable temporalmente
           rustup toolchain install stable
 
-          # 2. Forzar todo Slint a 1.8.0 directamente en el Cargo.toml
+          # 2. 🟢 LA BALA DE PLATA: Declarar la Versión Máxima (MSRV)
+          # Esto inyecta 'rust-version = "1.77.2"' justo debajo de 'edition'.
+          # Obliga al gestor a buscar automáticamente en todo internet las versiones 
+          # antiguas de TODAS las dependencias para que encajen con Windows 7.
+          sed -i -E '/^edition = .*/a rust-version = "1.77.2"' Cargo.toml
+
+          # Mantenemos Slint en su versión 1.8.0 exacta
           sed -i -E 's/slint = .*/slint = "=1.8.0"/' Cargo.toml
           sed -i -E 's/slint-build = .*/slint-build = "=1.8.0"/' Cargo.toml
 
-          # 3. Generar el lockfile inicial con stable
+          # 3. Generar el lockfile con stable (¡Sin hacer downgrades manuales!)
           rm -f Cargo.lock
           cargo +stable generate-lockfile
 
-          # 4. Forzar el downgrade de las librerías gráficas (¡Volvemos a aplastar a home!)
-          cargo +stable update -p pxfm --precise 0.1.27
-          cargo +stable update -p moxcms --precise 0.7.9
-          cargo +stable update -p home --precise 0.5.11
-
-          # 5. Truco de magia: Convertir el Lockfile v4 a formato antiguo (v3)
+          # 4. Convertir el Lockfile v4 a formato antiguo (v3)
           sed -i 's/version = 4/version = 3/g' Cargo.lock
 
-          echo "✅ Lockfile parcheado (Slint 1.8.0, pxfm 0.1.27, moxcms 0.7.9, home 0.5.11)"
+          echo "✅ Lockfile generado inteligentemente y listo para Rust 1.77.2"
 
       # ── COMPILACIÓN ────────────────────────────────────────────────────────
       - name: Compilar Proyecto (Release)

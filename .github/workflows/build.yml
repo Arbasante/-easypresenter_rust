@@ -29,8 +29,6 @@ jobs:
             is_windows: true
             is_win7: false
 
-          
-
     steps:
       - name: Descargar el código
         uses: actions/checkout@v4
@@ -136,8 +134,6 @@ jobs:
             }
           }
 
-      
-
       # ── COMPILACIÓN ────────────────────────────────────────────────────────
       - name: Compilar Proyecto (Release)
         run: cargo build --release
@@ -179,3 +175,11 @@ jobs:
         with:
           name: ${{ matrix.artifact_name }}
           path: ${{ matrix.artifact_name }}
+
+      # ── PUBLICACIÓN EN GITHUB RELEASES ─────────────────────────────────────
+      - name: Publicar en GitHub Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.artifact_name }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

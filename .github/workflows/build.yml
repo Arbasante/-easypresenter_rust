@@ -5,6 +5,10 @@ on:
     tags:
       - 'v*'
 
+# 🟢 ESTA ES LA LLAVE MAESTRA PARA EVITAR EL ERROR 403
+permissions:
+  contents: write
+
 jobs:
   build:
     name: Compilar para ${{ matrix.target_name }}

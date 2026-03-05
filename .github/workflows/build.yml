@@ -150,8 +150,7 @@ jobs:
           # 1. Instalar Rust estable temporalmente
           rustup toolchain install stable
 
-          # 2. 🟢 EL TRUCO DEL SIGNO IGUAL: Le prohibimos a Rust actualizar Slint a escondidas
-          # Reemplazamos 'slint = "1.8.0"' por 'slint = "=1.8.0"'
+          # 2. Forzar todo Slint a 1.8.0 directamente en el Cargo.toml
           sed -i -E 's/slint = .*/slint = "=1.8.0"/' Cargo.toml
           sed -i -E 's/slint-build = .*/slint-build = "=1.8.0"/' Cargo.toml
 
@@ -159,14 +158,15 @@ jobs:
           rm -f Cargo.lock
           cargo +stable generate-lockfile
 
-          # 4. Forzar el downgrade de las otras dos librerías que sí se actualizaron
+          # 4. Forzar el downgrade de las librerías gráficas (¡Volvemos a aplastar a home!)
           cargo +stable update -p pxfm --precise 0.1.27
           cargo +stable update -p moxcms --precise 0.7.9
+          cargo +stable update -p home --precise 0.5.11
 
           # 5. Truco de magia: Convertir el Lockfile v4 a formato antiguo (v3)
           sed -i 's/version = 4/version = 3/g' Cargo.lock
 
-          echo "✅ Lockfile parcheado (Slint 1.8.0 ESTRICTO, pxfm 0.1.27, moxcms 0.7.9)"
+          echo "✅ Lockfile parcheado (Slint 1.8.0, pxfm 0.1.27, moxcms 0.7.9, home 0.5.11)"
 
       # ── COMPILACIÓN ────────────────────────────────────────────────────────
       - name: Compilar Proyecto (Release)

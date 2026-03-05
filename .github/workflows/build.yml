@@ -29,13 +29,7 @@ jobs:
             is_windows: true
             is_win7: false
 
-          - target_name: Windows 7
-            os: windows-latest
-            rust_version: "1.77.2"
-            artifact_name: EasyPresenter-Win7.exe
-            is_linux: false
-            is_windows: true
-            is_win7: true
+          
 
     steps:
       - name: Descargar el código
@@ -142,35 +136,7 @@ jobs:
             }
           }
 
-      # ── PREPARACIÓN WIN 7 (TALANDO EL TRONCO: IMAGE 0.24) ──────────────
-      - name: Generar Cargo.lock compatible para Win 7
-        if: matrix.is_win7
-        shell: bash
-        run: |
-          rustup toolchain install stable
-
-          # MSRV
-          sed -i -E '/^edition = .*/a rust-version = "1.77.2"' Cargo.toml
-
-          # Congelamos Slint a 1.8.0
-          sed -i -E 's/slint = .*/slint = "=1.8.0"/' Cargo.toml
-          sed -i -E 's/slint-build = .*/slint-build = "=1.8.0"/' Cargo.toml
-
-          # 🟢 TALANDO EL TRONCO: Bajamos 'image' a 0.24.7 para eliminar la rama de AV1
-          sed -i -E 's/image = .*/image = "=0.24.7"/' Cargo.toml
-
-          # Generar Lockfile
-          rm -f Cargo.lock
-          cargo +stable generate-lockfile
-
-          # Mantenemos las correcciones manuales para los que no están dentro de 'image'
-          cargo +stable update -p pxfm --precise 0.1.27 || true
-          cargo +stable update -p home --precise 0.5.11 || true
-
-          # Convertir Lockfile
-          sed -i 's/version = 4/version = 3/g' Cargo.lock
-
-          echo "✅ Lockfile generado con image 0.24.7"
+      
 
       # ── COMPILACIÓN ────────────────────────────────────────────────────────
       - name: Compilar Proyecto (Release)

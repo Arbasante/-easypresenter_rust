@@ -1,5 +1,6 @@
 use rusqlite::{Connection, Result};
 use slint::{ModelRc, SharedString, VecModel, ComponentHandle, SharedPixelBuffer};
+use slint::Model;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::rc::Rc;
@@ -670,7 +671,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let tiene_referencia = !ref_str.is_empty();
         let info = *segunda_pantalla_proy.lock().unwrap();
         let (screen_w, screen_h) = if let Some((_, _, w, h)) = info { (w as f32, h as f32) } else { (1280.0, 720.0) };
-        let font_size = calcular_font_size(&texto, tiene_referencia, screen_w, screen_h);
+        let base_font_size = calcular_font_size(&texto, tiene_referencia, screen_w, screen_h);
+        // Aplicar escala del usuario (cantos o biblias según modo)
+        let scale = if tiene_referencia { ui.get_biblias_font_scale() } else { ui.get_cantos_font_scale() };
+        let font_size = base_font_size * scale;
         p.set_tamano_letra(font_size);
         let modo_actual = if tiene_referencia { "biblias" } else { "cantos" };
         let mut l_modo = last_modo.lock().unwrap();
@@ -763,7 +767,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }).collect();
                         ui.set_estrofas_actuales(ModelRc::from(Rc::new(VecModel::from(diapos.clone()))));
                         ui.set_active_estrofa_index(target_index);
-                        ui.set_scroll_to_y(target_index as f32 * 115.0);
+                        ui.set_scroll_to_y(-((target_index as f32) * 115.0));
                         if (target_index as usize) < diapos.len() {
                             let text = diapos[target_index as usize].texto.clone();
                             let ord = diapos[target_index as usize].orden.clone();
@@ -809,11 +813,56 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ui_h_sync = ui.as_weak();
     let p_h_sync = proyector.as_weak();
     let vp_sync = Arc::clone(&video_player);
+    let segunda_pantalla_sync = Arc::clone(&segunda_pantalla);
     ui.on_sync_estilos(move || {
         let ui = ui_h_sync.unwrap();
         let p = p_h_sync.unwrap();
         let modo = ui.get_modal_tab();
         aplicar_estilos(&ui, &p, &vp_sync, modo.as_str(), true);
+
+        // Re-aplicar font size con el nuevo scale al slide activo
+        let active_idx = ui.get_active_estrofa_index();
+        if active_idx >= 0 {
+            let estrofas = ui.get_estrofas_actuales();
+            let idx = active_idx as usize;
+            if idx < estrofas.row_count() {
+                if let Some(d) = estrofas.row_data(idx) {
+                    let texto = d.texto.to_string();
+                    let referencia = p.get_referencia().to_string();
+                    let tiene_ref = !referencia.is_empty();
+                    let info = *segunda_pantalla_sync.lock().unwrap();
+                    let (sw, sh) = if let Some((_, _, w, h)) = info { (w as f32, h as f32) } else { (1280.0, 720.0) };
+                    let scale = if modo == "biblias" { ui.get_biblias_font_scale() } else { ui.get_cantos_font_scale() };
+                    let font_size = calcular_font_size(&texto, tiene_ref, sw, sh) * scale;
+                    p.set_tamano_letra(font_size);
+                }
+            }
+        }
+    });
+
+    // ── Cambia SOLO el tamaño de letra sin tocar fondos ni imágenes ──
+    let ui_h_fs = ui.as_weak();
+    let p_h_fs = proyector.as_weak();
+    let segunda_pantalla_fs = Arc::clone(&segunda_pantalla);
+    ui.on_sync_font_scale(move || {
+        let ui = ui_h_fs.unwrap();
+        let p = p_h_fs.unwrap();
+        let active_idx = ui.get_active_estrofa_index();
+        if active_idx < 0 { return; }
+        let estrofas = ui.get_estrofas_actuales();
+        let idx = active_idx as usize;
+        if idx >= estrofas.row_count() { return; }
+        if let Some(d) = estrofas.row_data(idx) {
+            let texto = d.texto.to_string();
+            let referencia = p.get_referencia().to_string();
+            let tiene_ref = !referencia.is_empty();
+            let info = *segunda_pantalla_fs.lock().unwrap();
+            let (sw, sh) = if let Some((_, _, w, h)) = info { (w as f32, h as f32) } else { (1280.0, 720.0) };
+            let modo = ui.get_modal_tab();
+            let scale = if modo == "biblias" { ui.get_biblias_font_scale() } else { ui.get_cantos_font_scale() };
+            let font_size = calcular_font_size(&texto, tiene_ref, sw, sh) * scale;
+            p.set_tamano_letra(font_size);
+        }
     });
 
     let ui_h_gal = ui.as_weak();

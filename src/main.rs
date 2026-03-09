@@ -1,3 +1,5 @@
+#![windows_subsystem = "windows"]
+
 use rusqlite::{Connection, Result};
 use slint::{ModelRc, SharedString, VecModel, ComponentHandle, SharedPixelBuffer};
 use slint::Model;
@@ -238,7 +240,7 @@ fn mover_proyector_a_pantalla(p_weak: slint::Weak<ProjectorWindow>, x: i32, y: i
                 if let Some(p) = p_clone.upgrade() {
                     p.window().set_position(slint::PhysicalPosition::new(x, y));
                     p.window().set_size(slint::PhysicalSize::new(width, height));
-                    if es_ultimo { p.window().set_maximized(true); }
+                    if es_ultimo { p.window().set_fullscreen(true); }
                 }
             });
         });
@@ -645,7 +647,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             thread::spawn(move || {
                 thread::sleep(std::time::Duration::from_millis(100));
                 let _ = slint::invoke_from_event_loop(move || {
-                    if let Some(p) = p_weak.upgrade() { p.window().set_maximized(true); }
+                    if let Some(p) = p_weak.upgrade() { p.window().set_fullscreen(true); }
                 });
             });
         }
@@ -1154,10 +1156,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let ui = ui_handle_proj.unwrap();
         let state = vid_state.lock().unwrap();
         if let Some(item) = state.get(idx as usize) {
-            p.set_es_video(true); p.set_bg_color(slint::Color::from_rgb_u8(0, 0, 0));
-            p.set_mostrar_imagen(false); p.set_texto_proyeccion(slint::SharedString::from(""));
+            p.set_es_video(true); 
+            p.set_bg_color(slint::Color::from_rgb_u8(0, 0, 0));
+            p.set_mostrar_imagen(false); 
+            
+            
+            p.set_texto_proyeccion(slint::SharedString::from(""));
+            p.set_referencia(slint::SharedString::from(""));
+            
             vp_sync.lock().unwrap().reproducir(&item.path, p.as_weak(), item.is_loop);
-            ui.set_is_video_projecting(true); ui.set_is_proyector_playing(true);
+            ui.set_is_video_projecting(true); 
+            ui.set_is_proyector_playing(true);
         }
     });
 

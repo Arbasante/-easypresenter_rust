@@ -19,17 +19,16 @@ Source: "target\release\easy-presenter-slint.exe"; DestDir: "{app}"; Flags: igno
 ; 2. Tus bases de datos (importante para que el programa no abra vacío)
 Source: "data\*"; DestDir: "{app}\data"; Flags: ignoreversion recursesubdirs createallsubdirs
 
-; 3. El motor de video GStreamer (necesario para que funcione el video en Windows)
-; Nota: El script de GitHub lo descargará automáticamente
-Source: "gstreamer-runtime.msi"; DestDir: "{tmp}"; Flags: deleteafterinstall
+; 3. Las DLLs base de GStreamer (copiadas por el YAML a target\release)
+Source: "target\release\*.dll"; DestDir: "{app}"; Flags: ignoreversion
+
+; 4. Los plugins de video/audio de GStreamer (copiados por el YAML)
+Source: "target\release\lib\*"; DestDir: "{app}\lib"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{autodesktop}\EasyPresenter"; Filename: "{app}\easy-presenter-slint.exe"
 Name: "{group}\EasyPresenter"; Filename: "{app}\easy-presenter-slint.exe"
 
 [Run]
-; Instala GStreamer de forma silenciosa antes de que el usuario abra la app
-Filename: "msiexec.exe"; Parameters: "/i ""{tmp}\gstreamer-runtime.msi"" /qn"; StatusMsg: "Instalando componentes de video..."; Flags: waituntilterminated
-
-; Iniciar el programa al terminar
+; Iniciar el programa al terminar (Ya no necesitamos instalar el MSI de GStreamer)
 Filename: "{app}\easy-presenter-slint.exe"; Description: "Lanzar EasyPresenter"; Flags: nowait postinstall skipifsilent

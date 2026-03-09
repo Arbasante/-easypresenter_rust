@@ -892,7 +892,7 @@ export component AppWindow inherits Window {
             }
         }
         if (root.mostrar_submenu_aspecto && root.menu_media_idx != -1) : Rectangle {
-            x: root.menu_media_x - 172px; y: root.menu_media_y + 36px;
+            x: root.menu_media_x + 178px; y: root.menu_media_y + 36px;
             width: 170px; height: 106px;
             background: #1e1e1e; border-radius: 8px; border-width: 1px; border-color: #374151;
             drop-shadow-color: rgba(0,0,0,0.6); drop-shadow-blur: 16px;
@@ -913,7 +913,7 @@ export component AppWindow inherits Window {
         width: 100%; height: 100%; background: transparent;
         TouchArea { clicked => { root.mostrar_menu_video = false; root.mostrar_submenu_reproduccion = false; } }
         if (root.mostrar_submenu_reproduccion && root.menu_video_idx != -1) : Rectangle {
-            x: root.menu_video_x - 165px; y: root.menu_video_y + 35px;
+            x: root.menu_video_x + 178px; y: root.menu_video_y + 35px;
             width: 160px; height: 72px;
             background: #1e1e1e; border-radius: 8px; border-width: 1px; border-color: #374151;
             drop-shadow-color: rgba(0,0,0,0.6); drop-shadow-blur: 16px;

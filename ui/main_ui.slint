@@ -4,10 +4,6 @@ import "./fonts/Inter-VariableFont_opsz,wght.ttf";
 export { ProjectorWindow }
 import { LineEdit, Button, TextEdit, CheckBox } from "std-widgets.slint";
 
-
-
-
-// --- IMPORTACIÓN DE FUENTES ---
 import "./fonts/GoogleSans-Regular.ttf";
 import "./fonts/GoogleSans-Medium.ttf";
 import "./fonts/GoogleSans-Bold.ttf";
@@ -18,20 +14,45 @@ import "./fonts/Inter-Bold.ttf";
 
 export struct Canto { id: int, titulo: string, letra: string }
 export struct BookInfo { id: int, nombre: string, capitulos: int }
-export struct DiapositivaUI { orden: string, texto: string } 
-export struct ChapterRow { caps: [int] } 
+export struct DiapositivaUI { orden: string, texto: string, font_size: float }
+export struct ChapterRow { caps: [int] }
 export struct MediaItem { id: int, nombre: string, path: string, img: image, aspecto: string, is_loop: bool, }
 
-// --- COMPONENTES PERSONALIZADOS PARA EL MENÚ ---
+// ─────────────────────────────────────────────────────────────
+//  TAB BUTTON (nuevo componente para la barra de navegación)
+// ─────────────────────────────────────────────────────────────
+component TabButton inherits Rectangle {
+    in property <string> text;
+    in property <string> icon; // se mantiene la propiedad por compatibilidad, no se usa visualmente
+    in property <bool> active: false;
+    callback clicked;
 
-// --- COMPONENTES PERSONALIZADOS PARA EL MENÚ ---
+    background: root.active ? rgba(14, 165, 233, 0.10) : (touch.has-hover ? rgba(255,255,255,0.03) : transparent);
+    touch := TouchArea { clicked => { root.clicked(); } }
 
+    Text {
+        text: root.text; font-size: 9px; font-weight: 800; letter-spacing: 0.4px;
+        horizontal-alignment: center; vertical-alignment: center;
+        width: 100%; height: 100%;
+        color: root.active ? #0ea5e9 : (touch.has-hover ? #9ca3af : #4b5563);
+    }
+
+    // Indicador inferior activo
+    Rectangle {
+        y: parent.height - 2px; height: 2px; width: 100%;
+        background: root.active ? #0ea5e9 : transparent;
+    }
+}
+
+// ─────────────────────────────────────────────────────────────
+//  COMPONENTES PERSONALIZADOS (sin cambios)
+// ─────────────────────────────────────────────────────────────
 component MenuItem inherits Rectangle {
     in property <string> text;
     in property <string> icon;
     in property <bool> has_submenu: false;
-    in property <color> text_color: #e5e7eb; // NUEVO: Permite cambiar color
-    in property <color> icon_color: #9ca3af; // NUEVO: Permite cambiar color
+    in property <color> text_color: #e5e7eb;
+    in property <color> icon_color: #9ca3af;
     callback clicked();
 
     height: 32px;
@@ -41,43 +62,15 @@ component MenuItem inherits Rectangle {
     touch := TouchArea { clicked => { root.clicked(); } }
 
     HorizontalLayout {
-        padding-left: 10px;
-        padding-right: 10px;
-        spacing: 10px;
+        padding-left: 10px; padding-right: 10px; spacing: 10px;
         alignment: space-between;
-
         HorizontalLayout {
             spacing: 8px;
-            Text {
-                text: root.icon;
-                color: touch.has-hover ? white : root.icon_color;
-                font-size: 14px;
-                vertical-alignment: center;
-            }
-            Text {
-                text: root.text;
-                color: touch.has-hover ? white : root.text_color;
-                font-size: 11px;
-                vertical-alignment: center;
-                font-weight: 600;
-            }
+            Text { text: root.icon; color: touch.has-hover ? white : root.icon_color; font-size: 14px; vertical-alignment: center; }
+            Text { text: root.text; color: touch.has-hover ? white : root.text_color; font-size: 11px; vertical-alignment: center; font-weight: 600; }
         }
-
-        if (root.has_submenu) : Text {
-            text: ">";
-            color: touch.has-hover ? white : #9ca3af;
-            font-size: 11px;
-            vertical-alignment: center;
-            font-weight: 600;
-        }
+        if (root.has_submenu) : Text { text: ">"; color: touch.has-hover ? white : #9ca3af; font-size: 11px; vertical-alignment: center; font-weight: 600; }
     }
-}
-
-component MenuButton inherits Rectangle {
-    in property <string> text; in property <string> icon; in property <bool> active: false; callback clicked;
-    height: 24px; border-radius: 6px; background: root.active ? #0ea5e9 : transparent;
-    touch := TouchArea { clicked => { root.clicked(); } }
-    HorizontalLayout { padding-left: 6px; padding-right: 10px; spacing: 6px; alignment: start; Text { text: root.icon; color: root.active ? white : #9ca3af; font-size: 10px; vertical-alignment: center; } Text { text: root.text; color: root.active ? white : #929aa7; font-size: 11px; font-weight: 500; vertical-alignment: center; } Rectangle { horizontal-stretch: 1; } }
 }
 
 component BgOption inherits Rectangle {
@@ -94,6 +87,9 @@ component ColorSwatch inherits Rectangle {
     touch := TouchArea { clicked => { root.clicked(); } }
 }
 
+// ─────────────────────────────────────────────────────────────
+//  APP WINDOW
+// ─────────────────────────────────────────────────────────────
 export component AppWindow inherits Window {
     min-width: 800px; min-height: 600px; background: #18181b; default-font-family: "Google Sans";
 
@@ -101,28 +97,26 @@ export component AppWindow inherits Window {
     in property <[Canto]> cantos: [];
     in-out property <string> buscador_texto: "";
     in-out property <string> elemento_seleccionado: "";
-    in property <[DiapositivaUI]> estrofas_actuales: []; 
+    in property <[DiapositivaUI]> estrofas_actuales: [];
     in-out property <int> active_estrofa_index: -1;
     in-out property <length> scroll_to_y: 0px;
 
-    // --- VARIABLES DE PERSONALIZACIÓN ---
     in-out property <bool> mostrar_personalizar: false;
     in-out property <string> modal_tab: "biblias";
     callback sync_estilos();
-    
-    in-out property <string> biblias_bg_type: "negro"; 
+
+    in-out property <string> biblias_bg_type: "negro";
     in-out property <color> biblias_font_color: white;
     in-out property <image> biblias_bg_image;
     in-out property <bool> biblias_has_image: false;
-    in-out property <float> biblias_fondo_opacity: 0.5; // Nueva propiedad opacidad
-    
-    in-out property <string> cantos_bg_type: "negro"; 
+    in-out property <float> biblias_fondo_opacity: 0.5;
+
+    in-out property <string> cantos_bg_type: "negro";
     in-out property <color> cantos_font_color: white;
     in-out property <image> cantos_bg_image;
     in-out property <bool> cantos_has_image: false;
-    in-out property <float> cantos_fondo_opacity: 0.5; // Nueva propiedad opacidad
+    in-out property <float> cantos_fondo_opacity: 0.5;
 
-    // --- VARIABLES SELECTOR DE COLOR ---
     in-out property <color> biblias_custom_color: #0ea5e9;
     in-out property <color> cantos_custom_color: #0ea5e9;
     in-out property <bool> mostrar_selector_color: false;
@@ -134,10 +128,9 @@ export component AppWindow inherits Window {
         [ #1e3a8a, #14532d, #713f12, #7c2d12, #7f1d1d, #581c87, #292524, #000000 ]
     ];
 
-    in-out property <string> biblias_video_path: ""; 
+    in-out property <string> biblias_video_path: "";
     in-out property <string> cantos_video_path: "";
 
-    // --- VARIABLES DE GALERÍA ---
     in property <[image]> biblias_image_data: [];
     in property <[image]> cantos_image_data: [];
     in property <[string]> biblias_video_names: [];
@@ -147,70 +140,61 @@ export component AppWindow inherits Window {
     in-out property <int> biblias_selected_vid: -1;
     in-out property <int> cantos_selected_vid: -1;
 
-    // --- VARIABLES DE MULTIMEDIA (IMÁGENES GENERALES) ---
     in property <[MediaItem]> multimedia_items: [];
     in-out property <int> selected_media_idx: -1;
-    
-    // Para el clic derecho (Menú contextual)
+
     in-out property <bool> mostrar_menu_media: false;
     in-out property <int> menu_media_idx: -1;
     in-out property <length> menu_media_x: 0px;
     in-out property <length> menu_media_y: 0px;
-    in-out property <bool> mostrar_submenu_aspecto: false; // NUEVA PROPIEDAD
+    in-out property <bool> mostrar_submenu_aspecto: false;
 
     callback agregar_multimedia();
     callback eliminar_multimedia(int);
     callback cambiar_aspecto_multimedia(int, string);
     callback proyectar_multimedia(int);
 
-    // --- VARIABLES DE VIDEO ---
     in property <[MediaItem]> video_items: [];
     in-out property <int> selected_video_idx: -1;
-    
+
     in-out property <bool> mostrar_menu_video: false;
     in-out property <int> menu_video_idx: -1;
     in-out property <length> menu_video_x: 0px;
     in-out property <length> menu_video_y: 0px;
 
-    // Variables para el submenu de reproducción
     in-out property <bool> mostrar_submenu_reproduccion: false;
     callback cambiar_modo_reproduccion(int, string);
 
     callback agregar_video();
     callback eliminar_video(int);
-    callback proyectar_video(int); // Para mandarlo a la pantalla secundaria (Doble clic)
-    
-    // Variables para el reproductor central (Preview)
+    callback proyectar_video(int);
+
     in-out property <image> preview_video_frame;
     in-out property <bool> is_preview_playing: false;
     callback toggle_preview_video(int);
     callback seleccionar_video_lista(int);
 
-    // Variables para el control de la segunda pantalla (Proyector)
     in-out property <bool> is_video_projecting: false;
     in-out property <bool> is_proyector_playing: true;
     in-out property <bool> is_proyector_muted: false;
     callback toggle_proyector_mute();
     in-out property <float> proyector_progress: 0.0;
     in-out property <string> proyector_time: "00:00 / 00:00";
-    
+
     callback toggle_proyector_play();
     callback seek_proyector_video(float);
 
-    // Callbacks Galería y Legacy
     callback agregar_a_galeria(string);
     callback seleccionar_galeria_item(string, int);
     callback eliminar_galeria_item(string, int);
-    callback cargar_fondo_media(string); // Legacy
-    callback quitar_fondo_media(string); // Legacy
+    callback cargar_fondo_media(string);
+    callback quitar_fondo_media(string);
 
-    // --- VARIABLES FORMULARIO ---
     in-out property <bool> mostrar_formulario: false;
     in-out property <int> form_id: -1;
     in-out property <string> form_titulo: "";
     in-out property <string> form_letra: "";
 
-    // --- VARIABLES BIBLIA ---
     in property <[string]> bible-versions: [];
     in-out property <string> current-bible-version: "";
     in property <[BookInfo]> bible-books: [];
@@ -220,7 +204,6 @@ export component AppWindow inherits Window {
     in-out property <BookInfo> selected-bible-book;
     in property <[ChapterRow]> chapter-rows: [];
 
-    // --- VARIABLES MENÚ CONTEXTUAL ---
     in-out property <bool> mostrar_menu_canto: false;
     in-out property <bool> mostrar_confirmar_eliminar: false;
     in-out property <int> menu_canto_id: -1;
@@ -228,11 +211,10 @@ export component AppWindow inherits Window {
     in-out property <length> menu_x: 0px;
     in-out property <length> menu_y: 0px;
 
-    // --- CALLBACKS ---
     callback buscar_cantos(string);
     callback abrir_proyector();
     callback seleccionar_canto(int);
-    callback proyectar_estrofa(string, string); 
+    callback proyectar_estrofa(string, string);
     callback cargar_datos_edicion(int);
     callback guardar_canto(int, string, string);
     callback eliminar_canto(int);
@@ -247,296 +229,63 @@ export component AppWindow inherits Window {
 
     public function focus_panel() { panel-focus.focus(); }
 
-    // ══════════════════════════════════════════
-    // LAYOUT PRINCIPAL (SIN CAMBIOS)
-    // ══════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════
+    //  LAYOUT PRINCIPAL  (2 columnas: sidebar izquierdo + central)
+    // ══════════════════════════════════════════════════════════════
     Rectangle {
         width: 100%; height: 100%;
+
         HorizontalLayout {
 
-            // COLUMNA 1: SIDEBAR IZQUIERDO
-            Rectangle {
-                width: 240px; background: #111111;
-                VerticalLayout {
-                    Rectangle {
-                        height: 48px;
-                        HorizontalLayout { padding-left: 16px; padding-right: 16px; spacing: 8px; Text { text: "🖥️"; font-size: 16px; vertical-alignment: center; color: #0ea5e9; } Text { text: "EASY PRESENTER"; color: #f3f4f6; font-size: 13px; font-weight: 900; vertical-alignment: center; } }
-                        Rectangle { y: parent.height - 1px; height: 1px; background: rgba(255, 255, 255, 0.08); }
-                    }
-                    VerticalLayout {
-                        padding-left: 12px; padding-right: 12px; padding-top: 12px; spacing: 4px;
-                        
-                        MenuButton { icon: "🎵"; text: "Cantos"; active: root.active-tab == "cantos"; clicked => { root.active-tab = "cantos"; root.sync_estilos(); } }
-                        MenuButton { icon: "📖"; text: "Biblias"; active: root.active-tab == "biblias"; clicked => { root.active-tab = "biblias"; root.sync_estilos(); } }
-
-                        // --- NUEVA SECCIÓN MULTIMEDIA ---
-                        VerticalLayout { padding-top: 20px; padding-bottom: 6px; Text { text: "MULTIMEDIA"; color: #4b5563; font-size: 9px; font-weight: 700; } }
-                        MenuButton { icon: "🖼️"; text: "Imágenes"; active: root.active-tab == "imagenes"; clicked => { root.active-tab = "imagenes"; root.sync_estilos(); } }
-                        MenuButton { icon: "🎞️"; text: "Videos"; active: root.active-tab == "videos"; clicked => { root.active-tab = "videos"; root.sync_estilos(); } }
-                        MenuButton { icon: "📄"; text: "Presentación PDF"; active: root.active-tab == "pdf"; clicked => { root.active-tab = "pdf"; root.sync_estilos(); } }
-
-                        // --- NUEVA SECCIÓN FAVORITOS ---
-                        VerticalLayout { padding-top: 20px; padding-bottom: 6px; Text { text: "FAVORITOS"; color: #4b5563; font-size: 9px; font-weight: 700; } }
-                        Rectangle {
-                            height: 120px; 
-                            background: #18181b; 
-                            border-radius: 6px;
-                            border-width: 1px;
-                            border-color: rgba(255, 255, 255, 0.05);
-                            Text {
-                                text: "Sin favoritos";
-                                color: #4b5563;
-                                font-size: 10px;
-                                horizontal-alignment: center;
-                                vertical-alignment: center;
-                            }
-                        }
-                    }
-                    Rectangle { vertical-stretch: 1; }
-                }
-            }
-
-            // COLUMNA 2: PANEL CENTRAL
-            Rectangle {
-                horizontal-stretch: 1; background: #18181b;
-                VerticalLayout {
-                    Rectangle {
-                        height: 48px; background: #18181b;
-                        HorizontalLayout { padding-left: 24px; padding-right: 16px; Text { text: root.elemento_seleccionado == "" ? "SELECCIONA UN ELEMENTO" : "📖 " + root.elemento_seleccionado; color: root.elemento_seleccionado == "" ? #6b7280 : #0ea5e9; font-size: 12px; font-weight: 900; vertical-alignment: center; horizontal-stretch: 1; } }
-                        Rectangle { y: parent.height - 1px; height: 1px; background: rgba(255, 255, 255, 0.06); }
-                    }
-                    
-                    panel-focus := FocusScope {
-                        vertical-stretch: 1;
-                        key-pressed(event) => {
-                            if (root.estrofas_actuales.length > 0 && (root.active-tab == "cantos" || root.active-tab == "biblias")) {
-                                if (event.text == Key.UpArrow) {
-                                    if (root.active_estrofa_index > 0) {
-                                        root.active_estrofa_index -= 1;
-                                        root.proyectar_estrofa(root.estrofas_actuales[root.active_estrofa_index].texto, root.active-tab == "biblias" ? root.elemento_seleccionado + ":" + root.estrofas_actuales[root.active_estrofa_index].orden : "");
-                                        root.scroll_to_y = root.active_estrofa_index * 115px > 150px ? root.active_estrofa_index * 115px - 150px : 0px;
-                                    }
-                                    return accept;
-                                }
-                                if (event.text == Key.DownArrow) {
-                                    if (root.active_estrofa_index < root.estrofas_actuales.length - 1) {
-                                        root.active_estrofa_index += 1;
-                                        root.proyectar_estrofa(root.estrofas_actuales[root.active_estrofa_index].texto, root.active-tab == "biblias" ? root.elemento_seleccionado + ":" + root.estrofas_actuales[root.active_estrofa_index].orden : "");
-                                        root.scroll_to_y = root.active_estrofa_index * 115px > 150px ? root.active_estrofa_index * 115px - 150px : 0px;
-                                    } else if (root.active_estrofa_index == -1) {
-                                        root.active_estrofa_index = 0;
-                                        root.proyectar_estrofa(root.estrofas_actuales[root.active_estrofa_index].texto, root.active-tab == "biblias" ? root.elemento_seleccionado + ":" + root.estrofas_actuales[root.active_estrofa_index].orden : "");
-                                        root.scroll_to_y = 0px;
-                                    }
-                                    return accept;
-                                }
-                            }
-                            return reject;
-                        }
-
-                        Rectangle {
-                            width: 100%; height: 100%; background: #18181b;
-                            if (root.active-tab == "cantos" || root.active-tab == "biblias") : Rectangle {
-                                width: 100%; height: 100%;
-                                if (root.estrofas_actuales.length == 0) : VerticalLayout {
-                                    alignment: center; spacing: 16px;
-                                    Text { text: "𝅘𝅥𝅮𝅘𝅥𝅮"; color: #374151; font-size: 48px; horizontal-alignment: center; }
-                                    Text { text: root.elemento_seleccionado == "" ? "SELECCIONA UN ARCHIVO DE LA BIBLIOTECA" : root.elemento_seleccionado; color: #374151; font-size: 13px; font-weight: 700; horizontal-alignment: center; }
-                                }
-                                if (root.estrofas_actuales.length > 0) : ScrollView {
-                                    viewport-y: -root.scroll_to_y;
-                                    VerticalLayout {
-                                        padding: 24px; spacing: 16px;
-                                        for estrofa[idx] in root.estrofas_actuales : Rectangle {
-                                            background: idx == root.active_estrofa_index ? rgba(220, 38, 38, 0.15) : (touch-estrofa.has-hover ? rgba(14, 165, 233, 0.1) : rgba(255, 255, 255, 0.02));
-                                            border-radius: 8px; border-width: 1px;
-                                            border-color: idx == root.active_estrofa_index ? #dc2626 : (touch-estrofa.has-hover ? #0ea5e9 : rgba(255,255,255,0.05));
-                                            touch-estrofa := TouchArea {
-                                                clicked => {
-                                                    root.active_estrofa_index = idx;
-                                                    root.proyectar_estrofa(estrofa.texto, root.active-tab == "biblias" ? root.elemento_seleccionado + ":" + estrofa.orden : "");
-                                                    panel-focus.focus();
-                                                }
-                                            }
-                                            HorizontalLayout {
-                                                padding: 16px; spacing: 16px;
-                                                Text { text: estrofa.orden; color: idx == root.active_estrofa_index ? #dc2626 : #0ea5e9; font-weight: 900; font-size: 12px; vertical-alignment: top; width: 20px;}
-                                                Text { text: estrofa.texto; color: idx == root.active_estrofa_index ? white : (touch-estrofa.has-hover ? white : #e5e7eb); font-size: 18px; wrap: word-wrap; horizontal-stretch: 1; }
-                                                Rectangle {
-                                                    width: 80px; height: 24px; border-radius: 4px; border-width: 1px;
-                                                    background: idx == root.active_estrofa_index ? #dc2626 : transparent;
-                                                    border-color: idx == root.active_estrofa_index ? #dc2626 : (touch-estrofa.has-hover ? #0ea5e9 : rgba(255,255,255,0.1));
-                                                    Text { text: idx == root.active_estrofa_index ? "EN VIVO" : "PROYECTAR"; color: idx == root.active_estrofa_index ? white : (touch-estrofa.has-hover ? #0ea5e9 : #4b5563); font-size: 9px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-
-                           
-                            // ── VISTA PANEL CENTRAL PARA IMÁGENES MULTIMEDIA ──
-                            if (root.active-tab == "imagenes") : Rectangle {
-                                width: 100%; height: 100%; background: #18181b;
-
-                                // TouchArea que cubre toda la zona de la imagen para la proyección con un clic
-                                touch-central-media := TouchArea {
-                                    clicked => {
-                                        root.proyectar_multimedia(root.selected_media_idx);
-                                    }
-                                }
-                                
-                                if (root.selected_media_idx >= 0 && root.selected_media_idx < root.multimedia_items.length) : VerticalLayout {
-                                    // Contenedor principal para la previsualización y la etiqueta
-                                    Rectangle {
-                                        vertical-stretch: 1;
-                                        horizontal-stretch: 1;
-                                        clip: true;
-                                        Image {
-                                            source: root.multimedia_items[root.selected_media_idx].img;
-                                            width: 100%; height: 100%;
-                                            // Cambia el aspecto según la configuración del ítem seleccionado
-                                            image-fit: root.multimedia_items[root.selected_media_idx].aspecto == "rellenar" ? cover : (root.multimedia_items[root.selected_media_idx].aspecto == "estirar" ? fill : contain);
-                                        }
-                                        
-                                        // ETIQUETA DE MODO (Esquina superior izquierda con fondo oscuro)
-                                        Rectangle {
-                                            width: 175px; height: 32px; x: 10px; y: 10px; // CORRECCIÓN: Ancho ampliado a 175px
-                                            background: #111111; border-radius: 6px; border-width: 1px; border-color: rgba(255,255,255,0.05);
-                                            Text {
-                                                text: root.multimedia_items[root.selected_media_idx].aspecto == "centro" ? "MODO: AJUSTAR AL CENTRO" : root.multimedia_items[root.selected_media_idx].aspecto == "rellenar" ? "MODO: RELLENAR PANTALLA" : "MODO: ESTIRAR";
-                                                color: #e5e7eb; font-size: 10px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center;
-                                            }
-                                        }
-                                    }
-                                }
-
-                                if (root.selected_media_idx == -1 || root.multimedia_items.length == 0) : VerticalLayout {
-                                    alignment: center; spacing: 16px;
-                                    Text { text: "🖼️"; color: #374151; font-size: 48px; horizontal-alignment: center; }
-                                    Text { text: "SELECCIONA UNA IMAGEN DE LA BIBLIOTECA"; color: #374151; font-size: 13px; font-weight: 700; horizontal-alignment: center; }
-                                }
-                            }
-
-
-
-                            // ── VISTA PANEL CENTRAL PARA VIDEOS ──
-                            if (root.active-tab == "videos") : Rectangle {
-                                width: 100%; height: 100%; background: #18181b;
-
-                                if (root.selected_video_idx >= 0 && root.selected_video_idx < root.video_items.length) : VerticalLayout {
-                                    padding: 16px; spacing: 12px;
-
-                                    // Botón Superior (Azul / Rojo)
-                                    Rectangle {
-                                        height: 45px; border-radius: 6px;
-                                        background: root.is_video_projecting ? #ef4444 : #0ea5e9;
-                                        TouchArea {
-                                            clicked => {
-                                                if (!root.is_video_projecting) {
-                                                    root.proyectar_video(root.selected_video_idx);
-                                                }
-                                            }
-                                        }
-                                        Text {
-                                            text: root.is_video_projecting ? "🔴 VIDEO EN PROYECCIÓN" : "▶ PROYECTAR VIDEO";
-                                            color: white; font-weight: 700; font-size: 14px;
-                                            horizontal-alignment: center; vertical-alignment: center;
-                                        }
-                                    }
-
-                                    // Preview central incrustado
-                                    Rectangle {
-                                        vertical-stretch: 1; horizontal-stretch: 1; clip: true; background: black; border-radius: 8px;
-                                        Image {
-                                            source: root.preview_video_frame;
-                                            width: 100%; height: 100%; image-fit: contain;
-                                        }
-                                        TouchArea {
-                                            clicked => { root.toggle_preview_video(root.selected_video_idx); }
-                                            if (!root.is_preview_playing) : Rectangle {
-                                                width: 60px; height: 60px; border-radius: 30px;
-                                                background: rgba(0,0,0,0.6); border-width: 2px; border-color: rgba(255,255,255,0.2);
-                                                x: (parent.width - 60px) / 2; y: (parent.height - 60px) / 2;
-                                                Text { text: "▶"; color: white; font-size: 24px; horizontal-alignment: center; vertical-alignment: center; }
-                                            }
-                                        }
-                                    }
-
-                                    // Barra Inferior de la Segunda Pantalla
-                                    if (root.is_video_projecting) : HorizontalLayout {
-                                        height: 40px; 
-                                        spacing: 16px; 
-                                        // ⚠️ Eliminamos 'alignment: center;' para que la barra pueda expandirse
-                                        padding-left: 16px; 
-                                        padding-right: 16px;
-                                        
-                                        // 1. Botón Play/Pause
-                                        Rectangle {
-                                            width: 40px; height: 40px; border-radius: 20px; background: #27272a;
-                                            TouchArea { clicked => { root.toggle_proyector_play(); } }
-                                            Text { text: root.is_proyector_playing ? "⏸" : "▶"; color: white; font-size: 18px; horizontal-alignment: center; vertical-alignment: center; }
-                                        }
-
-                                        // NUEVO: Botón de Silencio / Volumen
-                                        Rectangle {
-                                            width: 40px; height: 40px; border-radius: 20px; background: #27272a;
-                                            TouchArea { clicked => { root.toggle_proyector_mute(); } }
-                                            Text { text: root.is_proyector_muted ? "🔇" : "🔊"; color: white; font-size: 18px; horizontal-alignment: center; vertical-alignment: center; }
-                                        }
-
-                                        // 2. Contenedor de la barra (Garantiza que se estire y se centre verticalmente)
-                                        VerticalLayout {
-                                            alignment: center;
-                                            horizontal-stretch: 1;
-                                            
-                                            Rectangle {
-                                            horizontal-stretch: 1;
-                                            height: 12px; background: #3f3f46; border-radius: 6px;
-                                            
-                                            // Relleno azul interactivo
-                                            Rectangle {
-                                                x: 0; y: 0;
-                                                width: parent.width * root.proyector_progress;
-                                                height: 100%; background: #0ea5e9; border-radius: 6px;
-                                            }
-                                            
-                                            // Área táctil encima de todo (con 100% explicitado)
-                                            touch_progress := TouchArea {
-                                                width: 100%; height: 100%;
-                                                clicked => { 
-                                                    // Usamos el ancho exacto del área para dividir
-                                                    root.seek_proyector_video(touch_progress.mouse-x / touch_progress.width); 
-                                                }
-                                            }}
-                                        }
-
-                                        // 3. Temporizador
-                                        Text { text: root.proyector_time; color: #a1a1aa; font-size: 13px; font-weight: 600; vertical-alignment: center; }
-                                    }
-                                }
-                                
-                                if (root.selected_video_idx == -1 || root.video_items.length == 0) : VerticalLayout {
-                                    alignment: center; spacing: 16px;
-                                    Text { text: "🎞️"; color: #374151; font-size: 48px; horizontal-alignment: center; }
-                                    Text { text: "SELECCIONA UN VIDEO DE LA BIBLIOTECA"; color: #374151; font-size: 13px; font-weight: 700; horizontal-alignment: center; }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // COLUMNA 3: SIDEBAR DERECHO
+            // ╔══════════════════════════════════════════════════╗
+            // ║   COLUMNA 1: SIDEBAR UNIFICADO (nav + biblioteca) ║
+            // ╚══════════════════════════════════════════════════╝
             Rectangle {
                 width: 300px; background: #111111;
+
                 VerticalLayout {
+
+                    // ── BARRA DE TABS ───────────────────────────
                     Rectangle {
-                        height: 48px; background: #1a1a1a;
-                        Text { text: "BIBLIOTECA"; color: #9ca3af; font-size: 10px; font-weight: 700; vertical-alignment: center; x: 16px; }
+                        height: 34px; background: #0d0d0d;
+
+                        HorizontalLayout {
+                            TabButton {
+                                horizontal-stretch: 1; height: 34px;
+                                icon: "🎵"; text: "CANTOS";
+                                active: root.active-tab == "cantos";
+                                clicked => { root.active-tab = "cantos"; root.sync_estilos(); }
+                            }
+                            TabButton {
+                                horizontal-stretch: 1; height: 34px;
+                                icon: "📖"; text: "BIBLIA";
+                                active: root.active-tab == "biblias";
+                                clicked => { root.active-tab = "biblias"; root.sync_estilos(); }
+                            }
+                            TabButton {
+                                horizontal-stretch: 1; height: 34px;
+                                icon: "🖼️"; text: "IMGS";
+                                active: root.active-tab == "imagenes";
+                                clicked => { root.active-tab = "imagenes"; root.sync_estilos(); }
+                            }
+                            TabButton {
+                                horizontal-stretch: 1; height: 34px;
+                                icon: "🎞️"; text: "VIDEOS";
+                                active: root.active-tab == "videos";
+                                clicked => { root.active-tab = "videos"; root.sync_estilos(); }
+                            }
+                            TabButton {
+                                horizontal-stretch: 1; height: 34px;
+                                icon: "📄"; text: "PDF";
+                                active: root.active-tab == "pdf";
+                                clicked => { root.active-tab = "pdf"; root.sync_estilos(); }
+                            }
+                        }
+
                         Rectangle { y: parent.height - 1px; height: 1px; background: rgba(255, 255, 255, 0.05); }
                     }
 
+                    // ── CONTENIDO DE BIBLIOTECA (vertical-stretch) ──
                     Rectangle {
                         vertical-stretch: 1;
 
@@ -664,10 +413,9 @@ export component AppWindow inherits Window {
                         if (root.active-tab == "imagenes") : Rectangle {
                             vertical-stretch: 1; background: rgba(0, 0, 0, 0.3);
                             TouchArea {
-                                // Clic derecho en el fondo vacío para agregar
                                 pointer-event(e) => {
                                     if (e.button == PointerEventButton.right && e.kind == PointerEventKind.up) {
-                                        root.menu_media_idx = -1; // -1 significa que no se seleccionó ninguna en específico
+                                        root.menu_media_idx = -1;
                                         root.menu_media_x = self.absolute-position.x + self.mouse-x;
                                         root.menu_media_y = self.absolute-position.y + self.mouse-y;
                                         root.mostrar_menu_media = true;
@@ -695,9 +443,9 @@ export component AppWindow inherits Window {
                                                 padding: 6px; spacing: 12px;
                                                 Rectangle {
                                                     width: 72px; height: 40px; border-radius: 4px; clip: true; background: #000;
-                                                    Image { 
-                                                        source: item.img; width: 100%; height: 100%; 
-                                                        image-fit: item.aspecto == "rellenar" ? cover : (item.aspecto == "estirar" ? fill : contain); 
+                                                    Image {
+                                                        source: item.img; width: 100%; height: 100%;
+                                                        image-fit: item.aspecto == "rellenar" ? cover : (item.aspecto == "estirar" ? fill : contain);
                                                     }
                                                 }
                                                 Text { text: item.nombre; color: #f3f4f6; font-size: 11px; font-weight: 700; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
@@ -707,7 +455,6 @@ export component AppWindow inherits Window {
                                 }
                             }
                         }
-
 
                         // ── TAB VIDEOS (BIBLIOTECA) ──
                         if (root.active-tab == "videos") : Rectangle {
@@ -749,7 +496,6 @@ export component AppWindow inherits Window {
                                                 VerticalLayout {
                                                     alignment: center; spacing: 4px;
                                                     Text { text: item.nombre; color: #f3f4f6; font-size: 11px; font-weight: 700; horizontal-stretch: 1; overflow: elide; }
-                                                    // Aparece solo si el bucle está activo
                                                     if (item.is_loop) : Text { text: "BUCLE ACTIVADO"; color: #0ea5e9; font-size: 9px; font-weight: 800; }
                                                 }
                                             }
@@ -758,30 +504,315 @@ export component AppWindow inherits Window {
                                 }
                             }
                         }
+
+                        // ── TAB PDF (placeholder) ──
+                        if (root.active-tab == "pdf") : VerticalLayout {
+                            alignment: center; spacing: 16px;
+                            Text { text: "📄"; color: #374151; font-size: 48px; horizontal-alignment: center; }
+                            Text { text: "PRESENTACIONES PDF"; color: #374151; font-size: 13px; font-weight: 700; horizontal-alignment: center; }
+                        }
                     }
 
-                    // Botón personalizar
-                    VerticalLayout { 
-                        padding-left: 16px; padding-right: 16px; padding-top: 12px; padding-bottom: 12px; spacing: 0px; 
-                        HorizontalLayout { 
-                            alignment: start; 
-                            Rectangle { 
-                                width: 105px; height: 22px; background: #0ea5e9; border-radius: 6px; 
-                                touch-pers := TouchArea { clicked => { root.mostrar_personalizar = true; } }
-                                HorizontalLayout { alignment: center; spacing: 4px; Text { text: "⚙"; font-size: 10px; color: white; vertical-alignment: center; } Text { text: "PERSONALIZAR"; font-size: 8px; font-weight: 800; letter-spacing: 0.5px; color: white; vertical-alignment: center; } } 
-                            } 
-                        } 
-                    }
-
-                    // Botón abrir proyector
+                    // ── SECCIÓN FAVORITOS ───────────────────────
                     Rectangle {
-                        height: 72px; background: #111111;
+                        height: 250px; background: #0d0d0d;
+
+                        VerticalLayout {
+                            // Encabezado favoritos
+                            Rectangle {
+                                height: 28px;
+                                HorizontalLayout {
+                                    padding-left: 12px; padding-right: 12px;
+                                    Text { text: "★  FAVORITOS"; color: #374151; font-size: 9px; font-weight: 700; letter-spacing: 0.4px; vertical-alignment: center; horizontal-stretch: 1; }
+                                }
+                                Rectangle { y: parent.height - 1px; height: 1px; background: rgba(255,255,255,0.04); }
+                            }
+
+                            // Área de favoritos
+                            Rectangle {
+                                vertical-stretch: 1;
+                                Text {
+                                    text: "Mantén pulsado un elemento\npara añadirlo a favoritos";
+                                    color: #2d2d2d; font-size: 9px; font-weight: 600;
+                                    horizontal-alignment: center; vertical-alignment: center;
+                                    wrap: word-wrap; width: 100%; height: 100%;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ╔══════════════════════════════════════════════╗
+            // ║  COLUMNA 2: PANEL CENTRAL                    ║
+            // ╚══════════════════════════════════════════════╝
+            Rectangle {
+                horizontal-stretch: 1; background: #18181b;
+                VerticalLayout {
+                    // ── BARRA SUPERIOR CON TÍTULO + BOTONES ────
+                    Rectangle {
+                        height: 48px; background: #18181b;
+                        HorizontalLayout {
+                            padding-left: 24px; padding-right: 16px; spacing: 10px;
+                            // Título del elemento seleccionado
+                            Text {
+                                text: root.elemento_seleccionado == "" ? "SELECCIONA UN ELEMENTO" : "📖 " + root.elemento_seleccionado;
+                                color: root.elemento_seleccionado == "" ? #6b7280 : #0ea5e9;
+                                font-size: 12px; font-weight: 900; vertical-alignment: center; horizontal-stretch: 1;
+                            }
+                            // ── Botón PERSONALIZAR ──
+                            Rectangle {
+                                width: 28px; height: 28px; border-radius: 8px;
+                                background: touch-pers-top.has-hover ? rgba(255,255,255,0.08) : rgba(255,255,255,0.04);
+                                border-width: 1px; border-color: rgba(255,255,255,0.06);
+                                touch-pers-top := TouchArea { clicked => { root.mostrar_personalizar = true; } }
+                                Text { text: "⚙"; font-size: 12px; color: touch-pers-top.has-hover ? white : #4b5563; horizontal-alignment: center; vertical-alignment: center; }
+                            }
+                            // ── Botón LIVE ──
+                            Rectangle {
+                                width: 52px; height: 28px; border-radius: 8px;
+                                background: touch-live.has-hover ? #b91c1c : #dc2626;
+                                drop-shadow-color: rgba(220, 38, 38, 0.35); drop-shadow-blur: 8px; drop-shadow-offset-y: 2px;
+                                touch-live := TouchArea { clicked => { root.abrir_proyector(); } }
+                                Text { text: "LIVE"; font-size: 9px; font-weight: 900; letter-spacing: 0.8px; color: white; horizontal-alignment: center; vertical-alignment: center; }
+                            }
+                        }
+                        Rectangle { y: parent.height - 1px; height: 1px; background: rgba(255, 255, 255, 0.06); }
+                    }
+
+                    panel-focus := FocusScope {
+                        vertical-stretch: 1;
+                        key-pressed(event) => {
+                            if (root.estrofas_actuales.length > 0 && (root.active-tab == "cantos" || root.active-tab == "biblias")) {
+                                if (event.text == Key.UpArrow) {
+                                    if (root.active_estrofa_index > 0) {
+                                        root.active_estrofa_index -= 1;
+                                        root.proyectar_estrofa(root.estrofas_actuales[root.active_estrofa_index].texto, root.active-tab == "biblias" ? root.elemento_seleccionado + ":" + root.estrofas_actuales[root.active_estrofa_index].orden : "");
+                                        root.scroll_to_y = root.active_estrofa_index * 115px > 150px ? root.active_estrofa_index * 115px - 150px : 0px;
+                                    }
+                                    return accept;
+                                }
+                                if (event.text == Key.DownArrow) {
+                                    if (root.active_estrofa_index < root.estrofas_actuales.length - 1) {
+                                        root.active_estrofa_index += 1;
+                                        root.proyectar_estrofa(root.estrofas_actuales[root.active_estrofa_index].texto, root.active-tab == "biblias" ? root.elemento_seleccionado + ":" + root.estrofas_actuales[root.active_estrofa_index].orden : "");
+                                        root.scroll_to_y = root.active_estrofa_index * 115px > 150px ? root.active_estrofa_index * 115px - 150px : 0px;
+                                    } else if (root.active_estrofa_index == -1) {
+                                        root.active_estrofa_index = 0;
+                                        root.proyectar_estrofa(root.estrofas_actuales[root.active_estrofa_index].texto, root.active-tab == "biblias" ? root.elemento_seleccionado + ":" + root.estrofas_actuales[root.active_estrofa_index].orden : "");
+                                        root.scroll_to_y = 0px;
+                                    }
+                                    return accept;
+                                }
+                            }
+                            return reject;
+                        }
+
                         Rectangle {
-                            height: 40px; width: parent.width - 32px; x: 16px; y: 16px;
-                            border-radius: 20px; background: #dc2626;
-                            drop-shadow-color: rgba(220, 38, 38, 0.3); drop-shadow-blur: 10px; drop-shadow-offset-y: 4px;
-                            touch-proyector := TouchArea { clicked => { root.abrir_proyector(); } }
-                            HorizontalLayout { alignment: center; spacing: 8px; Text { text: "📽"; font-size: 14px; color: white; vertical-alignment: center; } Text { text: "ABRIR PROYECTOR"; font-size: 11px; font-weight: 800; letter-spacing: 1px; color: white; vertical-alignment: center; } }
+                            width: 100%; height: 100%; background: #18181b;
+
+                            // ── VISTA CANTOS / BIBLIAS ──
+                            if (root.active-tab == "cantos" || root.active-tab == "biblias") : Rectangle {
+                                width: 100%; height: 100%;
+                                if (root.estrofas_actuales.length == 0) : VerticalLayout {
+                                    alignment: center; spacing: 16px;
+                                    Text { text: "𝅘𝅥𝅮𝅘𝅥𝅮"; color: #374151; font-size: 48px; horizontal-alignment: center; }
+                                    Text { text: root.elemento_seleccionado == "" ? "SELECCIONA UN ARCHIVO DE LA BIBLIOTECA" : root.elemento_seleccionado; color: #374151; font-size: 13px; font-weight: 700; horizontal-alignment: center; }
+                                }
+                                if (root.estrofas_actuales.length > 0) : ScrollView {
+                                    viewport-y: -root.scroll_to_y;
+                                    VerticalLayout {
+                                        padding: 16px; spacing: 12px;
+                                        // ── CUADRÍCULA 3×N ──
+                                        // Fila 0: índices 0,1,2
+                                        // Fila 1: índices 3,4,5 … etc.
+                                        // Se generan filas de hasta 3 celdas usando GridLayout
+                                        GridLayout {
+                                            spacing: 12px;
+                                            for estrofa[idx] in root.estrofas_actuales : Rectangle {
+                                                row: idx / 3;
+                                                col: mod(idx, 3);
+                                                height: 180px;
+                                                border-radius: 8px; border-width: 1px;
+                                                background: idx == root.active_estrofa_index
+                                                    ? rgba(220, 38, 38, 0.18)
+                                                    : (touch-estrofa.has-hover ? rgba(14, 165, 233, 0.10) : rgba(255, 255, 255, 0.02));
+                                                border-color: idx == root.active_estrofa_index
+                                                    ? #dc2626
+                                                    : (touch-estrofa.has-hover ? #0ea5e9 : rgba(255,255,255,0.06));
+
+                                                touch-estrofa := TouchArea {
+                                                    clicked => {
+                                                        root.active_estrofa_index = idx;
+                                                        root.proyectar_estrofa(
+                                                            estrofa.texto,
+                                                            root.active-tab == "biblias"
+                                                                ? root.elemento_seleccionado + ":" + estrofa.orden
+                                                                : ""
+                                                        );
+                                                        panel-focus.focus();
+                                                    }
+                                                }
+
+                                                VerticalLayout {
+                                                    padding: 10px; spacing: 6px;
+
+                                                    // ── Cabecera: número + badge LIVE/PROYECTAR ──
+                                                    HorizontalLayout {
+                                                        spacing: 6px; alignment: space-between;
+                                                        Text {
+                                                            text: estrofa.orden;
+                                                            color: idx == root.active_estrofa_index ? #dc2626 : #0ea5e9;
+                                                            font-weight: 900; font-size: 10px;
+                                                            vertical-alignment: center;
+                                                        }
+                                                        Rectangle {
+                                                            width: 54px; height: 18px; border-radius: 4px; border-width: 1px;
+                                                            background: idx == root.active_estrofa_index ? #dc2626 : transparent;
+                                                            border-color: idx == root.active_estrofa_index
+                                                                ? #dc2626
+                                                                : (touch-estrofa.has-hover ? rgba(14,165,233,0.5) : rgba(255,255,255,0.08));
+                                                            Text {
+                                                                text: idx == root.active_estrofa_index ? "EN VIVO" : "CLIC";
+                                                                color: idx == root.active_estrofa_index ? white : (touch-estrofa.has-hover ? #0ea5e9 : #4b5563);
+                                                                font-size: 8px; font-weight: 800;
+                                                                horizontal-alignment: center; vertical-alignment: center;
+                                                            }
+                                                        }
+                                                    }
+
+                                                    // ── Separador ──
+                                                    Rectangle {
+                                                        height: 1px;
+                                                        background: idx == root.active_estrofa_index
+                                                            ? rgba(220,38,38,0.3)
+                                                            : rgba(255,255,255,0.05);
+                                                    }
+
+                                                    // ── Texto de la estrofa (auto-ajustado) ──
+                                                    Rectangle {
+                                                        vertical-stretch: 1; clip: true;
+                                                        Text {
+                                                            text: estrofa.texto;
+                                                            color: idx == root.active_estrofa_index
+                                                                ? white
+                                                                : (touch-estrofa.has-hover ? white : #d1d5db);
+                                                            // Tamaño calculado desde Rust por estrofa
+                                                            font-size: max(9px, estrofa.font_size * 1px);
+                                                            wrap: word-wrap;
+                                                            width: 100%; height: 100%;
+                                                            vertical-alignment: top;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            // ── VISTA IMÁGENES (panel central) ──
+                            if (root.active-tab == "imagenes") : Rectangle {
+                                width: 100%; height: 100%; background: #18181b;
+                                touch-central-media := TouchArea {
+                                    clicked => { root.proyectar_multimedia(root.selected_media_idx); }
+                                }
+                                if (root.selected_media_idx >= 0 && root.selected_media_idx < root.multimedia_items.length) : VerticalLayout {
+                                    Rectangle {
+                                        vertical-stretch: 1; horizontal-stretch: 1; clip: true;
+                                        Image {
+                                            source: root.multimedia_items[root.selected_media_idx].img;
+                                            width: 100%; height: 100%;
+                                            image-fit: root.multimedia_items[root.selected_media_idx].aspecto == "rellenar" ? cover : (root.multimedia_items[root.selected_media_idx].aspecto == "estirar" ? fill : contain);
+                                        }
+                                        Rectangle {
+                                            width: 175px; height: 32px; x: 10px; y: 10px;
+                                            background: #111111; border-radius: 6px; border-width: 1px; border-color: rgba(255,255,255,0.05);
+                                            Text {
+                                                text: root.multimedia_items[root.selected_media_idx].aspecto == "centro" ? "MODO: AJUSTAR AL CENTRO" : root.multimedia_items[root.selected_media_idx].aspecto == "rellenar" ? "MODO: RELLENAR PANTALLA" : "MODO: ESTIRAR";
+                                                color: #e5e7eb; font-size: 10px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center;
+                                            }
+                                        }
+                                    }
+                                }
+                                if (root.selected_media_idx == -1 || root.multimedia_items.length == 0) : VerticalLayout {
+                                    alignment: center; spacing: 16px;
+                                    Text { text: "🖼️"; color: #374151; font-size: 48px; horizontal-alignment: center; }
+                                    Text { text: "SELECCIONA UNA IMAGEN DE LA BIBLIOTECA"; color: #374151; font-size: 13px; font-weight: 700; horizontal-alignment: center; }
+                                }
+                            }
+
+                            // ── VISTA VIDEOS (panel central) ──
+                            if (root.active-tab == "videos") : Rectangle {
+                                width: 100%; height: 100%; background: #18181b;
+                                if (root.selected_video_idx >= 0 && root.selected_video_idx < root.video_items.length) : VerticalLayout {
+                                    padding: 16px; spacing: 12px;
+                                    Rectangle {
+                                        height: 45px; border-radius: 6px;
+                                        background: root.is_video_projecting ? #ef4444 : #0ea5e9;
+                                        TouchArea {
+                                            clicked => {
+                                                if (!root.is_video_projecting) { root.proyectar_video(root.selected_video_idx); }
+                                            }
+                                        }
+                                        Text {
+                                            text: root.is_video_projecting ? "🔴 VIDEO EN PROYECCIÓN" : "▶ PROYECTAR VIDEO";
+                                            color: white; font-weight: 700; font-size: 14px;
+                                            horizontal-alignment: center; vertical-alignment: center;
+                                        }
+                                    }
+                                    Rectangle {
+                                        vertical-stretch: 1; horizontal-stretch: 1; clip: true; background: black; border-radius: 8px;
+                                        Image { source: root.preview_video_frame; width: 100%; height: 100%; image-fit: contain; }
+                                        TouchArea {
+                                            clicked => { root.toggle_preview_video(root.selected_video_idx); }
+                                            if (!root.is_preview_playing) : Rectangle {
+                                                width: 60px; height: 60px; border-radius: 30px;
+                                                background: rgba(0,0,0,0.6); border-width: 2px; border-color: rgba(255,255,255,0.2);
+                                                x: (parent.width - 60px) / 2; y: (parent.height - 60px) / 2;
+                                                Text { text: "▶"; color: white; font-size: 24px; horizontal-alignment: center; vertical-alignment: center; }
+                                            }
+                                        }
+                                    }
+                                    if (root.is_video_projecting) : HorizontalLayout {
+                                        height: 40px; spacing: 16px; padding-left: 16px; padding-right: 16px;
+                                        Rectangle {
+                                            width: 40px; height: 40px; border-radius: 20px; background: #27272a;
+                                            TouchArea { clicked => { root.toggle_proyector_play(); } }
+                                            Text { text: root.is_proyector_playing ? "⏸" : "▶"; color: white; font-size: 18px; horizontal-alignment: center; vertical-alignment: center; }
+                                        }
+                                        Rectangle {
+                                            width: 40px; height: 40px; border-radius: 20px; background: #27272a;
+                                            TouchArea { clicked => { root.toggle_proyector_mute(); } }
+                                            Text { text: root.is_proyector_muted ? "🔇" : "🔊"; color: white; font-size: 18px; horizontal-alignment: center; vertical-alignment: center; }
+                                        }
+                                        VerticalLayout {
+                                            alignment: center; horizontal-stretch: 1;
+                                            Rectangle {
+                                                horizontal-stretch: 1; height: 12px; background: #3f3f46; border-radius: 6px;
+                                                Rectangle { x: 0; y: 0; width: parent.width * root.proyector_progress; height: 100%; background: #0ea5e9; border-radius: 6px; }
+                                                touch_progress := TouchArea {
+                                                    width: 100%; height: 100%;
+                                                    clicked => { root.seek_proyector_video(touch_progress.mouse-x / touch_progress.width); }
+                                                }
+                                            }
+                                        }
+                                        Text { text: root.proyector_time; color: #a1a1aa; font-size: 13px; font-weight: 600; vertical-alignment: center; }
+                                    }
+                                }
+                                if (root.selected_video_idx == -1 || root.video_items.length == 0) : VerticalLayout {
+                                    alignment: center; spacing: 16px;
+                                    Text { text: "🎞️"; color: #374151; font-size: 48px; horizontal-alignment: center; }
+                                    Text { text: "SELECCIONA UN VIDEO DE LA BIBLIOTECA"; color: #374151; font-size: 13px; font-weight: 700; horizontal-alignment: center; }
+                                }
+                            }
+
+                            // ── VISTA PDF (placeholder) ──
+                            if (root.active-tab == "pdf") : VerticalLayout {
+                                alignment: center; spacing: 16px;
+                                Text { text: "📄"; color: #374151; font-size: 48px; horizontal-alignment: center; }
+                                Text { text: "PRESENTACIÓN PDF"; color: #374151; font-size: 13px; font-weight: 700; horizontal-alignment: center; }
+                            }
                         }
                     }
                 }
@@ -789,190 +820,109 @@ export component AppWindow inherits Window {
         }
     }
 
-
-    
-    // ══════════════════════════════════════════
-    // MENÚ CONTEXTUAL MULTIMEDIA IMÁGENES
-    // ══════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════
+    //  MENÚ CONTEXTUAL MULTIMEDIA IMÁGENES (sin cambios)
+    // ══════════════════════════════════════════════════════════════
     if (root.mostrar_menu_media) : Rectangle {
         width: 100%; height: 100%; background: transparent;
         TouchArea {
-            clicked => {
-                root.mostrar_menu_media = false;
-                root.mostrar_submenu_aspecto = false;
-            }
+            clicked => { root.mostrar_menu_media = false; root.mostrar_submenu_aspecto = false; }
         }
-        
-        // MENÚ PRINCIPAL
         Rectangle {
             x: root.menu_media_x; y: root.menu_media_y;
             width: 180px; height: root.menu_media_idx != -1 ? 116px : 40px;
             background: #1e1e1e; border-radius: 8px; border-width: 1px; border-color: #374151;
             drop-shadow-color: rgba(0,0,0,0.6); drop-shadow-blur: 16px;
-            TouchArea {} 
-            
+            TouchArea {}
             VerticalLayout {
                 padding: 4px; spacing: 2px;
-
-                MenuItem {
-                    text: "Agregar Imagen"; icon: "+";
-                    clicked => { root.mostrar_menu_media = false; root.mostrar_submenu_aspecto = false; root.agregar_multimedia(); }
-                }
-                
+                MenuItem { text: "Agregar Imagen"; icon: "+"; clicked => { root.mostrar_menu_media = false; root.mostrar_submenu_aspecto = false; root.agregar_multimedia(); } }
                 if (root.menu_media_idx != -1) : HorizontalLayout { padding-left: 6px; padding-right: 6px; padding-top: 2px; padding-bottom: 2px; Rectangle { height: 1px; background: #2d2d2d; } }
-                
                 if (root.menu_media_idx != -1) : VerticalLayout {
                     spacing: 2px;
-                    MenuItem {
-                        text: "Aspecto de Imagen"; icon: "⛶"; has_submenu: true;
-                        clicked => { root.mostrar_submenu_aspecto = !root.mostrar_submenu_aspecto; }
-                    }
-
+                    MenuItem { text: "Aspecto de Imagen"; icon: "⛶"; has_submenu: true; clicked => { root.mostrar_submenu_aspecto = !root.mostrar_submenu_aspecto; } }
                     HorizontalLayout { padding-left: 6px; padding-right: 6px; padding-top: 2px; padding-bottom: 2px; Rectangle { height: 1px; background: #2d2d2d; } }
-
-                    MenuItem {
-                        text: "Eliminar Imagen"; icon: "🗑";
-                        text_color: #f87171; icon_color: #f87171; // CORRECCIÓN: Usa el color directamente, sin duplicar texto
-                        clicked => { root.mostrar_menu_media = false; root.mostrar_submenu_aspecto = false; root.eliminar_multimedia(root.menu_media_idx); }
-                    }
+                    MenuItem { text: "Eliminar Imagen"; icon: "🗑"; text_color: #f87171; icon_color: #f87171; clicked => { root.mostrar_menu_media = false; root.mostrar_submenu_aspecto = false; root.eliminar_multimedia(root.menu_media_idx); } }
                 }
             }
         }
-
-        // SUBMENÚ DE ASPECTO
         if (root.mostrar_submenu_aspecto && root.menu_media_idx != -1) : Rectangle {
-            x: root.menu_media_x - 172px; // CORRECCIÓN: +182px fuerza que siempre abra a la derecha del menú principal (que mide 180px)
-            y: root.menu_media_y + 36px;
+            x: root.menu_media_x - 172px; y: root.menu_media_y + 36px;
             width: 170px; height: 106px;
             background: #1e1e1e; border-radius: 8px; border-width: 1px; border-color: #374151;
             drop-shadow-color: rgba(0,0,0,0.6); drop-shadow-blur: 16px;
-            TouchArea {} 
-
+            TouchArea {}
             VerticalLayout {
                 padding: 4px; spacing: 2px;
-                MenuItem {
-                    text: "Ajustar al centro"; icon: "⛶";
-                    clicked => { root.mostrar_menu_media = false; root.mostrar_submenu_aspecto = false; root.cambiar_aspecto_multimedia(root.menu_media_idx, "centro"); }
-                }
-                MenuItem {
-                    text: "Rellenar pantalla"; icon: "⛶";
-                    clicked => { root.mostrar_menu_media = false; root.mostrar_submenu_aspecto = false; root.cambiar_aspecto_multimedia(root.menu_media_idx, "rellenar"); }
-                }
-                MenuItem {
-                    text: "Estirar"; icon: "T";
-                    text_color: #0ea5e9; icon_color: #0ea5e9; // CORRECCIÓN: Usa el color azul sin duplicar texto
-                    clicked => { root.mostrar_menu_media = false; root.mostrar_submenu_aspecto = false; root.cambiar_aspecto_multimedia(root.menu_media_idx, "estirar"); }
-                }
+                MenuItem { text: "Ajustar al centro"; icon: "⛶"; clicked => { root.mostrar_menu_media = false; root.mostrar_submenu_aspecto = false; root.cambiar_aspecto_multimedia(root.menu_media_idx, "centro"); } }
+                MenuItem { text: "Rellenar pantalla"; icon: "⛶"; clicked => { root.mostrar_menu_media = false; root.mostrar_submenu_aspecto = false; root.cambiar_aspecto_multimedia(root.menu_media_idx, "rellenar"); } }
+                MenuItem { text: "Estirar"; icon: "T"; text_color: #0ea5e9; icon_color: #0ea5e9; clicked => { root.mostrar_menu_media = false; root.mostrar_submenu_aspecto = false; root.cambiar_aspecto_multimedia(root.menu_media_idx, "estirar"); } }
             }
         }
     }
 
     // ══════════════════════════════════════════════════════════════
-    // MENÚ CONTEXTUAL VIDEOS (Con Submenú)
+    //  MENÚ CONTEXTUAL VIDEOS (sin cambios)
     // ══════════════════════════════════════════════════════════════
     if (root.mostrar_menu_video) : Rectangle {
         width: 100%; height: 100%; background: transparent;
-        TouchArea { 
-            clicked => { 
-                root.mostrar_menu_video = false; 
-                root.mostrar_submenu_reproduccion = false; 
-            } 
-        }
-        
-        // 1. SUBMENÚ DE REPRODUCCIÓN (Abre a la izquierda)
+        TouchArea { clicked => { root.mostrar_menu_video = false; root.mostrar_submenu_reproduccion = false; } }
         if (root.mostrar_submenu_reproduccion && root.menu_video_idx != -1) : Rectangle {
-            x: root.menu_video_x - 165px; // Se posiciona a la izquierda
-            y: root.menu_video_y + 35px;  // Alineado con el botón principal
+            x: root.menu_video_x - 165px; y: root.menu_video_y + 35px;
             width: 160px; height: 72px;
             background: #1e1e1e; border-radius: 8px; border-width: 1px; border-color: #374151;
             drop-shadow-color: rgba(0,0,0,0.6); drop-shadow-blur: 16px;
-            
             VerticalLayout {
                 padding: 4px; spacing: 2px;
-                
                 Rectangle {
                     height: 30px; border-radius: 4px; background: touch_norm.has-hover ? #374151 : transparent;
-                    touch_norm := TouchArea {
-                        clicked => { 
-                            root.cambiar_modo_reproduccion(root.menu_video_idx, "normal");
-                            root.mostrar_submenu_reproduccion = false; 
-                            root.mostrar_menu_video = false; 
-                        }
-                    }
+                    touch_norm := TouchArea { clicked => { root.cambiar_modo_reproduccion(root.menu_video_idx, "normal"); root.mostrar_submenu_reproduccion = false; root.mostrar_menu_video = false; } }
                     Text { text: "Normal (Una vez)"; color: white; font-size: 13px; x: 12px; vertical-alignment: center; height: 100%; }
                 }
-                
                 Rectangle {
                     height: 30px; border-radius: 4px; background: touch_loop.has-hover ? #374151 : transparent;
-                    touch_loop := TouchArea {
-                        clicked => { 
-                            root.cambiar_modo_reproduccion(root.menu_video_idx, "bucle");
-                            root.mostrar_submenu_reproduccion = false; 
-                            root.mostrar_menu_video = false; 
-                        }
-                    }
+                    touch_loop := TouchArea { clicked => { root.cambiar_modo_reproduccion(root.menu_video_idx, "bucle"); root.mostrar_submenu_reproduccion = false; root.mostrar_menu_video = false; } }
                     Text { text: "Bucle Infinito"; color: #0ea5e9; font-size: 13px; font-weight: 700; x: 12px; vertical-alignment: center; height: 100%; }
                 }
             }
         }
-
-        // 2. MENÚ PRINCIPAL
         Rectangle {
             x: root.menu_video_x; y: root.menu_video_y;
             width: 180px; height: root.menu_video_idx != -1 ? 112px : 40px;
             background: #1e1e1e; border-radius: 8px; border-width: 1px; border-color: #374151;
             drop-shadow-color: rgba(0,0,0,0.6); drop-shadow-blur: 16px;
-            TouchArea {} 
-            
+            TouchArea {}
             VerticalLayout {
                 padding: 4px; spacing: 2px;
-                MenuItem {
-                    text: "Agregar Video"; icon: "+";
-                    clicked => { root.mostrar_menu_video = false; root.mostrar_submenu_reproduccion = false; root.agregar_video(); }
-                }
+                MenuItem { text: "Agregar Video"; icon: "+"; clicked => { root.mostrar_menu_video = false; root.mostrar_submenu_reproduccion = false; root.agregar_video(); } }
                 if (root.menu_video_idx != -1) : HorizontalLayout { padding-left: 6px; padding-right: 6px; padding-top: 2px; padding-bottom: 2px; Rectangle { height: 1px; background: #2d2d2d; } }
-                
-                // Opción Reproducción con flecha
                 if (root.menu_video_idx != -1) : Rectangle {
-                    height: 30px; border-radius: 4px;
-                    background: touch_rep.has-hover ? #374151 : transparent;
-                    touch_rep := TouchArea {
-                        // Al pasar el mouse, abre el submenú a la izquierda
-                        clicked => { 
-                            root.mostrar_submenu_reproduccion = !root.mostrar_submenu_reproduccion; 
-                        }
-                    }
+                    height: 30px; border-radius: 4px; background: touch_rep.has-hover ? #374151 : transparent;
+                    touch_rep := TouchArea { clicked => { root.mostrar_submenu_reproduccion = !root.mostrar_submenu_reproduccion; } }
                     HorizontalLayout {
                         padding-left: 8px; padding-right: 8px; alignment: space-between;
                         Text { text: "🔁 Reproducción"; color: white; font-size: 13px; vertical-alignment: center; }
                         Text { text: "›"; color: #0ea5e9; font-size: 16px; vertical-alignment: center; font-weight: 700; }
                     }
                 }
-                
                 if (root.menu_video_idx != -1) : HorizontalLayout { padding-left: 6px; padding-right: 6px; padding-top: 2px; padding-bottom: 2px; Rectangle { height: 1px; background: #2d2d2d; } }
-                
-                if (root.menu_video_idx != -1) : MenuItem {
-                    text: "Eliminar Video"; icon: "🗑";
-                    text_color: #f87171; icon_color: #f87171;
-                    clicked => { root.mostrar_menu_video = false; root.mostrar_submenu_reproduccion = false; root.eliminar_video(root.menu_video_idx); }
-                }
+                if (root.menu_video_idx != -1) : MenuItem { text: "Eliminar Video"; icon: "🗑"; text_color: #f87171; icon_color: #f87171; clicked => { root.mostrar_menu_video = false; root.mostrar_submenu_reproduccion = false; root.eliminar_video(root.menu_video_idx); } }
             }
         }
     }
 
-    // ══════════════════════════════════════════
-    // MODAL DE PERSONALIZACIÓN (REDISEÑADO)
-    // ══════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════
+    //  MODAL DE PERSONALIZACIÓN (sin cambios)
+    // ══════════════════════════════════════════════════════════════
     if (root.mostrar_personalizar) : Rectangle {
         width: 100%; height: 100%; background: rgba(0, 0, 0, 0.6);
         touch-close-modal := TouchArea { clicked => { root.mostrar_personalizar = false; } }
         Rectangle {
-            width: 540px; height: 440px; // Dimensiones ampliadas para la galería
-            background: #111111; border-radius: 12px; border-width: 1px; border-color: #27272a; 
+            width: 540px; height: 440px;
+            background: #111111; border-radius: 12px; border-width: 1px; border-color: #27272a;
             drop-shadow-color: rgba(0, 0, 0, 0.5); drop-shadow-blur: 20px;
-            touch-blocker := TouchArea {} 
-            
-            // Estado local para saber en qué tab de la galería estamos
+            touch-blocker := TouchArea {}
+
             property <string> current_gal_tab: "imagenes";
 
             VerticalLayout {
@@ -991,258 +941,49 @@ export component AppWindow inherits Window {
                         Rectangle { horizontal-stretch: 1; background: transparent; touch-t2 := TouchArea { clicked => { root.modal_tab = "cantos"; } } VerticalLayout { Text { text: "FONDO DE CANTOS"; color: root.modal_tab == "cantos" ? #0ea5e9 : #6b7280; font-weight: 900; font-size: 11px; horizontal-alignment: center; vertical-alignment: center; vertical-stretch: 1;} Rectangle { height: 2px; background: root.modal_tab == "cantos" ? #0ea5e9 : transparent; } } }
                     }
                 }
-
-                // CONTENIDO DEL MODAL
                 Rectangle {
                     vertical-stretch: 1;
-                    //padding: 24px;
-                    
-                    // -- SECCIÓN PARA BIBLIAS --
                     if (root.modal_tab == "biblias") : VerticalLayout {
                         spacing: 20px; alignment: start;
-                        
-                        // FILA ÚNICA: Tipo, Color y Opacidad
                         HorizontalLayout {
                             spacing: 20px;
-                            
-                            // 1. Tipo de Fondo
-                            VerticalLayout {
-                                spacing: 10px;
-                                Text { text: "TIPO DE FONDO"; color: #9ca3af; font-size: 10px; font-weight: 800; }
-                                HorizontalLayout {
-                                    spacing: 8px;
-                                    BgOption { text: "NEGRO"; fill: black; active: root.biblias_bg_type == "negro"; clicked => { root.biblias_bg_type = "negro"; root.sync_estilos(); } }
-                                    BgOption { text: "BLANCO"; fill: white; active: root.biblias_bg_type == "blanco"; clicked => { root.biblias_bg_type = "blanco"; root.sync_estilos(); } }
-                                }
-                            }
-                            Rectangle { width: 1px; background: #27272a; } // Separador
-                            
-                            // 2. Color de Texto
-                            VerticalLayout {
-                                spacing: 10px;
-                                Text { text: "COLOR DE TEXTO"; color: #9ca3af; font-size: 10px; font-weight: 800; }
-                                HorizontalLayout {
-                                    spacing: 6px; alignment: start;
-                                    ColorSwatch { sw_color: #ffffff; active: root.biblias_font_color == #ffffff; clicked => { root.biblias_font_color = #ffffff; root.sync_estilos(); } }
-                                    ColorSwatch { sw_color: #000000; active: root.biblias_font_color == #000000; clicked => { root.biblias_font_color = #000000; root.sync_estilos(); } }
-                                    ColorSwatch { 
-                                        sw_color: root.biblias_custom_color; inside_text: "T"; 
-                                        active: root.biblias_font_color != #ffffff && root.biblias_font_color != #000000; 
-                                        clicked => { 
-                                            root.biblias_font_color = root.biblias_custom_color; 
-                                            root.color_target = "biblias"; 
-                                            root.mostrar_selector_color = true; 
-                                            root.sync_estilos();
-                                        } 
-                                    }
-                                }
-                            }
-                            Rectangle { width: 1px; background: #27272a; } // Separador
-                            
-                            // 3. Opacidad
-                            VerticalLayout {
-                                spacing: 10px;
-                                Text { text: "OPACIDAD DEL FONDO"; color: #9ca3af; font-size: 10px; font-weight: 800; }
-                                VerticalLayout {
-                                    alignment: center; vertical-stretch: 1;
-                                    Slider { width: 100px; minimum: 0.0; maximum: 1.0; value <=> root.biblias_fondo_opacity; changed => { root.sync_estilos(); } }
-                                }
-                            }
+                            VerticalLayout { spacing: 10px; Text { text: "TIPO DE FONDO"; color: #9ca3af; font-size: 10px; font-weight: 800; } HorizontalLayout { spacing: 8px; BgOption { text: "NEGRO"; fill: black; active: root.biblias_bg_type == "negro"; clicked => { root.biblias_bg_type = "negro"; root.sync_estilos(); } } BgOption { text: "BLANCO"; fill: white; active: root.biblias_bg_type == "blanco"; clicked => { root.biblias_bg_type = "blanco"; root.sync_estilos(); } } } }
+                            Rectangle { width: 1px; background: #27272a; }
+                            VerticalLayout { spacing: 10px; Text { text: "COLOR DE TEXTO"; color: #9ca3af; font-size: 10px; font-weight: 800; } HorizontalLayout { spacing: 6px; alignment: start; ColorSwatch { sw_color: #ffffff; active: root.biblias_font_color == #ffffff; clicked => { root.biblias_font_color = #ffffff; root.sync_estilos(); } } ColorSwatch { sw_color: #000000; active: root.biblias_font_color == #000000; clicked => { root.biblias_font_color = #000000; root.sync_estilos(); } } ColorSwatch { sw_color: root.biblias_custom_color; inside_text: "T"; active: root.biblias_font_color != #ffffff && root.biblias_font_color != #000000; clicked => { root.biblias_font_color = root.biblias_custom_color; root.color_target = "biblias"; root.mostrar_selector_color = true; root.sync_estilos(); } } } }
+                            Rectangle { width: 1px; background: #27272a; }
+                            VerticalLayout { spacing: 10px; Text { text: "OPACIDAD DEL FONDO"; color: #9ca3af; font-size: 10px; font-weight: 800; } VerticalLayout { alignment: center; vertical-stretch: 1; Slider { width: 100px; minimum: 0.0; maximum: 1.0; value <=> root.biblias_fondo_opacity; changed => { root.sync_estilos(); } } } }
                         }
-
-                        // FILA 2: Galería de Medios
                         Rectangle {
                             height: 140px; border-radius: 8px; background: #151515; border-width: 1px; border-color: #27272a;
                             VerticalLayout {
-                                // Pestañas Internas de la Galería
-                                HorizontalLayout {
-                                    height: 34px;
-                                    Rectangle {
-                                        horizontal-stretch: 1; background: current_gal_tab == "imagenes" ? #1f1f1f : transparent; border-top-left-radius: 8px;
-                                        touch-gal-img := TouchArea { clicked => { current_gal_tab = "imagenes"; } }
-                                        Text { text: "IMÁGENES"; color: current_gal_tab == "imagenes" ? #0ea5e9 : #6b7280; font-size: 10px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; }
-                                    }
-                                    Rectangle {
-                                        horizontal-stretch: 1; background: current_gal_tab == "videos" ? #1f1f1f : transparent; border-top-right-radius: 8px;
-                                        touch-gal-vid := TouchArea { clicked => { current_gal_tab = "videos"; } }
-                                        Text { text: "VIDEOS"; color: current_gal_tab == "videos" ? #0ea5e9 : #6b7280; font-size: 10px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; }
-                                    }
-                                }
+                                HorizontalLayout { height: 34px; Rectangle { horizontal-stretch: 1; background: current_gal_tab == "imagenes" ? #1f1f1f : transparent; border-top-left-radius: 8px; touch-gal-img := TouchArea { clicked => { current_gal_tab = "imagenes"; } } Text { text: "IMÁGENES"; color: current_gal_tab == "imagenes" ? #0ea5e9 : #6b7280; font-size: 10px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; } } Rectangle { horizontal-stretch: 1; background: current_gal_tab == "videos" ? #1f1f1f : transparent; border-top-right-radius: 8px; touch-gal-vid := TouchArea { clicked => { current_gal_tab = "videos"; } } Text { text: "VIDEOS"; color: current_gal_tab == "videos" ? #0ea5e9 : #6b7280; font-size: 10px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; } } }
                                 Rectangle { height: 1px; background: #27272a; }
-                                
-                                // Scroll de la Galería
-                                if (current_gal_tab == "imagenes") : ScrollView {
-                                    width: 100%; height: 100%;
-                                    HorizontalLayout {
-                                        padding: 10px; spacing: 10px;
-                                        Rectangle {
-                                            width: 80px; height: 80px; border-radius: 6px; border-width: 1px; border-color: #374151; background: touch-add-bi.has-hover ? #1f1f1f : transparent;
-                                            touch-add-bi := TouchArea { clicked => { root.agregar_a_galeria("biblias-img"); } }
-                                            Text { text: "+"; font-size: 24px; color: #6b7280; horizontal-alignment: center; vertical-alignment: center; }
-                                        }
-                                        for img[idx] in root.biblias_image_data: Rectangle {
-                                            width: 80px; height: 80px; border-radius: 6px; border-width: 2px;
-                                            border-color: root.biblias_selected_img == idx ? #0ea5e9 : transparent;
-                                            Image { source: img; width: 100%; height: 100%; image-fit: cover; }
-                                            TouchArea { clicked => { root.seleccionar_galeria_item("biblias-img", idx); } }
-                                            // Botón X para eliminar
-                                            Rectangle {
-                                                width: 18px; height: 18px; x: parent.width - 22px; y: 4px; border-radius: 9px; background: rgba(0,0,0,0.6);
-                                                TouchArea { clicked => { root.eliminar_galeria_item("biblias-img", idx); } }
-                                                Text { text: "✕"; color: #f87171; font-size: 9px; horizontal-alignment: center; vertical-alignment: center; font-weight: 900; }
-                                            }
-                                        }
-                                    }
-                                }
-                                if (current_gal_tab == "videos") : ScrollView {
-                                    width: 100%; height: 100%;
-                                    HorizontalLayout {
-                                        padding: 10px; spacing: 10px;
-                                        Rectangle {
-                                            width: 80px; height: 80px; border-radius: 6px; border-width: 1px; border-color: #374151; background: touch-add-bv.has-hover ? #1f1f1f : transparent;
-                                            touch-add-bv := TouchArea { clicked => { root.agregar_a_galeria("biblias-vid"); } }
-                                            Text { text: "+"; font-size: 24px; color: #6b7280; horizontal-alignment: center; vertical-alignment: center; }
-                                        }
-                                        for vid[idx] in root.biblias_video_names: Rectangle {
-                                            width: 80px; height: 80px; border-radius: 6px; border-width: 2px; background: #222;
-                                            border-color: root.biblias_selected_vid == idx ? #0ea5e9 : transparent;
-                                            VerticalLayout { padding: 4px; alignment: center; Text { text: "🎬\n" + vid; font-size: 9px; color: white; horizontal-alignment: center; wrap: word-wrap; } }
-                                            TouchArea { clicked => { root.seleccionar_galeria_item("biblias-vid", idx); } }
-                                            Rectangle {
-                                                width: 18px; height: 18px; x: parent.width - 22px; y: 4px; border-radius: 9px; background: rgba(0,0,0,0.6);
-                                                TouchArea { clicked => { root.eliminar_galeria_item("biblias-vid", idx); } }
-                                                Text { text: "✕"; color: #f87171; font-size: 9px; horizontal-alignment: center; vertical-alignment: center; font-weight: 900; }
-                                            }
-                                        }
-                                    }
-                                }
+                                if (current_gal_tab == "imagenes") : ScrollView { width: 100%; height: 100%; HorizontalLayout { padding: 10px; spacing: 10px; Rectangle { width: 80px; height: 80px; border-radius: 6px; border-width: 1px; border-color: #374151; background: touch-add-bi.has-hover ? #1f1f1f : transparent; touch-add-bi := TouchArea { clicked => { root.agregar_a_galeria("biblias-img"); } } Text { text: "+"; font-size: 24px; color: #6b7280; horizontal-alignment: center; vertical-alignment: center; } } for img[idx] in root.biblias_image_data: Rectangle { width: 80px; height: 80px; border-radius: 6px; border-width: 2px; border-color: root.biblias_selected_img == idx ? #0ea5e9 : transparent; Image { source: img; width: 100%; height: 100%; image-fit: cover; } TouchArea { clicked => { root.seleccionar_galeria_item("biblias-img", idx); } } Rectangle { width: 18px; height: 18px; x: parent.width - 22px; y: 4px; border-radius: 9px; background: rgba(0,0,0,0.6); TouchArea { clicked => { root.eliminar_galeria_item("biblias-img", idx); } } Text { text: "✕"; color: #f87171; font-size: 9px; horizontal-alignment: center; vertical-alignment: center; font-weight: 900; } } } } }
+                                if (current_gal_tab == "videos") : ScrollView { width: 100%; height: 100%; HorizontalLayout { padding: 10px; spacing: 10px; Rectangle { width: 80px; height: 80px; border-radius: 6px; border-width: 1px; border-color: #374151; background: touch-add-bv.has-hover ? #1f1f1f : transparent; touch-add-bv := TouchArea { clicked => { root.agregar_a_galeria("biblias-vid"); } } Text { text: "+"; font-size: 24px; color: #6b7280; horizontal-alignment: center; vertical-alignment: center; } } for vid[idx] in root.biblias_video_names: Rectangle { width: 80px; height: 80px; border-radius: 6px; border-width: 2px; background: #222; border-color: root.biblias_selected_vid == idx ? #0ea5e9 : transparent; VerticalLayout { padding: 4px; alignment: center; Text { text: "🎬\n" + vid; font-size: 9px; color: white; horizontal-alignment: center; wrap: word-wrap; } } TouchArea { clicked => { root.seleccionar_galeria_item("biblias-vid", idx); } } Rectangle { width: 18px; height: 18px; x: parent.width - 22px; y: 4px; border-radius: 9px; background: rgba(0,0,0,0.6); TouchArea { clicked => { root.eliminar_galeria_item("biblias-vid", idx); } } Text { text: "✕"; color: #f87171; font-size: 9px; horizontal-alignment: center; vertical-alignment: center; font-weight: 900; } } } } }
                             }
                         }
                     }
-
-                    // -- SECCIÓN PARA CANTOS --
                     if (root.modal_tab == "cantos") : VerticalLayout {
                         spacing: 20px; alignment: start;
-                        
-                        // FILA ÚNICA: Tipo, Color y Opacidad
                         HorizontalLayout {
                             spacing: 20px;
-                            
-                            // 1. Tipo de Fondo
-                            VerticalLayout {
-                                spacing: 10px;
-                                Text { text: "TIPO DE FONDO"; color: #9ca3af; font-size: 10px; font-weight: 800; }
-                                HorizontalLayout {
-                                    spacing: 8px;
-                                    BgOption { text: "NEGRO"; fill: black; active: root.biblias_bg_type == "negro"; clicked => { root.biblias_bg_type = "negro"; root.sync_estilos(); } }
-                                    BgOption { text: "BLANCO"; fill: white; active: root.biblias_bg_type == "blanco"; clicked => { root.biblias_bg_type = "blanco"; root.sync_estilos(); } }
-                                }
-                            }
-                            Rectangle { width: 1px; background: #27272a; } // Separador
-                            
-                            // 2. Color de Texto
-                            VerticalLayout {
-                                spacing: 10px;
-                                Text { text: "COLOR DE TEXTO"; color: #9ca3af; font-size: 10px; font-weight: 800; }
-                                HorizontalLayout {
-                                    spacing: 6px; alignment: start;
-                                    ColorSwatch { sw_color: #ffffff; active: root.biblias_font_color == #ffffff; clicked => { root.biblias_font_color = #ffffff; root.sync_estilos(); } }
-                                    ColorSwatch { sw_color: #000000; active: root.biblias_font_color == #000000; clicked => { root.biblias_font_color = #000000; root.sync_estilos(); } }
-                                    ColorSwatch { 
-                                        sw_color: root.biblias_custom_color; inside_text: "T"; 
-                                        active: root.biblias_font_color != #ffffff && root.biblias_font_color != #000000; 
-                                        clicked => { 
-                                            root.biblias_font_color = root.biblias_custom_color; 
-                                            root.color_target = "biblias"; 
-                                            root.mostrar_selector_color = true; 
-                                            root.sync_estilos();
-                                        } 
-                                    }
-                                }
-                            }
-                            Rectangle { width: 1px; background: #27272a; } // Separador
-                            
-                            // 3. Opacidad
-                            VerticalLayout {
-                                spacing: 10px;
-                                Text { text: "OPACIDAD DEL FONDO"; color: #9ca3af; font-size: 10px; font-weight: 800; }
-                                VerticalLayout {
-                                    alignment: center; vertical-stretch: 1;
-                                    Slider { width: 100px; minimum: 0.0; maximum: 1.0; value <=> root.biblias_fondo_opacity; changed => { root.sync_estilos(); } }
-                                }
-                            }
+                            VerticalLayout { spacing: 10px; Text { text: "TIPO DE FONDO"; color: #9ca3af; font-size: 10px; font-weight: 800; } HorizontalLayout { spacing: 8px; BgOption { text: "NEGRO"; fill: black; active: root.cantos_bg_type == "negro"; clicked => { root.cantos_bg_type = "negro"; root.sync_estilos(); } } BgOption { text: "BLANCO"; fill: white; active: root.cantos_bg_type == "blanco"; clicked => { root.cantos_bg_type = "blanco"; root.sync_estilos(); } } } }
+                            Rectangle { width: 1px; background: #27272a; }
+                            VerticalLayout { spacing: 10px; Text { text: "COLOR DE TEXTO"; color: #9ca3af; font-size: 10px; font-weight: 800; } HorizontalLayout { spacing: 6px; alignment: start; ColorSwatch { sw_color: #ffffff; active: root.cantos_font_color == #ffffff; clicked => { root.cantos_font_color = #ffffff; root.sync_estilos(); } } ColorSwatch { sw_color: #000000; active: root.cantos_font_color == #000000; clicked => { root.cantos_font_color = #000000; root.sync_estilos(); } } ColorSwatch { sw_color: root.cantos_custom_color; inside_text: "T"; active: root.cantos_font_color != #ffffff && root.cantos_font_color != #000000; clicked => { root.cantos_font_color = root.cantos_custom_color; root.color_target = "cantos"; root.mostrar_selector_color = true; root.sync_estilos(); } } } }
+                            Rectangle { width: 1px; background: #27272a; }
+                            VerticalLayout { spacing: 10px; Text { text: "OPACIDAD DEL FONDO"; color: #9ca3af; font-size: 10px; font-weight: 800; } VerticalLayout { alignment: center; vertical-stretch: 1; Slider { width: 100px; minimum: 0.0; maximum: 1.0; value <=> root.cantos_fondo_opacity; changed => { root.sync_estilos(); } } } }
                         }
-
-                        // FILA 2: Galería de Medios
                         Rectangle {
                             height: 140px; border-radius: 8px; background: #151515; border-width: 1px; border-color: #27272a;
                             VerticalLayout {
-                                // Pestañas Internas de la Galería
-                                HorizontalLayout {
-                                    height: 34px;
-                                    Rectangle {
-                                        horizontal-stretch: 1; background: current_gal_tab == "imagenes" ? #1f1f1f : transparent; border-top-left-radius: 8px;
-                                        touch-gal-img2 := TouchArea { clicked => { current_gal_tab = "imagenes"; } }
-                                        Text { text: "IMÁGENES"; color: current_gal_tab == "imagenes" ? #0ea5e9 : #6b7280; font-size: 10px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; }
-                                    }
-                                    Rectangle {
-                                        horizontal-stretch: 1; background: current_gal_tab == "videos" ? #1f1f1f : transparent; border-top-right-radius: 8px;
-                                        touch-gal-vid2 := TouchArea { clicked => { current_gal_tab = "videos"; } }
-                                        Text { text: "VIDEOS"; color: current_gal_tab == "videos" ? #0ea5e9 : #6b7280; font-size: 10px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; }
-                                    }
-                                }
+                                HorizontalLayout { height: 34px; Rectangle { horizontal-stretch: 1; background: current_gal_tab == "imagenes" ? #1f1f1f : transparent; border-top-left-radius: 8px; touch-gal-img2 := TouchArea { clicked => { current_gal_tab = "imagenes"; } } Text { text: "IMÁGENES"; color: current_gal_tab == "imagenes" ? #0ea5e9 : #6b7280; font-size: 10px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; } } Rectangle { horizontal-stretch: 1; background: current_gal_tab == "videos" ? #1f1f1f : transparent; border-top-right-radius: 8px; touch-gal-vid2 := TouchArea { clicked => { current_gal_tab = "videos"; } } Text { text: "VIDEOS"; color: current_gal_tab == "videos" ? #0ea5e9 : #6b7280; font-size: 10px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; } } }
                                 Rectangle { height: 1px; background: #27272a; }
-                                
-                                // Scroll de la Galería
-                                if (current_gal_tab == "imagenes") : ScrollView {
-                                    width: 100%; height: 100%;
-                                    HorizontalLayout {
-                                        padding: 10px; spacing: 10px;
-                                        Rectangle {
-                                            width: 80px; height: 80px; border-radius: 6px; border-width: 1px; border-color: #374151; background: touch-add-ci.has-hover ? #1f1f1f : transparent;
-                                            touch-add-ci := TouchArea { clicked => { root.agregar_a_galeria("cantos-img"); } }
-                                            Text { text: "+"; font-size: 24px; color: #6b7280; horizontal-alignment: center; vertical-alignment: center; }
-                                        }
-                                        for img[idx] in root.cantos_image_data: Rectangle {
-                                            width: 80px; height: 80px; border-radius: 6px; border-width: 2px;
-                                            border-color: root.cantos_selected_img == idx ? #0ea5e9 : transparent;
-                                            Image { source: img; width: 100%; height: 100%; image-fit: cover; }
-                                            TouchArea { clicked => { root.seleccionar_galeria_item("cantos-img", idx); } }
-                                            Rectangle {
-                                                width: 18px; height: 18px; x: parent.width - 22px; y: 4px; border-radius: 9px; background: rgba(0,0,0,0.6);
-                                                TouchArea { clicked => { root.eliminar_galeria_item("cantos-img", idx); } }
-                                                Text { text: "✕"; color: #f87171; font-size: 9px; horizontal-alignment: center; vertical-alignment: center; font-weight: 900; }
-                                            }
-                                        }
-                                    }
-                                }
-                                if (current_gal_tab == "videos") : ScrollView {
-                                    width: 100%; height: 100%;
-                                    HorizontalLayout {
-                                        padding: 10px; spacing: 10px;
-                                        Rectangle {
-                                            width: 80px; height: 80px; border-radius: 6px; border-width: 1px; border-color: #374151; background: touch-add-cv.has-hover ? #1f1f1f : transparent;
-                                            touch-add-cv := TouchArea { clicked => { root.agregar_a_galeria("cantos-vid"); } }
-                                            Text { text: "+"; font-size: 24px; color: #6b7280; horizontal-alignment: center; vertical-alignment: center; }
-                                        }
-                                        for vid[idx] in root.cantos_video_names: Rectangle {
-                                            width: 80px; height: 80px; border-radius: 6px; border-width: 2px; background: #222;
-                                            border-color: root.cantos_selected_vid == idx ? #0ea5e9 : transparent;
-                                            VerticalLayout { padding: 4px; alignment: center; Text { text: "🎬\n" + vid; font-size: 9px; color: white; horizontal-alignment: center; wrap: word-wrap; } }
-                                            TouchArea { clicked => { root.seleccionar_galeria_item("cantos-vid", idx); } }
-                                            Rectangle {
-                                                width: 18px; height: 18px; x: parent.width - 22px; y: 4px; border-radius: 9px; background: rgba(0,0,0,0.6);
-                                                TouchArea { clicked => { root.eliminar_galeria_item("cantos-vid", idx); } }
-                                                Text { text: "✕"; color: #f87171; font-size: 9px; horizontal-alignment: center; vertical-alignment: center; font-weight: 900; }
-                                            }
-                                        }
-                                    }
-                                }
+                                if (current_gal_tab == "imagenes") : ScrollView { width: 100%; height: 100%; HorizontalLayout { padding: 10px; spacing: 10px; Rectangle { width: 80px; height: 80px; border-radius: 6px; border-width: 1px; border-color: #374151; background: touch-add-ci.has-hover ? #1f1f1f : transparent; touch-add-ci := TouchArea { clicked => { root.agregar_a_galeria("cantos-img"); } } Text { text: "+"; font-size: 24px; color: #6b7280; horizontal-alignment: center; vertical-alignment: center; } } for img[idx] in root.cantos_image_data: Rectangle { width: 80px; height: 80px; border-radius: 6px; border-width: 2px; border-color: root.cantos_selected_img == idx ? #0ea5e9 : transparent; Image { source: img; width: 100%; height: 100%; image-fit: cover; } TouchArea { clicked => { root.seleccionar_galeria_item("cantos-img", idx); } } Rectangle { width: 18px; height: 18px; x: parent.width - 22px; y: 4px; border-radius: 9px; background: rgba(0,0,0,0.6); TouchArea { clicked => { root.eliminar_galeria_item("cantos-img", idx); } } Text { text: "✕"; color: #f87171; font-size: 9px; horizontal-alignment: center; vertical-alignment: center; font-weight: 900; } } } } }
+                                if (current_gal_tab == "videos") : ScrollView { width: 100%; height: 100%; HorizontalLayout { padding: 10px; spacing: 10px; Rectangle { width: 80px; height: 80px; border-radius: 6px; border-width: 1px; border-color: #374151; background: touch-add-cv.has-hover ? #1f1f1f : transparent; touch-add-cv := TouchArea { clicked => { root.agregar_a_galeria("cantos-vid"); } } Text { text: "+"; font-size: 24px; color: #6b7280; horizontal-alignment: center; vertical-alignment: center; } } for vid[idx] in root.cantos_video_names: Rectangle { width: 80px; height: 80px; border-radius: 6px; border-width: 2px; background: #222; border-color: root.cantos_selected_vid == idx ? #0ea5e9 : transparent; VerticalLayout { padding: 4px; alignment: center; Text { text: "🎬\n" + vid; font-size: 9px; color: white; horizontal-alignment: center; wrap: word-wrap; } } TouchArea { clicked => { root.seleccionar_galeria_item("cantos-vid", idx); } } Rectangle { width: 18px; height: 18px; x: parent.width - 22px; y: 4px; border-radius: 9px; background: rgba(0,0,0,0.6); TouchArea { clicked => { root.eliminar_galeria_item("cantos-vid", idx); } } Text { text: "✕"; color: #f87171; font-size: 9px; horizontal-alignment: center; vertical-alignment: center; font-weight: 900; } } } } }
                             }
                         }
                     }
                 }
-                
                 Rectangle {
                     height: 60px; background: transparent;
                     HorizontalLayout { padding-right: 24px; alignment: end; Rectangle { width: 80px; height: 36px; border-radius: 6px; background: touch-listo.has-hover ? #e5e7eb : white; touch-listo := TouchArea { clicked => { root.mostrar_personalizar = false; } } Text { text: "LISTO"; color: black; font-weight: 900; font-size: 11px; horizontal-alignment: center; vertical-alignment: center; } } }
@@ -1251,117 +992,57 @@ export component AppWindow inherits Window {
         }
     }
 
-    // ══════════════════════════════════════════
-    // MENÚ CONTEXTUAL DE CANTO (SIN CAMBIOS)
-    // ══════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════
+    //  MENÚ CONTEXTUAL DE CANTO (sin cambios)
+    // ══════════════════════════════════════════════════════════════
     if (root.mostrar_menu_canto) : Rectangle {
         width: 100%; height: 100%; background: transparent;
-        touch-dismiss := TouchArea {
-            clicked => { root.mostrar_menu_canto = false; }
-        }
+        touch-dismiss := TouchArea { clicked => { root.mostrar_menu_canto = false; } }
         Rectangle {
-            x: root.menu_x;
-            y: root.menu_y;
+            x: root.menu_x; y: root.menu_y;
             width: 185px; height: 114px;
-            background: #1e1e1e; border-radius: 8px;
-            border-width: 1px; border-color: #374151;
+            background: #1e1e1e; border-radius: 8px; border-width: 1px; border-color: #374151;
             drop-shadow-color: rgba(0,0,0,0.6); drop-shadow-blur: 16px;
             touch-block := TouchArea {}
             VerticalLayout {
                 padding: 4px; spacing: 0px;
-                // AGREGAR
-                Rectangle {
-                    height: 34px; border-radius: 6px;
-                    background: touch-add.has-hover ? rgba(14, 165, 233, 0.15) : transparent;
-                    touch-add := TouchArea {
-                        clicked => {
-                            root.mostrar_menu_canto = false;
-                            root.abrir_formulario_nuevo();
-                        }
-                    }
-                    HorizontalLayout { padding-left: 12px; spacing: 10px;
-                        Text { text: "+"; color: #0ea5e9; font-size: 15px; font-weight: 900; vertical-alignment: center; }
-                        Text { text: "Agregar canto"; color: #e5e7eb; font-size: 11px; font-weight: 600; vertical-alignment: center; }
-                    }
-                }
-                // EDITAR
-                Rectangle {
-                    height: 34px; border-radius: 6px;
-                    background: touch-edit.has-hover ? rgba(14, 165, 233, 0.15) : transparent;
-                    touch-edit := TouchArea {
-                        clicked => {
-                            root.mostrar_menu_canto = false;
-                            root.abrir_formulario_editar(root.menu_canto_id, root.menu_canto_titulo);
-                        }
-                    }
-                    HorizontalLayout { padding-left: 12px; spacing: 10px;
-                        Text { text: "✎"; color: #9ca3af; font-size: 13px; vertical-alignment: center; }
-                        Text { text: "Editar canto"; color: #e5e7eb; font-size: 11px; font-weight: 600; vertical-alignment: center; }
-                    }
-                }
-                // SEPARADOR
+                Rectangle { height: 34px; border-radius: 6px; background: touch-add.has-hover ? rgba(14, 165, 233, 0.15) : transparent; touch-add := TouchArea { clicked => { root.mostrar_menu_canto = false; root.abrir_formulario_nuevo(); } } HorizontalLayout { padding-left: 12px; spacing: 10px; Text { text: "+"; color: #0ea5e9; font-size: 15px; font-weight: 900; vertical-alignment: center; } Text { text: "Agregar canto"; color: #e5e7eb; font-size: 11px; font-weight: 600; vertical-alignment: center; } } }
+                Rectangle { height: 34px; border-radius: 6px; background: touch-edit.has-hover ? rgba(14, 165, 233, 0.15) : transparent; touch-edit := TouchArea { clicked => { root.mostrar_menu_canto = false; root.abrir_formulario_editar(root.menu_canto_id, root.menu_canto_titulo); } } HorizontalLayout { padding-left: 12px; spacing: 10px; Text { text: "✎"; color: #9ca3af; font-size: 13px; vertical-alignment: center; } Text { text: "Editar canto"; color: #e5e7eb; font-size: 11px; font-weight: 600; vertical-alignment: center; } } }
                 Rectangle { height: 1px; background: #2d2d2d; }
-                // ELIMINAR
-                Rectangle {
-                    height: 34px; border-radius: 6px;
-                    background: touch-del.has-hover ? rgba(220, 38, 38, 0.15) : transparent;
-                    touch-del := TouchArea {
-                        clicked => {
-                            root.mostrar_menu_canto = false;
-                            root.confirmar_eliminar_canto(root.menu_canto_id, root.menu_canto_titulo);
-                        }
-                    }
-                    HorizontalLayout { padding-left: 12px; spacing: 10px;
-                        Text { text: "✕"; color: #f87171; font-size: 12px; font-weight: 900; vertical-alignment: center; }
-                        Text { text: "Eliminar canto"; color: #f87171; font-size: 11px; font-weight: 600; vertical-alignment: center; }
-                    }
-                }
+                Rectangle { height: 34px; border-radius: 6px; background: touch-del.has-hover ? rgba(220, 38, 38, 0.15) : transparent; touch-del := TouchArea { clicked => { root.mostrar_menu_canto = false; root.confirmar_eliminar_canto(root.menu_canto_id, root.menu_canto_titulo); } } HorizontalLayout { padding-left: 12px; spacing: 10px; Text { text: "✕"; color: #f87171; font-size: 12px; font-weight: 900; vertical-alignment: center; } Text { text: "Eliminar canto"; color: #f87171; font-size: 11px; font-weight: 600; vertical-alignment: center; } } }
             }
         }
     }
 
-    // ══════════════════════════════════════════
-    // MODAL SELECTOR DE COLOR ("T")
-    // ══════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════
+    //  MODAL SELECTOR DE COLOR (sin cambios)
+    // ══════════════════════════════════════════════════════════════
     if (root.mostrar_selector_color) : Rectangle {
         width: 100%; height: 100%; background: rgba(0,0,0,0.65);
         touch-bg-color := TouchArea { clicked => { root.mostrar_selector_color = false; } }
-        
         Rectangle {
             width: 330px; height: 210px;
             background: #27272a; border-radius: 8px; border-width: 1px; border-color: #3f3f46;
             drop-shadow-color: rgba(0,0,0,0.5); drop-shadow-blur: 20px;
             touch-block-color := TouchArea {}
-            
             VerticalLayout {
                 padding: 16px; spacing: 16px;
                 HorizontalLayout {
                     Text { text: "🎨  Seleccionar Color"; color: white; font-weight: 800; font-size: 12px; vertical-alignment: center; horizontal-stretch: 1; }
-                    Rectangle { 
-                        width: 24px; height: 24px; border-radius: 4px; background: touch-close-col.has-hover ? rgba(255,255,255,0.1) : transparent;
-                        touch-close-col := TouchArea { clicked => { root.mostrar_selector_color = false; } } 
-                        Text { text: "✕"; color: #9ca3af; font-weight: 900; horizontal-alignment: center; vertical-alignment: center; } 
-                    }
+                    Rectangle { width: 24px; height: 24px; border-radius: 4px; background: touch-close-col.has-hover ? rgba(255,255,255,0.1) : transparent; touch-close-col := TouchArea { clicked => { root.mostrar_selector_color = false; } } Text { text: "✕"; color: #9ca3af; font-weight: 900; horizontal-alignment: center; vertical-alignment: center; } }
                 }
-                
                 VerticalLayout {
                     spacing: 8px; alignment: center;
                     for row in root.paleta_colores : HorizontalLayout {
                         spacing: 8px; alignment: center;
                         for c in row : Rectangle {
-                            width: 28px; height: 28px; border-radius: 6px; background: c; 
+                            width: 28px; height: 28px; border-radius: 6px; background: c;
                             border-width: 1px; border-color: rgba(255,255,255,0.1);
                             touch-c := TouchArea {
                                 clicked => {
-                                    if (root.color_target == "biblias") {
-                                        root.biblias_custom_color = c;
-                                        root.biblias_font_color = c;
-                                    } else {
-                                        root.cantos_custom_color = c;
-                                        root.cantos_font_color = c;
-                                    }
-                                    root.sync_estilos();
-                                    root.mostrar_selector_color = false;
+                                    if (root.color_target == "biblias") { root.biblias_custom_color = c; root.biblias_font_color = c; }
+                                    else { root.cantos_custom_color = c; root.cantos_font_color = c; }
+                                    root.sync_estilos(); root.mostrar_selector_color = false;
                                 }
                             }
                         }
@@ -1371,16 +1052,15 @@ export component AppWindow inherits Window {
         }
     }
 
-    // ══════════════════════════════════════════
-    // MODAL CONFIRMACIÓN ELIMINAR (SIN CAMBIOS)
-    // ══════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════
+    //  MODAL CONFIRMACIÓN ELIMINAR (sin cambios)
+    // ══════════════════════════════════════════════════════════════
     if (root.mostrar_confirmar_eliminar) : Rectangle {
         width: 100%; height: 100%; background: rgba(0,0,0,0.65);
         touch-bg-elim := TouchArea { clicked => { root.mostrar_confirmar_eliminar = false; } }
         Rectangle {
             width: 360px; height: 170px;
-            background: #111111; border-radius: 12px;
-            border-width: 1px; border-color: #27272a;
+            background: #111111; border-radius: 12px; border-width: 1px; border-color: #27272a;
             drop-shadow-color: rgba(0,0,0,0.5); drop-shadow-blur: 20px;
             touch-block-elim := TouchArea {}
             VerticalLayout {
@@ -1388,159 +1068,35 @@ export component AppWindow inherits Window {
                 Text { text: "Eliminar canto"; color: white; font-size: 14px; font-weight: 900; horizontal-alignment: center; }
                 Text { text: "\"" + root.menu_canto_titulo + "\" sera eliminado permanentemente."; color: #6b7280; font-size: 11px; horizontal-alignment: center; wrap: word-wrap; }
                 HorizontalLayout { spacing: 12px; alignment: center;
-                    Rectangle {
-                        width: 110px; height: 36px; border-radius: 6px;
-                        background: touch-cancel.has-hover ? #27272a : #1f1f1f;
-                        border-width: 1px; border-color: #374151;
-                        touch-cancel := TouchArea { clicked => { root.mostrar_confirmar_eliminar = false; } }
-                        Text { text: "Cancelar"; color: #9ca3af; font-size: 11px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
-                    }
-                    Rectangle {
-                        width: 110px; height: 36px; border-radius: 6px;
-                        background: touch-confirm.has-hover ? #b91c1c : #dc2626;
-                        touch-confirm := TouchArea {
-                            clicked => {
-                                root.eliminar_canto(root.menu_canto_id);
-                                root.mostrar_confirmar_eliminar = false;
-                            }
-                        }
-                        Text { text: "Eliminar"; color: white; font-size: 11px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
-                    }
+                    Rectangle { width: 110px; height: 36px; border-radius: 6px; background: touch-cancel.has-hover ? #27272a : #1f1f1f; border-width: 1px; border-color: #374151; touch-cancel := TouchArea { clicked => { root.mostrar_confirmar_eliminar = false; } } Text { text: "Cancelar"; color: #9ca3af; font-size: 11px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; } }
+                    Rectangle { width: 110px; height: 36px; border-radius: 6px; background: touch-confirm.has-hover ? #b91c1c : #dc2626; touch-confirm := TouchArea { clicked => { root.eliminar_canto(root.menu_canto_id); root.mostrar_confirmar_eliminar = false; } } Text { text: "Eliminar"; color: white; font-size: 11px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; } }
                 }
             }
         }
     }
 
-// ══════════════════════════════════════════
-    // MODAL FORMULARIO AGREGAR / EDITAR (SIN CAMBIOS)
-    // ══════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════
+    //  MODAL FORMULARIO AGREGAR / EDITAR (sin cambios)
+    // ══════════════════════════════════════════════════════════════
     if (root.mostrar_formulario) : Rectangle {
-        width: 100%; height: 100%;
-        background: rgba(0,0,0,0.65);
-
-        // Centrado real usando layouts
+        width: 100%; height: 100%; background: rgba(0,0,0,0.65);
         VerticalLayout {
             alignment: center;
             HorizontalLayout {
                 alignment: center;
-
                 Rectangle {
-                    width: 520px;
-                    height: 500px;
-                    background: #111111;
-                    border-radius: 12px;
-                    border-width: 1px;
-                    border-color: #27272a;
-                    drop-shadow-color: rgba(0,0,0,0.5);
-                    drop-shadow-blur: 20px;
-
+                    width: 520px; height: 500px;
+                    background: #111111; border-radius: 12px; border-width: 1px; border-color: #27272a;
+                    drop-shadow-color: rgba(0,0,0,0.5); drop-shadow-blur: 20px;
                     VerticalLayout {
-                        padding: 24px;
-                        spacing: 14px;
-
-                        // ── HEADER ──
-                        HorizontalLayout {
-                            alignment: space-between;
-                            height: 32px;
-                            Text {
-                                text: root.form_id == -1 ? "AGREGAR CANTO" : "EDITAR CANTO";
-                                color: #0ea5e9;
-                                font-size: 13px;
-                                font-weight: 900;
-                                vertical-alignment: center;
-                                horizontal-stretch: 1;
-                            }
-                            Rectangle {
-                                width: 28px; height: 28px; border-radius: 6px;
-                                background: touch-close-form.has-hover ? rgba(255,255,255,0.1) : transparent;
-                                touch-close-form := TouchArea { clicked => { root.mostrar_formulario = false; } }
-                                Text { text: "✕"; color: #9ca3af; font-size: 13px; horizontal-alignment: center; vertical-alignment: center; }
-                            }
-                        }
-
-                        // ── SEPARADOR ──
+                        padding: 24px; spacing: 14px;
+                        HorizontalLayout { alignment: space-between; height: 32px; Text { text: root.form_id == -1 ? "AGREGAR CANTO" : "EDITAR CANTO"; color: #0ea5e9; font-size: 13px; font-weight: 900; vertical-alignment: center; horizontal-stretch: 1; } Rectangle { width: 28px; height: 28px; border-radius: 6px; background: touch-close-form.has-hover ? rgba(255,255,255,0.1) : transparent; touch-close-form := TouchArea { clicked => { root.mostrar_formulario = false; } } Text { text: "✕"; color: #9ca3af; font-size: 13px; horizontal-alignment: center; vertical-alignment: center; } } }
                         Rectangle { height: 1px; background: rgba(255,255,255,0.07); }
-
-                        // ── CAMPO TÍTULO ──
-                        VerticalLayout {
-                            spacing: 6px;
-                            height: 62px;
-                            Text {
-                                text: "TÍTULO";
-                                color: #6b7280;
-                                font-size: 9px;
-                                font-weight: 800;
-                                letter-spacing: 0.5px;
-                                height: 16px;
-                            }
-                            Rectangle {
-                                height: 38px;
-                                border-radius: 6px;
-                                background: #1f1f1f;
-                                border-width: 1px;
-                                border-color: rgba(255,255,255,0.1);
-                                TextInput {
-                                    x: 12px;
-                                    width: parent.width - 24px;
-                                    height: 100%;
-                                    text <=> root.form_titulo;
-                                    color: #f3f4f6;
-                                    font-size: 12px;
-                                    vertical-alignment: center;
-                                }
-                            }
-                        }
-
-                        // ── CAMPO LETRA ──
-                        VerticalLayout {
-                            vertical-stretch: 1;
-                            spacing: 6px;
-                            Text {
-                                text: "LETRA  (separa estrofas con una línea vacía)";
-                                color: #6b7280;
-                                font-size: 9px;
-                                font-weight: 800;
-                                letter-spacing: 0.5px;
-                                height: 16px;
-                            }
-                            Rectangle {
-                                vertical-stretch: 1;
-                                border-radius: 6px;
-                                background: #1f1f1f;
-                                border-width: 1px;
-                                border-color: rgba(255,255,255,0.1);
-                                TextEdit {
-                                    width: 100%;
-                                    height: 100%;
-                                    text <=> root.form_letra;
-                                    font-size: 12px;
-                                }
-                            }
-                        }
-
-                        // ── BOTONES ──
-                        HorizontalLayout {
-                            alignment: end;
-                            spacing: 12px;
-                            height: 38px;
-                            Rectangle {
-                                width: 110px; height: 38px; border-radius: 6px;
-                                background: touch-cancel2.has-hover ? #27272a : #1f1f1f;
-                                border-width: 1px; border-color: #374151;
-                                touch-cancel2 := TouchArea { clicked => { root.mostrar_formulario = false; } }
-                                Text { text: "Cancelar"; color: #9ca3af; font-size: 11px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
-                            }
-                            Rectangle {
-                                width: 110px; height: 38px; border-radius: 6px;
-                                background: touch-save.has-hover ? #0284c7 : #0ea5e9;
-                                touch-save := TouchArea {
-                                    clicked => {
-                                        root.guardar_canto(root.form_id, root.form_titulo, root.form_letra);
-                                        root.mostrar_formulario = false;
-                                    }
-                                }
-                                Text { text: "Guardar"; color: white; font-size: 11px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
-                            }
+                        VerticalLayout { spacing: 6px; height: 62px; Text { text: "TÍTULO"; color: #6b7280; font-size: 9px; font-weight: 800; letter-spacing: 0.5px; height: 16px; } Rectangle { height: 38px; border-radius: 6px; background: #1f1f1f; border-width: 1px; border-color: rgba(255,255,255,0.1); TextInput { x: 12px; width: parent.width - 24px; height: 100%; text <=> root.form_titulo; color: #f3f4f6; font-size: 12px; vertical-alignment: center; } } }
+                        VerticalLayout { vertical-stretch: 1; spacing: 6px; Text { text: "LETRA  (separa estrofas con una línea vacía)"; color: #6b7280; font-size: 9px; font-weight: 800; letter-spacing: 0.5px; height: 16px; } Rectangle { vertical-stretch: 1; border-radius: 6px; background: #1f1f1f; border-width: 1px; border-color: rgba(255,255,255,0.1); TextEdit { width: 100%; height: 100%; text <=> root.form_letra; font-size: 12px; } } }
+                        HorizontalLayout { alignment: end; spacing: 12px; height: 38px;
+                            Rectangle { width: 110px; height: 38px; border-radius: 6px; background: touch-cancel2.has-hover ? #27272a : #1f1f1f; border-width: 1px; border-color: #374151; touch-cancel2 := TouchArea { clicked => { root.mostrar_formulario = false; } } Text { text: "Cancelar"; color: #9ca3af; font-size: 11px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; } }
+                            Rectangle { width: 110px; height: 38px; border-radius: 6px; background: touch-save.has-hover ? #0284c7 : #0ea5e9; touch-save := TouchArea { clicked => { root.guardar_canto(root.form_id, root.form_titulo, root.form_letra); root.mostrar_formulario = false; } } Text { text: "Guardar"; color: white; font-size: 11px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; } }
                         }
                     }
                 }

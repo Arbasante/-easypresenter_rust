@@ -23,7 +23,6 @@ jobs:
             artifact_name: EasyPresenter-Linux.deb
             is_linux: true
             is_windows: false
-            is_win7: false
 
           - target_name: Windows 10-11
             os: windows-latest
@@ -31,7 +30,6 @@ jobs:
             artifact_name: EasyPresenter-Win10-11.exe
             is_linux: false
             is_windows: true
-            is_win7: false
 
     steps:
       - name: Descargar el código
@@ -52,7 +50,7 @@ jobs:
             libasound2-dev libsqlite3-dev libunwind-dev \
             libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
 
-      # ── WINDOWS: INSTALAR GSTREAMER (TU CÓDIGO ORIGINAL) ───────────────────
+      # ── WINDOWS: INSTALAR GSTREAMER EN LA MÁQUINA VIRTUAL ──────────────────
       - name: Instalar GStreamer vía Chocolatey (Windows)
         if: matrix.is_windows
         shell: pwsh
@@ -86,61 +84,20 @@ jobs:
           echo "GSTREAMER_1_0_ROOT_X86_64=$GstPath"      >> $env:GITHUB_ENV
           echo "$GstPath\bin"                             >> $env:GITHUB_PATH
 
-          $env:PKG_CONFIG_PATH = "$GstPath\lib\pkgconfig"
-          $ver = pkg-config --modversion glib-2.0
-          Write-Host "✅ pkg-config OK → glib-2.0 = $ver"
+      # ── COMPILACIÓN Y COPIA DE LIBRERÍAS ───────────────────────────────────
+      - name: Compilar Proyecto (Release)
+        run: cargo build --release
 
-      - name: Obtener MSI del runtime para Inno Setup (Windows)
+      - name: Copiar DLLs de GStreamer al output (Windows)
         if: matrix.is_windows
         shell: pwsh
         run: |
-          $gstBin  = "$env:GSTREAMER_ROOT\bin\gst-launch-1.0.exe"
-          $verLine = & $gstBin --version 2>&1 | Select-String "version \d+\.\d+\.\d+"
-          $gstVer  = ($verLine.Matches[0].Value -split " ")[1]
-          Write-Host "Versión GStreamer: $gstVer"
-
-          $msiName = "gstreamer-1.0-msvc-x86_64-$gstVer.msi"
-          $searchDirs = @(
-            "$env:TEMP\chocolatey",
-            "$env:LOCALAPPDATA\Temp\chocolatey",
-            "C:\ProgramData\chocolatey\lib\gstreamer\tools",
-            "C:\ProgramData\chocolatey\lib\gstreamer"
-          )
-
-          $foundMsi = $null
-          foreach ($dir in $searchDirs) {
-            $c = Get-ChildItem $dir -Recurse -Filter $msiName -ErrorAction SilentlyContinue | Select-Object -First 1
-            if ($c) { $foundMsi = $c.FullName; break }
-          }
-
-          if ($foundMsi) {
-            Write-Host "✅ MSI en caché: $foundMsi"
-            Copy-Item $foundMsi "gstreamer-runtime.msi"
-          } else {
-            Write-Host "Intentando GitHub Releases..."
-            $ghUrl = "https://github.com/GStreamer/gstreamer/releases/download/$gstVer/$msiName"
-            $ProgressPreference = 'SilentlyContinue'
-            try {
-              Invoke-WebRequest -Uri $ghUrl -OutFile "gstreamer-runtime.msi" -UseBasicParsing -TimeoutSec 120
-              Write-Host "✅ MSI descargado desde GitHub Releases"
-            } catch {
-              Write-Warning "No se pudo obtener el MSI. El instalador se generará sin él."
-              echo "SKIP_GSTREAMER_MSI=true" >> $env:GITHUB_ENV
-            }
-          }
-
-          if (Test-Path "gstreamer-runtime.msi") {
-            $sizeMB = [math]::Round((Get-Item "gstreamer-runtime.msi").Length / 1MB, 1)
-            Write-Host "Tamaño MSI: $sizeMB MB"
-            if ($sizeMB -lt 10) {
-              Write-Warning "⚠️ MSI demasiado pequeño, puede estar corrupto"
-              echo "SKIP_GSTREAMER_MSI=true" >> $env:GITHUB_ENV
-            }
-          }
-
-      # ── COMPILACIÓN ────────────────────────────────────────────────────────
-      - name: Compilar Proyecto (Release)
-        run: cargo build --release
+          Write-Host "Copiando DLLs base de GStreamer..."
+          Copy-Item "$env:GSTREAMER_ROOT\bin\*.dll" -Destination "target\release\" -Force
+          
+          Write-Host "Copiando Plugins de GStreamer..."
+          New-Item -ItemType Directory -Force -Path "target\release\lib\gstreamer-1.0"
+          Copy-Item "$env:GSTREAMER_ROOT\lib\gstreamer-1.0\*.dll" -Destination "target\release\lib\gstreamer-1.0\" -Force
 
       # ── EMPAQUETADO ────────────────────────────────────────────────────────
       - name: Generar .deb (Linux)
@@ -154,16 +111,7 @@ jobs:
         if: matrix.is_windows
         shell: pwsh
         run: |
-          if ($env:SKIP_GSTREAMER_MSI -eq "true") {
-            Write-Warning "Compilando instalador SIN GStreamer MSI."
-            (Get-Content installer.iss) `
-              -replace 'Source: "gstreamer-runtime\.msi".*', '' `
-              -replace 'Filename: "msiexec\.exe".*GStreamer.*', '' |
-              Set-Content installer_nogst.iss
-            & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer_nogst.iss
-          } else {
-            & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
-          }
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
 
       - name: Mover Instalador (Windows)
         if: matrix.is_windows
@@ -173,14 +121,13 @@ jobs:
             Move-Item "Output/Instalar_EasyPresenter_v1.0.exe" "${{ matrix.artifact_name }}"
           }
 
-      # ── ARTEFACTOS ─────────────────────────────────────────────────────────
+      # ── ARTEFACTOS Y PUBLICACIÓN ───────────────────────────────────────────
       - name: Subir Artefacto Terminado
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
           path: ${{ matrix.artifact_name }}
 
-      # ── PUBLICACIÓN EN GITHUB RELEASES ─────────────────────────────────────
       - name: Publicar en GitHub Releases
         uses: softprops/action-gh-release@v2
         with:

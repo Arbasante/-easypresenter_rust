@@ -4,43 +4,47 @@ export component ProjectorWindow inherits Window {
     title: "";
     background: root.bg_color;
 
+    default-font-family: "Google Sans";
+
     in property <string> texto_proyeccion: "";
     in property <string> referencia: "";
-    in property <float> tamano_letra: 85;
-    in property <color> bg_color: black;
-    in property <color> text_color: white;
-    
-    in property <image> fondo_imagen;
-    in property <string> fondo_imagen_aspecto: "rellenar"; // NUEVA PROPIEDAD
-    in property <bool> mostrar_imagen: false;
+    in property <float>  tamano_letra: 85;
+    in property <color>  bg_color: black;
+    in property <color>  text_color: white;
+    in property <image>  fondo_imagen;
+    in property <string> fondo_imagen_aspecto: "rellenar";
+    in property <bool>   mostrar_imagen: false;
+    in property <image>  fondo_video_frame;
+    in property <bool>   es_video: false;
+    in property <float>  fondo_opacity: 0.0;
 
-    // --- NUEVAS PROPIEDADES DE VIDEO ---
-    in property <image> fondo_video_frame;
-    in property <bool> es_video: false;
-    in property <float> fondo_opacity: 0.4;
-    
-    // Capa 1: Imagen estática (AHORA CON ASPECTO DINÁMICO)
+    // ── Capa 1: Imagen estática ────────────────────────────────────
     if (root.mostrar_imagen && !root.es_video) : Image {
         source: root.fondo_imagen;
         width: 100%; height: 100%;
-        // Cambia el aspecto según la configuración:
-        image-fit: root.fondo_imagen_aspecto == "rellenar" ? cover : (root.fondo_imagen_aspecto == "estirar" ? fill : contain);
+        image-fit: root.fondo_imagen_aspecto == "rellenar" ? cover
+                 : (root.fondo_imagen_aspecto == "estirar" ? fill : contain);
     }
 
-    // Capa 1.5: Video Nativo
+    // ── Capa 1.5: Frame de video ───────────────────────────────────
     if (root.es_video) : Image {
         source: root.fondo_video_frame;
         width: 100%; height: 100%;
         image-fit: contain;
     }
 
-    // Capa 2: Oscurecer el fondo
+    // ── Capa 2: Velo oscurecedor (aplica a imagen Y video) ─────────
+    // Para fondos de imagen: usa fondo_opacity (0 = transparente, 1 = negro total)
+    // Para fondos de video:  usa fondo_opacity también (0 por defecto = sin velo)
     Rectangle {
         width: 100%; height: 100%;
-        background: rgba(0, 0, 0, root.es_video ? 0.0 : root.fondo_opacity);
+        background: rgba(0, 0, 0, root.fondo_opacity);
     }
-    
+
+    // ── Capa 3: Texto ──────────────────────────────────────────────
     VerticalLayout {
+        x: 0; y: 0;
+        width: 100%; height: 100%;
         padding: 50px;
         padding-bottom: root.referencia != "" ? 16px : 50px;
         spacing: 0px;
@@ -49,8 +53,6 @@ export component ProjectorWindow inherits Window {
             vertical-stretch: 1;
             background: transparent;
             clip: true;
-            //min-height: 0px;
-            //min-width: 0px;
             Text {
                 text: root.texto_proyeccion;
                 color: root.text_color;

@@ -48,6 +48,62 @@ fn buscar_libro_inteligente(query: &str) -> Option<(i32, String)> {
     None
 }
 
+// ══════════════════════════════════════════════════════════════
+// CALCULA EL TAMAÑO DE FUENTE ÓPTIMO PARA UNA TARJETA DE CUADRÍCULA
+//
+// Dimensiones del área de texto útil dentro de la tarjeta (px lógicos):
+//   ancho_util ≈ 296 px  (tarjeta ~316 − 20px de padding interno horizontal)
+//   alto_util  ≈ 119 px  (tarjeta 180 − cabecera 28 − separador 1 − padding 12 − spacing 20)
+//
+// El algoritmo hace búsqueda binaria entre 7px y 28px para encontrar
+// el tamaño máximo que hace caber el texto en esa área.
+// ══════════════════════════════════════════════════════════════
+fn calcular_font_size_tarjeta(texto: &str) -> f32 {
+    const ANCHO_UTIL: f32 = 296.0;
+    const ALTO_UTIL: f32 = 119.0;
+    const CHAR_W: f32 = 0.55;   // factor ancho promedio carácter sans-serif
+    const LINE_H: f32 = 1.30;   // interlineado
+
+    let estimar_alto = |font_size: f32| -> f32 {
+        let chars_por_linea = (ANCHO_UTIL / (font_size * CHAR_W)).floor().max(1.0);
+        let mut lineas = 0.0f32;
+        for linea in texto.lines() {
+            let n = linea.chars().count() as f32;
+            lineas += if n == 0.0 { 0.3 } else { (n / chars_por_linea).ceil() };
+        }
+        lineas.max(1.0) * font_size * LINE_H
+    };
+
+    let mut lo: f32 = 7.0;
+    let mut hi: f32 = 28.0;   // techo razonable para tarjeta pequeña
+
+    for _ in 0..20 {
+        let mid = (lo + hi) / 2.0;
+        if estimar_alto(mid) <= ALTO_UTIL { lo = mid; } else { hi = mid; }
+    }
+
+    // 90% del tamaño máximo como margen de seguridad, clampado entre 9 y 22 px
+    (lo * 0.90).clamp(9.0, 22.0)
+}
+
+// ── Helper: DiapositivaDB → DiapositivaUI con font_size calculado ──
+fn diapositiva_a_ui(d: &DiapositivaDB) -> DiapositivaUI {
+    DiapositivaUI {
+        orden: SharedString::from(d.orden.to_string()),
+        texto: SharedString::from(d.texto.clone()),
+        font_size: calcular_font_size_tarjeta(&d.texto),
+    }
+}
+
+// ── Helper: VersiculoDB → DiapositivaUI con font_size calculado ──
+fn versiculo_a_ui(v: &VersiculoDB) -> DiapositivaUI {
+    DiapositivaUI {
+        orden: SharedString::from(v.versiculo.to_string()),
+        texto: SharedString::from(v.texto.clone()),
+        font_size: calcular_font_size_tarjeta(&v.texto),
+    }
+}
+
 struct AppState {
     cantos_db: Connection, biblias_db: Connection,
     versiones: Vec<VersionInfo>, current_version_id: i32,
@@ -64,16 +120,11 @@ impl AppState {
         let biblias_db = Connection::open("data/biblias.db")?;
         cantos_db.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;")?;
         biblias_db.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;")?;
-        let mut state = Self { 
-            cantos_db, 
-            biblias_db, 
-            versiones: Vec::new(), 
-            current_version_id: 1, 
+        let mut state = Self {
+            cantos_db, biblias_db, versiones: Vec::new(), current_version_id: 1,
             chapter_cache: HashMap::new(),
-            biblias_image_paths: Vec::new(),
-            cantos_image_paths: Vec::new(),
-            biblias_video_paths: Vec::new(),
-            cantos_video_paths: Vec::new(),
+            biblias_image_paths: Vec::new(), cantos_image_paths: Vec::new(),
+            biblias_video_paths: Vec::new(), cantos_video_paths: Vec::new(),
         };
         state.procesar_versiones();
         Ok(state)
@@ -172,14 +223,12 @@ impl AppState {
     }
 }
 
-
 fn mover_proyector_a_pantalla(p_weak: slint::Weak<ProjectorWindow>, x: i32, y: i32, width: u32, height: u32) {
     let intentos: &[(u64, bool)] = if cfg!(target_os = "windows") {
         &[(80, false), (200, false), (400, true)]
     } else {
         &[(150, false), (350, false), (600, false), (900, true)]
     };
-
     for &(delay_ms, es_ultimo) in intentos {
         let p_clone = p_weak.clone();
         thread::spawn(move || {
@@ -188,9 +237,7 @@ fn mover_proyector_a_pantalla(p_weak: slint::Weak<ProjectorWindow>, x: i32, y: i
                 if let Some(p) = p_clone.upgrade() {
                     p.window().set_position(slint::PhysicalPosition::new(x, y));
                     p.window().set_size(slint::PhysicalSize::new(width, height));
-                    if es_ultimo {
-                        p.window().set_maximized(true);
-                    }
+                    if es_ultimo { p.window().set_maximized(true); }
                 }
             });
         });
@@ -198,16 +245,11 @@ fn mover_proyector_a_pantalla(p_weak: slint::Weak<ProjectorWindow>, x: i32, y: i
 }
 
 fn calcular_font_size(texto: &str, tiene_referencia: bool, screen_w: f32, screen_h: f32) -> f32 {
-    // 1. Definimos márgenes (padding) razonables
-    let padding_w: f32 = 140.0; // 70px a cada lado
-    let padding_h: f32 = if tiene_referencia { 200.0 } else { 120.0 }; 
-    
-    // Si por algún motivo falla la detección, asumimos un mínimo de seguridad
+    let padding_w: f32 = 140.0;
+    let padding_h: f32 = if tiene_referencia { 200.0 } else { 120.0 };
     let ancho_util = (screen_w - padding_w).max(800.0);
     let alto_util = (screen_h - padding_h).max(600.0);
-
-    // 2. Factores de fuente Sans-Serif (ancho de letra e interlineado)
-    let char_width_factor: f32 = 0.55; 
+    let char_width_factor: f32 = 0.55;
     let line_height_factor: f32 = 1.25;
 
     let estimar_lineas = |font_size: f32| -> f32 {
@@ -215,39 +257,22 @@ fn calcular_font_size(texto: &str, tiene_referencia: bool, screen_w: f32, screen
         let mut total_lineas = 0.0f32;
         for linea in texto.lines() {
             let chars = linea.chars().count() as f32;
-            if chars == 0.0 {
-                total_lineas += 0.3; // Salto de línea vacío
-            } else {
-                total_lineas += (chars / chars_por_linea).ceil();
-            }
+            if chars == 0.0 { total_lineas += 0.3; } else { total_lineas += (chars / chars_por_linea).ceil(); }
         }
         total_lineas.max(1.0)
     };
 
     let mut min_size: f32 = 20.0;
-    let mut max_size: f32 = 300.0; // Aumentamos el techo para pantallas 1080p o 4K
-
-    for _ in 0..30 { // Más iteraciones para mayor precisión
+    let mut max_size: f32 = 300.0;
+    for _ in 0..30 {
         let mid = (min_size + max_size) / 2.0;
         let lineas = estimar_lineas(mid);
         let alto_necesario = lineas * mid * line_height_factor;
-
-        // Validamos que la palabra más larga no se corte horizontalmente
         let max_word_len = texto.split_whitespace().map(|w| w.chars().count()).max().unwrap_or(1) as f32;
         let ancho_max_palabra = max_word_len * mid * char_width_factor;
-
-        if alto_necesario <= alto_util && ancho_max_palabra <= ancho_util {
-            min_size = mid;
-        } else {
-            max_size = mid;
-        }
+        if alto_necesario <= alto_util && ancho_max_palabra <= ancho_util { min_size = mid; } else { max_size = mid; }
     }
-
-    // 3. Aplicamos un multiplicador de seguridad (92% del tamaño máximo posible)
     let size_final = min_size * 0.92;
-    
-    // Limitamos a un máximo del 18% del alto de la pantalla para que versículos
-    // de 3 palabras no se vean grotescamente gigantes.
     size_final.clamp(30.0, screen_h * 0.18)
 }
 
@@ -256,50 +281,35 @@ struct NativeVideoPlayer {
 }
 
 impl NativeVideoPlayer {
-    fn new() -> Self {
-        Self { pipeline: None }
-    }
+    fn new() -> Self { Self { pipeline: None } }
 
     pub fn reproducir(&mut self, ruta: &str, proj_weak: slint::Weak<ProjectorWindow>, is_loop: bool) {
         self.detener();
-
         let path = std::path::Path::new(ruta).canonicalize().unwrap_or_else(|_| std::path::PathBuf::from(ruta));
         let uri = gst::glib::filename_to_uri(&path, None).unwrap();
-
         let pipeline = gst::ElementFactory::make("playbin").property("uri", &uri).build().unwrap();
-
         let appsink = gst_app::AppSink::builder()
             .caps(&gst::Caps::builder("video/x-raw").field("format", "RGBA").build())
-            .max_buffers(1)
-            .drop(true)
-            .build();
-
+            .max_buffers(1).drop(true).build();
         appsink.set_property("sync", true);
         pipeline.set_property("video-sink", &appsink);
-
         if let Ok(audio_sink) = gst::ElementFactory::make("autoaudiosink").build() {
             pipeline.set_property("audio-sink", &audio_sink);
-        } else {
-            println!("Advertencia: No se encontró autoaudiosink, el audio podría fallar.");
         }
-        
         pipeline.set_property("volume", 1.0f64);
         pipeline.set_property("mute", false);
-
         appsink.set_callbacks(gst_app::AppSinkCallbacks::builder()
             .new_sample(move |appsink| {
                 let sample = match appsink.pull_sample() { Ok(s) => s, Err(_) => return Ok(gst::FlowSuccess::Ok) };
                 let buffer = sample.buffer().unwrap();
                 let info = gst_video::VideoInfo::from_caps(sample.caps().unwrap()).unwrap();
                 let map = buffer.map_readable().unwrap();
-
                 let mut pixel_buffer = SharedPixelBuffer::<slint::Rgba8Pixel>::new(info.width(), info.height());
                 unsafe {
                     let dest = pixel_buffer.make_mut_slice();
                     let dest_u8 = std::slice::from_raw_parts_mut(dest.as_mut_ptr() as *mut u8, dest.len() * 4);
                     dest_u8.copy_from_slice(map.as_slice());
                 }
-
                 let proj_clone = proj_weak.clone();
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(p) = proj_clone.upgrade() { p.set_fondo_video_frame(slint::Image::from_rgba8(pixel_buffer)); }
@@ -307,83 +317,55 @@ impl NativeVideoPlayer {
                 Ok(gst::FlowSuccess::Ok)
             }).build()
         );
-
         pipeline.set_state(gst::State::Playing).unwrap();
         self.pipeline = Some(pipeline.clone());
-
-        // ══════════════════════════════════════════════════════════════
-        // HILO DE CONTROL DE REPRODUCCIÓN (BUCLE O DETENER)
-        // ══════════════════════════════════════════════════════════════
         let bus = pipeline.bus().unwrap();
         let pipeline_clone = pipeline.clone();
-        
         std::thread::spawn(move || {
             for msg in bus.iter_timed(gst::ClockTime::NONE) {
                 match msg.view() {
                     gst::MessageView::Eos(..) => {
                         if is_loop {
-                            // Si es bucle, volver al principio (0) y darle play
-                            let _ = pipeline_clone.seek_simple(
-                                gst::SeekFlags::FLUSH | gst::SeekFlags::KEY_UNIT,
-                                gst::ClockTime::ZERO,
-                            );
+                            let _ = pipeline_clone.seek_simple(gst::SeekFlags::FLUSH | gst::SeekFlags::KEY_UNIT, gst::ClockTime::ZERO);
                             let _ = pipeline_clone.set_state(gst::State::Playing);
                         } else {
-                            // Si no es bucle, pausar el video al final
                             let _ = pipeline_clone.set_state(gst::State::Paused);
                         }
                     }
-                    gst::MessageView::Error(err) => {
-                        println!("Error de reproducción interno: {}", err.error());
-                        break; 
-                    }
-                    _ => {} 
+                    gst::MessageView::Error(err) => { println!("Error de reproducción: {}", err.error()); break; }
+                    _ => {}
                 }
             }
         });
     }
 
     fn detener(&mut self) {
-        if let Some(pipeline) = self.pipeline.take() {
-            let _ = pipeline.set_state(gst::State::Null);
-        }
+        if let Some(pipeline) = self.pipeline.take() { let _ = pipeline.set_state(gst::State::Null); }
     }
-
-
 
     pub fn reproducir_preview(&mut self, ruta: &str, ui_weak: slint::Weak<AppWindow>) {
         self.detener();
         let path = std::path::Path::new(ruta).canonicalize().unwrap_or_else(|_| std::path::PathBuf::from(ruta));
         let uri = gst::glib::filename_to_uri(&path, None).unwrap();
-
         let pipeline = gst::ElementFactory::make("playbin").property("uri", &uri).build().unwrap();
-        
-        // El preview en tu panel central siempre en silencio absoluto
         pipeline.set_property("volume", 0.0f64);
-
         let appsink = gst_app::AppSink::builder()
             .caps(&gst::Caps::builder("video/x-raw").field("format", "RGBA").build())
-            .max_buffers(1)
-            .drop(true)
-            .build();
-            
-        appsink.set_property("sync", true); 
+            .max_buffers(1).drop(true).build();
+        appsink.set_property("sync", true);
         pipeline.set_property("video-sink", &appsink);
-
         appsink.set_callbacks(gst_app::AppSinkCallbacks::builder()
             .new_sample(move |appsink| {
                 let sample = match appsink.pull_sample() { Ok(s) => s, Err(_) => return Ok(gst::FlowSuccess::Ok) };
                 let buffer = sample.buffer().unwrap();
                 let info = gst_video::VideoInfo::from_caps(sample.caps().unwrap()).unwrap();
                 let map = buffer.map_readable().unwrap();
-
                 let mut pixel_buffer = SharedPixelBuffer::<slint::Rgba8Pixel>::new(info.width(), info.height());
                 unsafe {
                     let dest = pixel_buffer.make_mut_slice();
                     let dest_u8 = std::slice::from_raw_parts_mut(dest.as_mut_ptr() as *mut u8, dest.len() * 4);
                     dest_u8.copy_from_slice(map.as_slice());
                 }
-
                 let ui_clone = ui_weak.clone();
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = ui_clone.upgrade() { ui.set_preview_video_frame(slint::Image::from_rgba8(pixel_buffer)); }
@@ -391,7 +373,6 @@ impl NativeVideoPlayer {
                 Ok(gst::FlowSuccess::Ok)
             }).build()
         );
-
         pipeline.set_state(gst::State::Playing).unwrap();
         self.pipeline = Some(pipeline);
     }
@@ -399,7 +380,7 @@ impl NativeVideoPlayer {
     pub fn toggle_play_pause(&mut self) -> bool {
         if let Some(pipeline) = &self.pipeline {
             let (_, state, _) = pipeline.state(gst::ClockTime::NONE);
-            if state == gst::State::Playing { pipeline.set_state(gst::State::Paused).unwrap(); return false; } 
+            if state == gst::State::Playing { pipeline.set_state(gst::State::Paused).unwrap(); return false; }
             else { pipeline.set_state(gst::State::Playing).unwrap(); return true; }
         }
         false
@@ -419,83 +400,30 @@ impl NativeVideoPlayer {
             let dur = pipeline.query_duration::<gst::ClockTime>().map_or(0, |t| t.nseconds());
             if dur > 0 {
                 let target_ns = (dur as f64 * percent as f64) as u64;
-                // MAGIA AQUÍ: Usamos ACCURATE en lugar de KEY_UNIT para precisión de frame
                 let _ = pipeline.seek_simple(
-                    gst::SeekFlags::FLUSH | gst::SeekFlags::ACCURATE, 
+                    gst::SeekFlags::FLUSH | gst::SeekFlags::ACCURATE,
                     gst::ClockTime::from_nseconds(target_ns)
                 );
             }
         }
     }
 
-    // Ya que estamos aquí, agrega también esta función justo debajo para el control de volumen:
     pub fn set_mute(&self, mute: bool) {
-        if let Some(pipeline) = &self.pipeline {
-            pipeline.set_property("mute", mute);
-        }
-    }
-
-
-//     // Alternar entre Play y Pause en GStreamer
-//     fn toggle_play_pause(&mut self) -> bool {
-//         if let Some(pipeline) = &self.pipeline {
-//             let (_, state, _) = pipeline.state(gst::ClockTime::NONE);
-//             if state == gst::State::Playing {
-//                 pipeline.set_state(gst::State::Paused).unwrap();
-//                 return false;
-//             } else {
-//                 pipeline.set_state(gst::State::Playing).unwrap();
-//                 return true;
-//             }
-//         }
-//         false
-//     }
-
-//     // Obtener posición y duración en milisegundos
-//     fn get_position_and_duration(&self) -> (u64, u64) {
-//         if let Some(pipeline) = &self.pipeline {
-//             let pos = pipeline.query_position::<gst::ClockTime>().map_or(0, |t| t.mseconds());
-//             let dur = pipeline.query_duration::<gst::ClockTime>().map_or(0, |t| t.mseconds());
-//             return (pos, dur);
-//         }
-//         (0, 0)
-//     }
-
-//     // Saltar a un punto específico del video (0.0 a 1.0)
-//     fn seek_percentage(&self, percent: f32) {
-//         if let Some(pipeline) = &self.pipeline {
-//             let dur = pipeline.query_duration::<gst::ClockTime>().map_or(0, |t| t.nseconds());
-//             if dur > 0 {
-//                 let target_ns = (dur as f64 * percent as f64) as u64;
-//                 pipeline.seek_simple(
-//                     gst::SeekFlags::FLUSH | gst::SeekFlags::KEY_UNIT,
-//                     gst::ClockTime::from_nseconds(target_ns)
-//                 ).unwrap();
-//             }
-//         }
-//     }
- }
-
-impl Drop for NativeVideoPlayer {
-    fn drop(&mut self) {
-        self.detener();
+        if let Some(pipeline) = &self.pipeline { pipeline.set_property("mute", mute); }
     }
 }
 
-// ══════════════════════════════════════════════════════════════
-// NUEVA FUNCIÓN MAESTRA: Aplica estilos a prueba de balas
-// ══════════════════════════════════════════════════════════════
+impl Drop for NativeVideoPlayer {
+    fn drop(&mut self) { self.detener(); }
+}
+
 fn aplicar_estilos(ui: &AppWindow, p: &ProjectorWindow, vp: &Arc<Mutex<NativeVideoPlayer>>, modo: &str, forzar_reinicio_video: bool) {
     let is_biblia = modo == "biblias";
-    
-    // Leemos estrictamente de las variables correspondientes al modo
     let bg_type = if is_biblia { ui.get_biblias_bg_type() } else { ui.get_cantos_bg_type() };
     let font_color = if is_biblia { ui.get_biblias_font_color() } else { ui.get_cantos_font_color() };
     let opacity = if is_biblia { ui.get_biblias_fondo_opacity() } else { ui.get_cantos_fondo_opacity() };
-    
     p.set_text_color(font_color);
     p.set_fondo_opacity(opacity);
-
     if bg_type == "negro" {
         vp.lock().unwrap().detener();
         p.set_es_video(false);
@@ -510,7 +438,6 @@ fn aplicar_estilos(ui: &AppWindow, p: &ProjectorWindow, vp: &Arc<Mutex<NativeVid
         vp.lock().unwrap().detener();
         p.set_es_video(false);
         p.set_bg_color(slint::Color::from_rgb_u8(0, 0, 0));
-        
         if is_biblia && ui.get_biblias_has_image() {
             p.set_fondo_imagen(ui.get_biblias_bg_image());
             p.set_mostrar_imagen(true);
@@ -524,7 +451,6 @@ fn aplicar_estilos(ui: &AppWindow, p: &ProjectorWindow, vp: &Arc<Mutex<NativeVid
         p.set_bg_color(slint::Color::from_rgb_u8(0, 0, 0));
         p.set_mostrar_imagen(false);
         p.set_es_video(true);
-        
         if forzar_reinicio_video {
             let ruta = if is_biblia { ui.get_biblias_video_path() } else { ui.get_cantos_video_path() };
             if !ruta.is_empty() {
@@ -537,16 +463,11 @@ fn aplicar_estilos(ui: &AppWindow, p: &ProjectorWindow, vp: &Arc<Mutex<NativeVid
 }
 
 struct MediaData {
-    path: String,
-    name: String,
-    aspecto: String,
-    is_loop: bool,
+    path: String, name: String, aspecto: String, is_loop: bool,
 }
 
-
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-
-    gst::init().expect("Error al inicializar GStreamer. ¿Están instaladas las librerías?");
+    gst::init().expect("Error al inicializar GStreamer.");
 
     #[cfg(target_os = "linux")]
     {
@@ -559,7 +480,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let current_biblia_libro = Arc::new(Mutex::new(-1i32));
     let current_biblia_capitulo = Arc::new(Mutex::new(-1i32));
-
     let segunda_pantalla: Arc<Mutex<Option<(i32, i32, u32, u32)>>> = Arc::new(Mutex::new(None));
 
     let state = Arc::new(Mutex::new(AppState::new()?));
@@ -567,8 +487,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let proyector = ProjectorWindow::new()?;
     let video_player = Arc::new(Mutex::new(NativeVideoPlayer::new()));
     let multimedia_state = Arc::new(Mutex::new(Vec::<MediaData>::new()));
-    let preview_player = Arc::new(Mutex::new(NativeVideoPlayer::new()));
-
     let video_state = Arc::new(Mutex::new(Vec::<MediaData>::new()));
     let preview_player = Arc::new(Mutex::new(NativeVideoPlayer::new()));
 
@@ -582,7 +500,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 } else {
                     pantallas.iter().find(|d| !(d.x == 0 && d.y == 0))
                 };
-
                 if let Some(segunda) = segunda {
                     let w = (segunda.width as f32 * segunda.scale_factor) as u32;
                     let h = (segunda.height as f32 * segunda.scale_factor) as u32;
@@ -631,15 +548,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let ui = ui_handle.unwrap();
         let estado = state_clone.lock().unwrap();
         ui.set_elemento_seleccionado(SharedString::from(estado.get_canto_titulo(id)));
-        let diapos_slint: Vec<DiapositivaUI> = estado.get_canto_diapositivas(id).into_iter()
-            .map(|d| DiapositivaUI { orden: SharedString::from(d.orden.to_string()), texto: SharedString::from(d.texto) }).collect();
+        // ── font_size calculado por estrofa con diapositiva_a_ui ──
+        let diapos_slint: Vec<DiapositivaUI> = estado.get_canto_diapositivas(id)
+            .iter().map(diapositiva_a_ui).collect();
         ui.set_estrofas_actuales(ModelRc::from(Rc::new(VecModel::from(diapos_slint))));
         ui.set_active_estrofa_index(-1);
         ui.invoke_focus_panel();
     });
 
     let state_clone = Arc::clone(&state);
-    let state_clone2 = Arc::clone(&state); 
+    let state_clone2 = Arc::clone(&state);
     let c_clone = cargar_cantos.clone();
     let ui_handle_guardar = ui.as_weak();
     let proyector_handle_guardar = proyector.as_weak();
@@ -647,11 +565,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ui.on_guardar_canto(move |id, titulo, letra| {
         {
             let estado = state_clone.lock().unwrap();
-            if id == -1 {
-                estado.add_canto(&titulo, &letra);
-            } else {
-                estado.update_canto(id, &titulo, &letra);
-            }
+            if id == -1 { estado.add_canto(&titulo, &letra); } else { estado.update_canto(id, &titulo, &letra); }
         }
         c_clone(String::new());
         if id != -1 {
@@ -661,27 +575,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let titulo_guardado = estado.get_canto_titulo(id);
             let titulo_en_panel = ui.get_elemento_seleccionado().to_string();
             let es_canto_activo = titulo_en_panel == titulo.to_string() || titulo_en_panel == titulo_guardado;
-
             if es_canto_activo {
                 let nuevas_diapos = estado.get_canto_diapositivas(id);
-                let diapos_slint: Vec<DiapositivaUI> = nuevas_diapos.iter()
-                    .map(|d| DiapositivaUI {
-                        orden: SharedString::from(d.orden.to_string()),
-                        texto: SharedString::from(d.texto.clone()),
-                    }).collect();
-
+                // ── font_size calculado ──
+                let diapos_slint: Vec<DiapositivaUI> = nuevas_diapos.iter().map(diapositiva_a_ui).collect();
                 let active_idx = ui.get_active_estrofa_index();
                 ui.set_elemento_seleccionado(SharedString::from(&titulo_guardado));
                 ui.set_estrofas_actuales(ModelRc::from(Rc::new(VecModel::from(diapos_slint.clone()))));
-
                 let idx_a_proyectar = if active_idx >= 0 && (active_idx as usize) < diapos_slint.len() {
                     active_idx as usize
                 } else if !diapos_slint.is_empty() {
                     ui.set_active_estrofa_index(0); 0
-                } else {
-                    return;
-                };
-
+                } else { return; };
                 let texto_nuevo = diapos_slint[idx_a_proyectar].texto.clone();
                 let font_size = calcular_font_size(&texto_nuevo, false, 1920.0, 1080.0);
                 p.set_texto_proyeccion(texto_nuevo);
@@ -693,10 +598,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let state_clone = Arc::clone(&state);
     let c_clone = cargar_cantos.clone();
-    ui.on_eliminar_canto(move |id| {
-        state_clone.lock().unwrap().delete_canto(id);
-        c_clone(String::new());
-    });
+    ui.on_eliminar_canto(move |id| { state_clone.lock().unwrap().delete_canto(id); c_clone(String::new()); });
 
     let ui_handle = ui.as_weak();
     ui.on_abrir_formulario_nuevo(move || {
@@ -733,7 +635,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ui.on_abrir_proyector(move || {
         let p = proyector_handle.unwrap();
         let info = *segunda_pantalla_clone.lock().unwrap();
-
         if let Some((x, y, width, height)) = info {
             p.show().unwrap();
             mover_proyector_a_pantalla(p.as_weak(), x, y, width, height);
@@ -749,52 +650,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    // ══════════════════════════════════════════════════════════════
-    // EVENTO: PROYECTAR ESTROFA (Sincronización Automática)
-    // ══════════════════════════════════════════════════════════════
     let proyector_handle = proyector.as_weak();
     let state_clone = Arc::clone(&state);
-    
     let ui_h_proy = ui.as_weak();
     let vp_proy = Arc::clone(&video_player);
     let last_modo = Arc::new(Mutex::new(String::new()));
-
     let segunda_pantalla_proy = Arc::clone(&segunda_pantalla);
 
     ui.on_proyectar_estrofa(move |texto, referencia| {
         let p = proyector_handle.unwrap();
         let ui = ui_h_proy.unwrap();
-        
         p.set_texto_proyeccion(texto.clone());
         let mut ref_str = referencia.to_string();
         if !ref_str.is_empty() {
             let sigla = state_clone.lock().unwrap().get_sigla_actual();
-            if !sigla.is_empty() {
-                ref_str = format!("{}  |  {}", ref_str, sigla);
-            }
+            if !sigla.is_empty() { ref_str = format!("{}  |  {}", ref_str, sigla); }
         }
         p.set_referencia(SharedString::from(ref_str.clone()));
-        
         let tiene_referencia = !ref_str.is_empty();
-
-        // ¡NUEVO! Obtenemos el ancho y alto real de la pantalla
         let info = *segunda_pantalla_proy.lock().unwrap();
-        let (screen_w, screen_h) = if let Some((_, _, w, h)) = info {
-            (w as f32, h as f32)
-        } else {
-            (1280.0, 720.0) // Resolución de emergencia por defecto
-        };
-
-        // Pasamos las medidas al calculador
+        let (screen_w, screen_h) = if let Some((_, _, w, h)) = info { (w as f32, h as f32) } else { (1280.0, 720.0) };
         let font_size = calcular_font_size(&texto, tiene_referencia, screen_w, screen_h);
         p.set_tamano_letra(font_size);
-
         let modo_actual = if tiene_referencia { "biblias" } else { "cantos" };
         let mut l_modo = last_modo.lock().unwrap();
-        
-        let forzar_video = *l_modo != modo_actual; 
+        let forzar_video = *l_modo != modo_actual;
         *l_modo = modo_actual.to_string();
-        
         aplicar_estilos(&ui, &p, &vp_proy, modo_actual, forzar_video);
     });
 
@@ -839,10 +720,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let versiculos = state_thread.lock().unwrap().get_capitulo(book.id, cap);
             let _ = slint::invoke_from_event_loop(move || {
                 let ui = ui_thread.unwrap();
-                let diapos: Vec<DiapositivaUI> = versiculos.into_iter().map(|v| DiapositivaUI { orden: SharedString::from(v.versiculo.to_string()), texto: SharedString::from(v.texto) }).collect();
+                // ── font_size calculado por versículo ──
+                let diapos: Vec<DiapositivaUI> = versiculos.iter().map(versiculo_a_ui).collect();
                 ui.set_estrofas_actuales(ModelRc::from(Rc::new(VecModel::from(diapos.clone()))));
                 ui.set_active_estrofa_index(0);
-                if !diapos.is_empty() { ui.invoke_proyectar_estrofa(diapos[0].texto.clone(), SharedString::from(format!("{}:{}", titulo, diapos[0].orden))); }
+                if !diapos.is_empty() {
+                    ui.invoke_proyectar_estrofa(diapos[0].texto.clone(), SharedString::from(format!("{}:{}", titulo, diapos[0].orden)));
+                }
                 ui.invoke_focus_panel();
             });
         });
@@ -872,9 +756,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let _ = slint::invoke_from_event_loop(move || {
                         let ui = ui_thread.unwrap();
                         let mut target_index = 0;
-                        let diapos: Vec<DiapositivaUI> = versiculos.into_iter().enumerate().map(|(i, v)| {
+                        // ── font_size calculado por versículo ──
+                        let diapos: Vec<DiapositivaUI> = versiculos.iter().enumerate().map(|(i, v)| {
                             if v.versiculo == versiculo_obj { target_index = i as i32; }
-                            DiapositivaUI { orden: SharedString::from(v.versiculo.to_string()), texto: SharedString::from(v.texto) }
+                            versiculo_a_ui(v)
                         }).collect();
                         ui.set_estrofas_actuales(ModelRc::from(Rc::new(VecModel::from(diapos.clone()))));
                         ui.set_active_estrofa_index(target_index);
@@ -908,7 +793,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         if lib != -1 && cap != -1 && !versiculos_nuevos.is_empty() {
             let active_idx = ui.get_active_estrofa_index();
-            let diapos: Vec<DiapositivaUI> = versiculos_nuevos.into_iter().map(|v| DiapositivaUI { orden: SharedString::from(v.versiculo.to_string()), texto: SharedString::from(v.texto) }).collect();
+            // ── font_size calculado ──
+            let diapos: Vec<DiapositivaUI> = versiculos_nuevos.iter().map(versiculo_a_ui).collect();
             ui.set_estrofas_actuales(ModelRc::from(Rc::new(VecModel::from(diapos.clone()))));
             if active_idx >= 0 && (active_idx as usize) < diapos.len() {
                 let texto_nuevo = diapos[active_idx as usize].texto.clone();
@@ -920,45 +806,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    // ══════════════════════════════════════════════════════════════
-    // EVENTO: PERSONALIZACIÓN (El usuario hace click en colores/fondos)
-    // ══════════════════════════════════════════════════════════════
     let ui_h_sync = ui.as_weak();
     let p_h_sync = proyector.as_weak();
     let vp_sync = Arc::clone(&video_player);
-    
     ui.on_sync_estilos(move || {
         let ui = ui_h_sync.unwrap();
         let p = p_h_sync.unwrap();
-        
-        // BUG CORREGIDO: Extraemos `modal_tab` en lugar de `active_tab`
-        // De esta forma los clics en la personalización reaccionan a lo que
-        // estás mirando en el menú (Biblias o Cantos) sin equivocarse de variables.
         let modo = ui.get_modal_tab();
-        
         aplicar_estilos(&ui, &p, &vp_sync, modo.as_str(), true);
     });
 
-    // ══════════════════════════════════════════
-    // GALERÍA — Agregar archivo
-    // ══════════════════════════════════════════
     let ui_h_gal = ui.as_weak();
     let state_gal = Arc::clone(&state);
     ui.on_agregar_a_galeria(move |tipo| {
         let ui = ui_h_gal.unwrap();
         let tipo_str = tipo.to_string();
         let es_video = tipo_str.ends_with("-vid");
-
         let dialog = if es_video {
             rfd::FileDialog::new().add_filter("Videos", &["mp4", "mov", "mkv", "webm"]).pick_file()
         } else {
             rfd::FileDialog::new().add_filter("Imágenes", &["png", "jpg", "jpeg", "webp"]).pick_file()
         };
-
         if let Some(path) = dialog {
             let path_str = path.to_string_lossy().to_string();
             let mut estado = state_gal.lock().unwrap();
-
             if tipo_str == "biblias-img" {
                 if let Ok(img) = slint::Image::load_from_path(&path) {
                     estado.biblias_image_paths.push(path_str.clone());
@@ -1011,9 +882,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
-    // ══════════════════════════════════════════
-    // GALERÍA — Seleccionar item existente
-    // ══════════════════════════════════════════
     let ui_h_sel = ui.as_weak();
     let state_sel = Arc::clone(&state);
     ui.on_seleccionar_galeria_item(move |tipo, idx| {
@@ -1021,47 +889,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let estado = state_sel.lock().unwrap();
         let tipo_str = tipo.to_string();
         let idx_usize = idx as usize;
-
         if tipo_str == "biblias-img" {
             if let Some(p) = estado.biblias_image_paths.get(idx_usize) {
                 if let Ok(img) = slint::Image::load_from_path(std::path::Path::new(p)) {
-                    ui.set_biblias_selected_img(idx);
-                    ui.set_biblias_bg_image(img);
-                    ui.set_biblias_has_image(true);
-                    ui.set_biblias_bg_type(SharedString::from("imagen"));
+                    ui.set_biblias_selected_img(idx); ui.set_biblias_bg_image(img);
+                    ui.set_biblias_has_image(true); ui.set_biblias_bg_type(SharedString::from("imagen"));
                     ui.invoke_sync_estilos();
                 }
             }
         } else if tipo_str == "cantos-img" {
             if let Some(p) = estado.cantos_image_paths.get(idx_usize) {
                 if let Ok(img) = slint::Image::load_from_path(std::path::Path::new(p)) {
-                    ui.set_cantos_selected_img(idx);
-                    ui.set_cantos_bg_image(img);
-                    ui.set_cantos_has_image(true);
-                    ui.set_cantos_bg_type(SharedString::from("imagen"));
+                    ui.set_cantos_selected_img(idx); ui.set_cantos_bg_image(img);
+                    ui.set_cantos_has_image(true); ui.set_cantos_bg_type(SharedString::from("imagen"));
                     ui.invoke_sync_estilos();
                 }
             }
         } else if tipo_str == "biblias-vid" {
             if let Some(p) = estado.biblias_video_paths.get(idx_usize) {
-                ui.set_biblias_selected_vid(idx);
-                ui.set_biblias_video_path(SharedString::from(p.as_str()));
-                ui.set_biblias_bg_type(SharedString::from("video"));
-                ui.invoke_sync_estilos();
+                ui.set_biblias_selected_vid(idx); ui.set_biblias_video_path(SharedString::from(p.as_str()));
+                ui.set_biblias_bg_type(SharedString::from("video")); ui.invoke_sync_estilos();
             }
         } else if tipo_str == "cantos-vid" {
             if let Some(p) = estado.cantos_video_paths.get(idx_usize) {
-                ui.set_cantos_selected_vid(idx);
-                ui.set_cantos_video_path(SharedString::from(p.as_str()));
-                ui.set_cantos_bg_type(SharedString::from("video"));
-                ui.invoke_sync_estilos();
+                ui.set_cantos_selected_vid(idx); ui.set_cantos_video_path(SharedString::from(p.as_str()));
+                ui.set_cantos_bg_type(SharedString::from("video")); ui.invoke_sync_estilos();
             }
         }
     });
 
-    // ══════════════════════════════════════════
-    // GALERÍA — Eliminar item
-    // ══════════════════════════════════════════
     let ui_h_del = ui.as_weak();
     let state_del = Arc::clone(&state);
     ui.on_eliminar_galeria_item(move |tipo, idx| {
@@ -1069,64 +925,47 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut estado = state_del.lock().unwrap();
         let tipo_str = tipo.to_string();
         let idx_usize = idx as usize;
-
         if tipo_str == "biblias-img" && idx_usize < estado.biblias_image_paths.len() {
             estado.biblias_image_paths.remove(idx_usize);
             if estado.biblias_image_paths.is_empty() {
                 drop(estado);
                 ui.set_biblias_image_data(ModelRc::from(Rc::new(VecModel::<slint::Image>::from(vec![]))));
-                ui.set_biblias_has_image(false);
-                ui.set_biblias_bg_type(SharedString::from("negro"));
+                ui.set_biblias_has_image(false); ui.set_biblias_bg_type(SharedString::from("negro"));
                 ui.invoke_sync_estilos();
             } else {
                 let paths: Vec<slint::Image> = estado.biblias_image_paths.iter().filter_map(|p| slint::Image::load_from_path(std::path::Path::new(p)).ok()).collect();
                 drop(estado);
                 ui.set_biblias_image_data(ModelRc::from(Rc::new(VecModel::from(paths))));
-                ui.set_biblias_selected_img(0);
-                ui.invoke_seleccionar_galeria_item(SharedString::from("biblias-img"), 0);
+                ui.set_biblias_selected_img(0); ui.invoke_seleccionar_galeria_item(SharedString::from("biblias-img"), 0);
             }
         } else if tipo_str == "cantos-img" && idx_usize < estado.cantos_image_paths.len() {
             estado.cantos_image_paths.remove(idx_usize);
             if estado.cantos_image_paths.is_empty() {
                 drop(estado);
                 ui.set_cantos_image_data(ModelRc::from(Rc::new(VecModel::<slint::Image>::from(vec![]))));
-                ui.set_cantos_has_image(false);
-                ui.set_cantos_bg_type(SharedString::from("negro"));
+                ui.set_cantos_has_image(false); ui.set_cantos_bg_type(SharedString::from("negro"));
                 ui.invoke_sync_estilos();
             } else {
                 let paths: Vec<slint::Image> = estado.cantos_image_paths.iter().filter_map(|p| slint::Image::load_from_path(std::path::Path::new(p)).ok()).collect();
                 drop(estado);
                 ui.set_cantos_image_data(ModelRc::from(Rc::new(VecModel::from(paths))));
-                ui.set_cantos_selected_img(0);
-                ui.invoke_seleccionar_galeria_item(SharedString::from("cantos-img"), 0);
+                ui.set_cantos_selected_img(0); ui.invoke_seleccionar_galeria_item(SharedString::from("cantos-img"), 0);
             }
         } else if tipo_str == "biblias-vid" && idx_usize < estado.biblias_video_paths.len() {
             estado.biblias_video_paths.remove(idx_usize);
             let names: Vec<SharedString> = estado.biblias_video_paths.iter().map(|p| SharedString::from(std::path::Path::new(p).file_name().unwrap().to_string_lossy().to_string())).collect();
-            let is_empty = estado.biblias_video_paths.is_empty();
-            drop(estado);
+            let is_empty = estado.biblias_video_paths.is_empty(); drop(estado);
             ui.set_biblias_video_names(ModelRc::from(Rc::new(VecModel::from(names))));
-            if is_empty {
-                ui.set_biblias_bg_type(SharedString::from("negro"));
-                ui.invoke_sync_estilos();
-            }
+            if is_empty { ui.set_biblias_bg_type(SharedString::from("negro")); ui.invoke_sync_estilos(); }
         } else if tipo_str == "cantos-vid" && idx_usize < estado.cantos_video_paths.len() {
             estado.cantos_video_paths.remove(idx_usize);
             let names: Vec<SharedString> = estado.cantos_video_paths.iter().map(|p| SharedString::from(std::path::Path::new(p).file_name().unwrap().to_string_lossy().to_string())).collect();
-            let is_empty = estado.cantos_video_paths.is_empty();
-            drop(estado);
+            let is_empty = estado.cantos_video_paths.is_empty(); drop(estado);
             ui.set_cantos_video_names(ModelRc::from(Rc::new(VecModel::from(names))));
-            if is_empty {
-                ui.set_cantos_bg_type(SharedString::from("negro"));
-                ui.invoke_sync_estilos();
-            }
+            if is_empty { ui.set_cantos_bg_type(SharedString::from("negro")); ui.invoke_sync_estilos(); }
         }
     });
 
-
-    // ══════════════════════════════════════════════════════════════
-    // LÓGICA DE MULTIMEDIA (IMÁGENES)
-    // ══════════════════════════════════════════════════════════════
     let refresh_multimedia = {
         let ui_handle = ui.as_weak();
         let state_arc = Arc::clone(&multimedia_state);
@@ -1136,65 +975,43 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut slint_items = Vec::new();
             for (i, item) in items.iter().enumerate() {
                 if let Ok(img) = slint::Image::load_from_path(std::path::Path::new(&item.path)) {
-                    slint_items.push(MediaItem {
-                        id: i as i32,
-                        nombre: SharedString::from(&item.name),
-                        path: SharedString::from(&item.path),
-                        img,
-                        aspecto: SharedString::from(&item.aspecto),
-                        is_loop: false,
-                    });
+                    slint_items.push(MediaItem { id: i as i32, nombre: SharedString::from(&item.name), path: SharedString::from(&item.path), img, aspecto: SharedString::from(&item.aspecto), is_loop: false });
                 }
             }
             ui.set_multimedia_items(ModelRc::from(Rc::new(VecModel::from(slint_items))));
         }
     };
 
-    // 1. Agregar Imagen
     let multi_state = Arc::clone(&multimedia_state);
     let refresh_clone = refresh_multimedia.clone();
     ui.on_agregar_multimedia(move || {
         if let Some(path) = rfd::FileDialog::new().add_filter("Imágenes", &["png", "jpg", "jpeg", "webp"]).pick_file() {
             let file_name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
             let path_str = path.to_string_lossy().to_string();
-            multi_state.lock().unwrap().push(MediaData {
-                path: path_str,
-                name: file_name,
-                aspecto: "centro".to_string(), // Inicia ajustado al centro
-                is_loop: false,
-            });
+            multi_state.lock().unwrap().push(MediaData { path: path_str, name: file_name, aspecto: "centro".to_string(), is_loop: false });
             refresh_clone();
         }
     });
 
-    // 2. Cambiar Aspecto
     let multi_state = Arc::clone(&multimedia_state);
     let refresh_clone = refresh_multimedia.clone();
     ui.on_cambiar_aspecto_multimedia(move |idx, aspecto| {
         let mut state = multi_state.lock().unwrap();
-        if let Some(item) = state.get_mut(idx as usize) {
-            item.aspecto = aspecto.to_string();
-        }
-        drop(state);
-        refresh_clone();
+        if let Some(item) = state.get_mut(idx as usize) { item.aspecto = aspecto.to_string(); }
+        drop(state); refresh_clone();
     });
 
-    // 3. Eliminar Imagen
     let multi_state = Arc::clone(&multimedia_state);
     let refresh_clone = refresh_multimedia.clone();
     let ui_handle = ui.as_weak();
     ui.on_eliminar_multimedia(move |idx| {
         let mut state = multi_state.lock().unwrap();
-        if (idx as usize) < state.len() {
-            state.remove(idx as usize);
-        }
+        if (idx as usize) < state.len() { state.remove(idx as usize); }
         drop(state);
         let ui = ui_handle.unwrap();
-        ui.set_selected_media_idx(-1);
-        refresh_clone();
+        ui.set_selected_media_idx(-1); refresh_clone();
     });
 
-    // 4. Proyectar (Doble clic a la pantalla secundaria)
     let p_handle = proyector.as_weak();
     let multi_state = Arc::clone(&multimedia_state);
     let vp_sync = Arc::clone(&video_player);
@@ -1203,25 +1020,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let state = multi_state.lock().unwrap();
         if let Some(item) = state.get(idx as usize) {
             if let Ok(img) = slint::Image::load_from_path(std::path::Path::new(&item.path)) {
-                // Quitamos cualquier otro modo de video o texto
                 vp_sync.lock().unwrap().detener();
-                p.set_es_video(false);
-                p.set_bg_color(slint::Color::from_rgb_u8(0, 0, 0));
-                p.set_texto_proyeccion(slint::SharedString::from("")); 
+                p.set_es_video(false); p.set_bg_color(slint::Color::from_rgb_u8(0, 0, 0));
+                p.set_texto_proyeccion(slint::SharedString::from(""));
                 p.set_referencia(slint::SharedString::from(""));
-                
-                // Aplicamos la imagen directamente sin panel oscuro (Opacidad Cero)
                 p.set_fondo_opacity(0.0);
                 p.set_fondo_imagen_aspecto(slint::SharedString::from(&item.aspecto));
-                p.set_fondo_imagen(img);
-                p.set_mostrar_imagen(true);
+                p.set_fondo_imagen(img); p.set_mostrar_imagen(true);
             }
         }
     });
 
-    // ══════════════════════════════════════════════════════════════
-    // LÓGICA DE VIDEOS (BIBLIOTECA Y PREVIEW)
-    // ══════════════════════════════════════════════════════════════
     let refresh_videos = {
         let ui_handle = ui.as_weak();
         let state_arc = Arc::clone(&video_state);
@@ -1230,40 +1039,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let items = state_arc.lock().unwrap();
             let mut slint_items = Vec::new();
             for (i, item) in items.iter().enumerate() {
-                // Aquí usamos una miniatura temporal. (En el futuro puedes generar el frame con ffmpeg)
-                let mut pixel_buffer = SharedPixelBuffer::<slint::Rgba8Pixel>::new(80, 45);
-                let img = slint::Image::from_rgba8(pixel_buffer); // Imagen negra de placeholder
-                
-                slint_items.push(MediaItem {
-                    id: i as i32,
-                    nombre: SharedString::from(&item.name),
-                    path: SharedString::from(&item.path),
-                    img, 
-                    aspecto: SharedString::from("rellenar"),
-                    is_loop: item.is_loop,
-                });
+                let pixel_buffer = SharedPixelBuffer::<slint::Rgba8Pixel>::new(80, 45);
+                let img = slint::Image::from_rgba8(pixel_buffer);
+                slint_items.push(MediaItem { id: i as i32, nombre: SharedString::from(&item.name), path: SharedString::from(&item.path), img, aspecto: SharedString::from("rellenar"), is_loop: item.is_loop });
             }
             ui.set_video_items(ModelRc::from(Rc::new(VecModel::from(slint_items))));
         }
     };
 
-    // 1. Agregar Video (Clic derecho)
     let vid_state = Arc::clone(&video_state);
     let refresh_vid_clone = refresh_videos.clone();
     ui.on_agregar_video(move || {
         if let Some(path) = rfd::FileDialog::new().add_filter("Videos", &["mp4", "mkv", "avi", "mov"]).pick_file() {
             let file_name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
-            vid_state.lock().unwrap().push(MediaData {
-                path: path.to_string_lossy().to_string(),
-                name: file_name,
-                aspecto: "rellenar".to_string(),
-                is_loop: false,
-            });
+            vid_state.lock().unwrap().push(MediaData { path: path.to_string_lossy().to_string(), name: file_name, aspecto: "rellenar".to_string(), is_loop: false });
             refresh_vid_clone();
         }
     });
 
-    // 2. Eliminar Video
     let vid_state = Arc::clone(&video_state);
     let refresh_vid_clone = refresh_videos.clone();
     let ui_handle = ui.as_weak();
@@ -1274,29 +1067,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         drop(state);
         let ui = ui_handle.unwrap();
         ui.set_selected_video_idx(-1);
-        preview_player_del.lock().unwrap().detener(); // Detiene si se estaba previsualizando
+        preview_player_del.lock().unwrap().detener();
         refresh_vid_clone();
     });
 
-    // EVENTO: Cuando se hace clic en un video de la lista lateral
     let ui_handle_sel = ui.as_weak();
     let preview_player_sel = Arc::clone(&preview_player);
     ui.on_seleccionar_video_lista(move |idx| {
         let ui = ui_handle_sel.unwrap();
         ui.set_selected_video_idx(idx);
-        
-        // 1. Apagamos el video anterior
         preview_player_sel.lock().unwrap().detener();
-        
-        // 2. Limpiamos el caché visual (volvemos la pantalla negra)
         ui.set_is_preview_playing(false);
-        ui.set_preview_video_frame(slint::Image::default()); 
-        
-        // 3. Apagamos los controles de proyección si cambias de video
+        ui.set_preview_video_frame(slint::Image::default());
         ui.set_is_video_projecting(false);
     });
 
-    // 3. Reproducir en Panel Central (Play/Pause)
     let vid_state = Arc::clone(&video_state);
     let ui_handle = ui.as_weak();
     let preview_player_clone = Arc::clone(&preview_player);
@@ -1306,48 +1091,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if let Some(item) = state.get(idx as usize) {
             let mut player = preview_player_clone.lock().unwrap();
             let is_playing = ui.get_is_preview_playing();
-            
-            if !is_playing {
-                player.reproducir_preview(&item.path, ui.as_weak());
-                ui.set_is_preview_playing(true);
-            } else {
-                player.detener();
-                ui.set_is_preview_playing(false);
-            }
+            if !is_playing { player.reproducir_preview(&item.path, ui.as_weak()); ui.set_is_preview_playing(true); }
+            else { player.detener(); ui.set_is_preview_playing(false); }
         }
     });
 
-    
-    // 4. Proyectar (Doble clic o Botón -> Mandar a pantalla secundaria)
     let p_handle = proyector.as_weak();
     let vid_state = Arc::clone(&video_state);
     let vp_sync = Arc::clone(&video_player);
     let ui_handle_proj = ui.as_weak();
-    
     ui.on_proyectar_video(move |idx| {
         let p = p_handle.unwrap();
         let ui = ui_handle_proj.unwrap();
         let state = vid_state.lock().unwrap();
-        
         if let Some(item) = state.get(idx as usize) {
-            // REQ 1: Quitar opacidad en el proyector
-            p.set_es_video(true);
-            p.set_bg_color(slint::Color::from_rgb_u8(0, 0, 0));
-            // Si tienes una propiedad de opacidad de capa/fondo en tu proyector.slint, ajústala aquí a 1.0
-            // Ejemplo: p.set_opacidad_fondo(1.0); o p.set_opacidad(1.0);
-            
-            p.set_mostrar_imagen(false);
-            p.set_texto_proyeccion(slint::SharedString::from("")); 
-            
+            p.set_es_video(true); p.set_bg_color(slint::Color::from_rgb_u8(0, 0, 0));
+            p.set_mostrar_imagen(false); p.set_texto_proyeccion(slint::SharedString::from(""));
             vp_sync.lock().unwrap().reproducir(&item.path, p.as_weak(), item.is_loop);
-            
-            // REQ 3: Actualizar interfaz a estado "Proyectando"
-            ui.set_is_video_projecting(true);
-            ui.set_is_proyector_playing(true);
+            ui.set_is_video_projecting(true); ui.set_is_proyector_playing(true);
         }
     });
 
-    // REQ 2: Controles de reproducción de la segunda pantalla
     let vp_controls = Arc::clone(&video_player);
     let ui_handle_ctrl = ui.as_weak();
     ui.on_toggle_proyector_play(move || {
@@ -1362,62 +1126,39 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ui.on_toggle_proyector_mute(move || {
         let ui = ui_handle_mute.unwrap();
         let is_currently_muted = ui.get_is_proyector_muted();
-        
-        // Invertimos el estado (si estaba silenciado, lo activamos y viceversa)
         let new_mute_state = !is_currently_muted;
-        
         vp_mute.lock().unwrap().set_mute(new_mute_state);
         ui.set_is_proyector_muted(new_mute_state);
     });
 
     let vp_seek = Arc::clone(&video_player);
-    ui.on_seek_proyector_video(move |percent| {
-        vp_seek.lock().unwrap().seek_percentage(percent);
-    });
+    ui.on_seek_proyector_video(move |percent| { vp_seek.lock().unwrap().seek_percentage(percent); });
 
-    // Temporizador para actualizar la barra de progreso (cada 500ms)
-    // Usamos Box::leak para asegurar que el Timer no se destruya al salir de este bloque
     let vp_timer = Arc::clone(&video_player);
     let ui_timer_handle = ui.as_weak();
-    
     let video_timer = Box::leak(Box::new(slint::Timer::default()));
     video_timer.start(slint::TimerMode::Repeated, std::time::Duration::from_millis(500), move || {
         if let Some(ui) = ui_timer_handle.upgrade() {
             if ui.get_is_video_projecting() {
                 let (pos_ms, dur_ms) = vp_timer.lock().unwrap().get_position_and_duration();
                 if dur_ms > 0 {
-                    // Calculamos el porcentaje de 0.0 a 1.0 para Slint
                     let progress = (pos_ms as f32) / (dur_ms as f32);
                     ui.set_proyector_progress(progress);
-                    
-                    // Formateamos los milisegundos a Minutos:Segundos
-                    let pos_sec = pos_ms / 1000;
-                    let dur_sec = dur_ms / 1000;
-                    let time_str = format!("{:02}:{:02} / {:02}:{:02}", 
-                        pos_sec / 60, pos_sec % 60, 
-                        dur_sec / 60, dur_sec % 60
-                    );
+                    let pos_sec = pos_ms / 1000; let dur_sec = dur_ms / 1000;
+                    let time_str = format!("{:02}:{:02} / {:02}:{:02}", pos_sec / 60, pos_sec % 60, dur_sec / 60, dur_sec % 60);
                     ui.set_proyector_time(slint::SharedString::from(time_str));
                 }
             }
         }
     });
 
-    // Registrar el cambio de modo de reproducción
     let vid_state_mode = Arc::clone(&video_state);
-    let refresh_vid_mode = refresh_videos.clone(); // <--- Clocamos la función de refresco
+    let refresh_vid_mode = refresh_videos.clone();
     ui.on_cambiar_modo_reproduccion(move |idx, modo| {
         let mut state = vid_state_mode.lock().unwrap();
-        if let Some(item) = state.get_mut(idx as usize) {
-            item.is_loop = modo == "bucle";
-        }
-        drop(state); // Liberamos la base de datos
-        refresh_vid_mode(); // <--- ACTUALIZA LA INTERFAZ AL INSTANTE
+        if let Some(item) = state.get_mut(idx as usize) { item.is_loop = modo == "bucle"; }
+        drop(state); refresh_vid_mode();
     });
- 
-
-
-
 
     ui.run()?;
     Ok(())

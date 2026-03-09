@@ -1,5 +1,5 @@
 use rusqlite::{Connection, Result};
-use slint::{ModelRc, SharedString, VecModel, ComponentHandle, SharedPixelBuffer, Rgba8Pixel};
+use slint::{ModelRc, SharedString, VecModel, ComponentHandle, SharedPixelBuffer};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::rc::Rc;
@@ -260,7 +260,7 @@ impl NativeVideoPlayer {
         Self { pipeline: None }
     }
 
-    pub fn reproducir(&mut self, ruta: &str, proj_weak: slint::Weak<ProjectorWindow>) {
+    pub fn reproducir(&mut self, ruta: &str, proj_weak: slint::Weak<ProjectorWindow>, is_loop: bool) {
         self.detener();
 
         let path = std::path::Path::new(ruta).canonicalize().unwrap_or_else(|_| std::path::PathBuf::from(ruta));
@@ -277,20 +277,14 @@ impl NativeVideoPlayer {
         appsink.set_property("sync", true);
         pipeline.set_property("video-sink", &appsink);
 
-        // ══════════════════════════════════════════════════════════════
-        // FIX DE AUDIO: Forzar la salida de sonido del sistema
-        // ══════════════════════════════════════════════════════════════
-        // Creamos un autoaudiosink que detecta automáticamente los parlantes
         if let Ok(audio_sink) = gst::ElementFactory::make("autoaudiosink").build() {
             pipeline.set_property("audio-sink", &audio_sink);
         } else {
             println!("Advertencia: No se encontró autoaudiosink, el audio podría fallar.");
         }
         
-        // Nos aseguramos de que arranque con el volumen al máximo (1.0) y sin estar silenciado
         pipeline.set_property("volume", 1.0f64);
         pipeline.set_property("mute", false);
-        // ══════════════════════════════════════════════════════════════
 
         appsink.set_callbacks(gst_app::AppSinkCallbacks::builder()
             .new_sample(move |appsink| {
@@ -315,7 +309,38 @@ impl NativeVideoPlayer {
         );
 
         pipeline.set_state(gst::State::Playing).unwrap();
-        self.pipeline = Some(pipeline);
+        self.pipeline = Some(pipeline.clone());
+
+        // ══════════════════════════════════════════════════════════════
+        // HILO DE CONTROL DE REPRODUCCIÓN (BUCLE O DETENER)
+        // ══════════════════════════════════════════════════════════════
+        let bus = pipeline.bus().unwrap();
+        let pipeline_clone = pipeline.clone();
+        
+        std::thread::spawn(move || {
+            for msg in bus.iter_timed(gst::ClockTime::NONE) {
+                match msg.view() {
+                    gst::MessageView::Eos(..) => {
+                        if is_loop {
+                            // Si es bucle, volver al principio (0) y darle play
+                            let _ = pipeline_clone.seek_simple(
+                                gst::SeekFlags::FLUSH | gst::SeekFlags::KEY_UNIT,
+                                gst::ClockTime::ZERO,
+                            );
+                            let _ = pipeline_clone.set_state(gst::State::Playing);
+                        } else {
+                            // Si no es bucle, pausar el video al final
+                            let _ = pipeline_clone.set_state(gst::State::Paused);
+                        }
+                    }
+                    gst::MessageView::Error(err) => {
+                        println!("Error de reproducción interno: {}", err.error());
+                        break; 
+                    }
+                    _ => {} 
+                }
+            }
+        });
     }
 
     fn detener(&mut self) {
@@ -503,7 +528,7 @@ fn aplicar_estilos(ui: &AppWindow, p: &ProjectorWindow, vp: &Arc<Mutex<NativeVid
         if forzar_reinicio_video {
             let ruta = if is_biblia { ui.get_biblias_video_path() } else { ui.get_cantos_video_path() };
             if !ruta.is_empty() {
-                vp.lock().unwrap().reproducir(ruta.as_str(), p.as_weak());
+                vp.lock().unwrap().reproducir(ruta.as_str(), p.as_weak(), true);
             } else {
                 vp.lock().unwrap().detener();
             }
@@ -515,6 +540,7 @@ struct MediaData {
     path: String,
     name: String,
     aspecto: String,
+    is_loop: bool,
 }
 
 
@@ -1116,6 +1142,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         path: SharedString::from(&item.path),
                         img,
                         aspecto: SharedString::from(&item.aspecto),
+                        is_loop: false,
                     });
                 }
             }
@@ -1134,6 +1161,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 path: path_str,
                 name: file_name,
                 aspecto: "centro".to_string(), // Inicia ajustado al centro
+                is_loop: false,
             });
             refresh_clone();
         }
@@ -1212,6 +1240,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     path: SharedString::from(&item.path),
                     img, 
                     aspecto: SharedString::from("rellenar"),
+                    is_loop: item.is_loop,
                 });
             }
             ui.set_video_items(ModelRc::from(Rc::new(VecModel::from(slint_items))));
@@ -1228,6 +1257,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 path: path.to_string_lossy().to_string(),
                 name: file_name,
                 aspecto: "rellenar".to_string(),
+                is_loop: false,
             });
             refresh_vid_clone();
         }
@@ -1309,7 +1339,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             p.set_mostrar_imagen(false);
             p.set_texto_proyeccion(slint::SharedString::from("")); 
             
-            vp_sync.lock().unwrap().reproducir(&item.path, p.as_weak());
+            vp_sync.lock().unwrap().reproducir(&item.path, p.as_weak(), item.is_loop);
             
             // REQ 3: Actualizar interfaz a estado "Proyectando"
             ui.set_is_video_projecting(true);
@@ -1371,6 +1401,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
+    });
+
+    // Registrar el cambio de modo de reproducción
+    let vid_state_mode = Arc::clone(&video_state);
+    let refresh_vid_mode = refresh_videos.clone(); // <--- Clocamos la función de refresco
+    ui.on_cambiar_modo_reproduccion(move |idx, modo| {
+        let mut state = vid_state_mode.lock().unwrap();
+        if let Some(item) = state.get_mut(idx as usize) {
+            item.is_loop = modo == "bucle";
+        }
+        drop(state); // Liberamos la base de datos
+        refresh_vid_mode(); // <--- ACTUALIZA LA INTERFAZ AL INSTANTE
     });
  
 

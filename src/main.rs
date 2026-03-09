@@ -262,23 +262,35 @@ impl NativeVideoPlayer {
 
     pub fn reproducir(&mut self, ruta: &str, proj_weak: slint::Weak<ProjectorWindow>) {
         self.detener();
+
         let path = std::path::Path::new(ruta).canonicalize().unwrap_or_else(|_| std::path::PathBuf::from(ruta));
         let uri = gst::glib::filename_to_uri(&path, None).unwrap();
 
         let pipeline = gst::ElementFactory::make("playbin").property("uri", &uri).build().unwrap();
-        
+
         let appsink = gst_app::AppSink::builder()
             .caps(&gst::Caps::builder("video/x-raw").field("format", "RGBA").build())
             .max_buffers(1)
             .drop(true)
             .build();
-            
-        // ¡CLAVE PARA EL TIEMPO REAL! Fuerza a GStreamer a ir segundo a segundo
+
         appsink.set_property("sync", true);
         pipeline.set_property("video-sink", &appsink);
 
-        // Ya NO le ponemos "fakesink" al audio. 
-        // Ahora el video sonará por los parlantes del computador/proyector.
+        // ══════════════════════════════════════════════════════════════
+        // FIX DE AUDIO: Forzar la salida de sonido del sistema
+        // ══════════════════════════════════════════════════════════════
+        // Creamos un autoaudiosink que detecta automáticamente los parlantes
+        if let Ok(audio_sink) = gst::ElementFactory::make("autoaudiosink").build() {
+            pipeline.set_property("audio-sink", &audio_sink);
+        } else {
+            println!("Advertencia: No se encontró autoaudiosink, el audio podría fallar.");
+        }
+        
+        // Nos aseguramos de que arranque con el volumen al máximo (1.0) y sin estar silenciado
+        pipeline.set_property("volume", 1.0f64);
+        pipeline.set_property("mute", false);
+        // ══════════════════════════════════════════════════════════════
 
         appsink.set_callbacks(gst_app::AppSinkCallbacks::builder()
             .new_sample(move |appsink| {
@@ -287,7 +299,7 @@ impl NativeVideoPlayer {
                 let info = gst_video::VideoInfo::from_caps(sample.caps().unwrap()).unwrap();
                 let map = buffer.map_readable().unwrap();
 
-                let mut pixel_buffer = SharedPixelBuffer::<Rgba8Pixel>::new(info.width(), info.height());
+                let mut pixel_buffer = SharedPixelBuffer::<slint::Rgba8Pixel>::new(info.width(), info.height());
                 unsafe {
                     let dest = pixel_buffer.make_mut_slice();
                     let dest_u8 = std::slice::from_raw_parts_mut(dest.as_mut_ptr() as *mut u8, dest.len() * 4);

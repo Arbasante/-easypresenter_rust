@@ -108,6 +108,9 @@ export component AppWindow inherits Window {
     in-out property <float> cantos_fondo_opacity: 0.0;
     in-out property <float> cantos_font_scale: 1.0;
 
+    in-out property <string> default_bg_type: ""; // Puede ser "imagen" o "video"
+    in-out property <int> default_bg_idx: -1;
+
     in-out property <color> biblias_custom_color: #0ea5e9;
     in-out property <color> cantos_custom_color: #0ea5e9;
     in-out property <bool> mostrar_selector_color: false;
@@ -334,8 +337,8 @@ export component AppWindow inherits Window {
                                                     if (e.button == PointerEventButton.right && e.kind == PointerEventKind.up) {
                                                         root.menu_canto_id = canto.id;
                                                         root.menu_canto_titulo = canto.titulo;
-                                                        root.menu_x = self.absolute-position.x + self.mouse-x;
-                                                        root.menu_y = self.absolute-position.y + self.mouse-y;
+                                                        root.menu_x = min(self.absolute-position.x + self.mouse-x, root.width - 185px);
+                                                        root.menu_y = min(self.absolute-position.y + self.mouse-y, root.height - 114px);
                                                         root.mostrar_menu_canto = true;
                                                     }
                                                 }
@@ -431,8 +434,8 @@ export component AppWindow inherits Window {
                                 pointer-event(e) => {
                                     if (e.button == PointerEventButton.right && e.kind == PointerEventKind.up) {
                                         root.menu_media_idx = -1;
-                                        root.menu_media_x = self.absolute-position.x + self.mouse-x;
-                                        root.menu_media_y = self.absolute-position.y + self.mouse-y;
+                                        root.menu_media_x = min(self.absolute-position.x + self.mouse-x, root.width - 180px);
+                                        root.menu_media_y = min(self.absolute-position.y + self.mouse-y, root.height - 150px);
                                         root.mostrar_menu_media = true;
                                     }
                                 }
@@ -463,7 +466,11 @@ export component AppWindow inherits Window {
                                                         image-fit: item.aspecto == "rellenar" ? cover : (item.aspecto == "estirar" ? fill : contain);
                                                     }
                                                 }
-                                                Text { text: item.nombre; color: #f3f4f6; font-size: 11px; font-weight: 700; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
+                                                VerticalLayout {
+                                                    alignment: center; spacing: 4px;
+                                                    Text { text: item.nombre; color: #f3f4f6; font-size: 11px; font-weight: 700; horizontal-stretch: 1; overflow: elide; }
+                                                    if (root.default_bg_type == "imagen" && root.default_bg_idx == idx) : Text { text: "FONDO PREDETERMINADO"; color: #eab308; font-size: 9px; font-weight: 800; }
+                                                }
                                             }
                                         }
                                     }
@@ -478,8 +485,8 @@ export component AppWindow inherits Window {
                                 pointer-event(e) => {
                                     if (e.button == PointerEventButton.right && e.kind == PointerEventKind.up) {
                                         root.menu_video_idx = -1;
-                                        root.menu_video_x = self.absolute-position.x + self.mouse-x;
-                                        root.menu_video_y = self.absolute-position.y + self.mouse-y;
+                                        root.menu_video_x = min(self.absolute-position.x + self.mouse-x, root.width - 180px);
+                                        root.menu_video_y = min(self.absolute-position.y + self.mouse-y, root.height - 146px);
                                         root.mostrar_menu_video = true;
                                     }
                                 }
@@ -512,6 +519,7 @@ export component AppWindow inherits Window {
                                                     alignment: center; spacing: 4px;
                                                     Text { text: item.nombre; color: #f3f4f6; font-size: 11px; font-weight: 700; horizontal-stretch: 1; overflow: elide; }
                                                     if (item.is_loop) : Text { text: "BUCLE ACTIVADO"; color: #0ea5e9; font-size: 9px; font-weight: 800; }
+                                                    if (root.default_bg_type == "video" && root.default_bg_idx == idx) : Text { text: "FONDO PREDETERMINADO"; color: #eab308; font-size: 9px; font-weight: 800; }
                                                 }
                                             }
                                         }
@@ -583,12 +591,22 @@ export component AppWindow inherits Window {
                                 touch-pers-top := TouchArea { clicked => { root.mostrar_personalizar = true; } }
                                 Text { text: "⚙"; font-size: 12px; color: touch-pers-top.has-hover ? white : #4b5563; horizontal-alignment: center; vertical-alignment: center; }
                             }
+                            
                             // ── Botón LIVE ──
                             Rectangle {
                                 width: 52px; height: 28px; border-radius: 8px;
                                 background: touch-live.has-hover ? #b91c1c : #dc2626;
                                 drop-shadow-color: rgba(220, 38, 38, 0.35); drop-shadow-blur: 8px; drop-shadow-offset-y: 2px;
-                                touch-live := TouchArea { clicked => { root.abrir_proyector(); } }
+                                touch-live := TouchArea { 
+                                    clicked => { 
+                                        root.abrir_proyector(); 
+                                        if (root.default_bg_type == "imagen" && root.default_bg_idx >= 0 && root.default_bg_idx < root.multimedia_items.length) {
+                                            root.proyectar_multimedia(root.default_bg_idx);
+                                        } else if (root.default_bg_type == "video" && root.default_bg_idx >= 0 && root.default_bg_idx < root.video_items.length) {
+                                            root.proyectar_video(root.default_bg_idx);
+                                        }
+                                    } 
+                                }
                                 Text { text: "LIVE"; font-size: 9px; font-weight: 900; letter-spacing: 0.8px; color: white; horizontal-alignment: center; vertical-alignment: center; }
                             }
                         }
@@ -853,7 +871,7 @@ export component AppWindow inherits Window {
         }
         Rectangle {
             x: root.menu_media_x; y: root.menu_media_y;
-            width: 180px; height: root.menu_media_idx != -1 ? 116px : 40px;
+            width: 180px; height: root.menu_media_idx != -1 ? 150px : 40px;
             background: #1e1e1e; border-radius: 8px; border-width: 1px; border-color: #374151;
             drop-shadow-color: rgba(0,0,0,0.6); drop-shadow-blur: 16px;
             TouchArea {}
@@ -864,6 +882,10 @@ export component AppWindow inherits Window {
                 if (root.menu_media_idx != -1) : VerticalLayout {
                     spacing: 2px;
                     MenuItem { text: "Aspecto de Imagen"; icon: "⛶"; has_submenu: true; clicked => { root.mostrar_submenu_aspecto = !root.mostrar_submenu_aspecto; } }
+                    
+                    // NUEVO BOTON PREDETERMINADO
+                    MenuItem { text: "Fondo Predeterminado"; icon: "★"; text_color: #eab308; icon_color: #eab308; clicked => { root.default_bg_type = "imagen"; root.default_bg_idx = root.menu_media_idx; root.mostrar_menu_media = false; } }
+                    
                     HorizontalLayout { padding-left: 6px; padding-right: 6px; padding-top: 2px; padding-bottom: 2px; Rectangle { height: 1px; background: #2d2d2d; } }
                     MenuItem { text: "Eliminar Imagen"; icon: "🗑"; text_color: #f87171; icon_color: #f87171; clicked => { root.mostrar_menu_media = false; root.mostrar_submenu_aspecto = false; root.eliminar_multimedia(root.menu_media_idx); } }
                 }
@@ -911,7 +933,7 @@ export component AppWindow inherits Window {
         }
         Rectangle {
             x: root.menu_video_x; y: root.menu_video_y;
-            width: 180px; height: root.menu_video_idx != -1 ? 112px : 40px;
+            width: 180px; height: root.menu_video_idx != -1 ? 146px : 40px;
             background: #1e1e1e; border-radius: 8px; border-width: 1px; border-color: #374151;
             drop-shadow-color: rgba(0,0,0,0.6); drop-shadow-blur: 16px;
             TouchArea {}
@@ -928,6 +950,10 @@ export component AppWindow inherits Window {
                         Text { text: "›"; color: #0ea5e9; font-size: 16px; vertical-alignment: center; font-weight: 700; }
                     }
                 }
+                
+                // NUEVO BOTON PREDETERMINADO
+                if (root.menu_video_idx != -1) : MenuItem { text: "Fondo Predeterminado"; icon: "★"; text_color: #eab308; icon_color: #eab308; clicked => { root.default_bg_type = "video"; root.default_bg_idx = root.menu_video_idx; root.mostrar_menu_video = false; } }
+                
                 if (root.menu_video_idx != -1) : HorizontalLayout { padding-left: 6px; padding-right: 6px; padding-top: 2px; padding-bottom: 2px; Rectangle { height: 1px; background: #2d2d2d; } }
                 if (root.menu_video_idx != -1) : MenuItem { text: "Eliminar Video"; icon: "🗑"; text_color: #f87171; icon_color: #f87171; clicked => { root.mostrar_menu_video = false; root.mostrar_submenu_reproduccion = false; root.eliminar_video(root.menu_video_idx); } }
             }

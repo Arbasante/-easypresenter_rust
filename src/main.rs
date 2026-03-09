@@ -260,100 +260,49 @@ impl NativeVideoPlayer {
         Self { pipeline: None }
     }
 
-    fn reproducir(&mut self, ruta: &str, proj_weak: slint::Weak<ProjectorWindow>) {
+    pub fn reproducir(&mut self, ruta: &str, proj_weak: slint::Weak<ProjectorWindow>) {
         self.detener();
-
         let path = std::path::Path::new(ruta).canonicalize().unwrap_or_else(|_| std::path::PathBuf::from(ruta));
-        let uri = gst::glib::filename_to_uri(&path, None).expect("No se pudo convertir la ruta a URI");
+        let uri = gst::glib::filename_to_uri(&path, None).unwrap();
 
-        let pipeline = gst::ElementFactory::make("playbin")
-            .property("uri", &uri)
-            .build()
-            .expect("No se pudo crear playbin");
-
+        let pipeline = gst::ElementFactory::make("playbin").property("uri", &uri).build().unwrap();
+        
         let appsink = gst_app::AppSink::builder()
-            .caps(
-                &gst::Caps::builder("video/x-raw")
-                    .field("format", "RGBA")
-                    .build(),
-            )
+            .caps(&gst::Caps::builder("video/x-raw").field("format", "RGBA").build())
             .max_buffers(1)
             .drop(true)
             .build();
-
+            
+        // ¡CLAVE PARA EL TIEMPO REAL! Fuerza a GStreamer a ir segundo a segundo
+        appsink.set_property("sync", true);
         pipeline.set_property("video-sink", &appsink);
-        
-        let audio_sink = gst::ElementFactory::make("fakesink")
-            .property("sync", false)
-            .build()
-            .expect("No se pudo crear fakesink para el audio");
 
-        pipeline.set_property("audio-sink", &audio_sink);
+        // Ya NO le ponemos "fakesink" al audio. 
+        // Ahora el video sonará por los parlantes del computador/proyector.
 
-        appsink.set_callbacks(
-            gst_app::AppSinkCallbacks::builder()
-                .new_sample(move |appsink| {
-                    let sample = match appsink.pull_sample() {
-                        Ok(s) => s,
-                        Err(_) => return Ok(gst::FlowSuccess::Ok),
-                    };
-                    
-                    let buffer = sample.buffer().unwrap();
-                    let caps = sample.caps().unwrap();
-                    let info = gst_video::VideoInfo::from_caps(caps).unwrap();
-                    
-                    let width = info.width();
-                    let height = info.height();
+        appsink.set_callbacks(gst_app::AppSinkCallbacks::builder()
+            .new_sample(move |appsink| {
+                let sample = match appsink.pull_sample() { Ok(s) => s, Err(_) => return Ok(gst::FlowSuccess::Ok) };
+                let buffer = sample.buffer().unwrap();
+                let info = gst_video::VideoInfo::from_caps(sample.caps().unwrap()).unwrap();
+                let map = buffer.map_readable().unwrap();
 
-                    let map = buffer.map_readable().unwrap();
+                let mut pixel_buffer = SharedPixelBuffer::<Rgba8Pixel>::new(info.width(), info.height());
+                unsafe {
+                    let dest = pixel_buffer.make_mut_slice();
+                    let dest_u8 = std::slice::from_raw_parts_mut(dest.as_mut_ptr() as *mut u8, dest.len() * 4);
+                    dest_u8.copy_from_slice(map.as_slice());
+                }
 
-                    let mut pixel_buffer = SharedPixelBuffer::<Rgba8Pixel>::new(width, height);
-                    unsafe {
-                        let dest = pixel_buffer.make_mut_slice();
-                        let dest_u8 = std::slice::from_raw_parts_mut(
-                            dest.as_mut_ptr() as *mut u8,
-                            dest.len() * 4
-                        );
-                        dest_u8.copy_from_slice(map.as_slice());
-                    }
-
-                    let proj_clone = proj_weak.clone();
-                    
-                    let _ = slint::invoke_from_event_loop(move || {
-                        if let Some(p) = proj_clone.upgrade() {
-                            let image = slint::Image::from_rgba8(pixel_buffer);
-                            p.set_fondo_video_frame(image);
-                        }
-                    });
-
-                    Ok(gst::FlowSuccess::Ok)
-                })
-                .build(),
+                let proj_clone = proj_weak.clone();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(p) = proj_clone.upgrade() { p.set_fondo_video_frame(slint::Image::from_rgba8(pixel_buffer)); }
+                });
+                Ok(gst::FlowSuccess::Ok)
+            }).build()
         );
 
         pipeline.set_state(gst::State::Playing).unwrap();
-
-        let bus = pipeline.bus().unwrap();
-        let pipeline_clone = pipeline.clone();
-        
-        thread::spawn(move || {
-            for msg in bus.iter_timed(gst::ClockTime::NONE) {
-                match msg.view() {
-                    gst::MessageView::Eos(..) => {
-                        let _ = pipeline_clone.seek_simple(
-                            gst::SeekFlags::FLUSH | gst::SeekFlags::KEY_UNIT,
-                            gst::ClockTime::ZERO,
-                        );
-                    }
-                    gst::MessageView::Error(err) => {
-                        eprintln!("Error de GStreamer: {} ({:?})", err.error(), err.debug());
-                        break;
-                    }
-                    _ => (),
-                }
-            }
-        });
-
         self.pipeline = Some(pipeline);
     }
 
@@ -362,7 +311,133 @@ impl NativeVideoPlayer {
             let _ = pipeline.set_state(gst::State::Null);
         }
     }
-}
+
+
+
+    pub fn reproducir_preview(&mut self, ruta: &str, ui_weak: slint::Weak<AppWindow>) {
+        self.detener();
+        let path = std::path::Path::new(ruta).canonicalize().unwrap_or_else(|_| std::path::PathBuf::from(ruta));
+        let uri = gst::glib::filename_to_uri(&path, None).unwrap();
+
+        let pipeline = gst::ElementFactory::make("playbin").property("uri", &uri).build().unwrap();
+        
+        // El preview en tu panel central siempre en silencio absoluto
+        pipeline.set_property("volume", 0.0f64);
+
+        let appsink = gst_app::AppSink::builder()
+            .caps(&gst::Caps::builder("video/x-raw").field("format", "RGBA").build())
+            .max_buffers(1)
+            .drop(true)
+            .build();
+            
+        appsink.set_property("sync", true); 
+        pipeline.set_property("video-sink", &appsink);
+
+        appsink.set_callbacks(gst_app::AppSinkCallbacks::builder()
+            .new_sample(move |appsink| {
+                let sample = match appsink.pull_sample() { Ok(s) => s, Err(_) => return Ok(gst::FlowSuccess::Ok) };
+                let buffer = sample.buffer().unwrap();
+                let info = gst_video::VideoInfo::from_caps(sample.caps().unwrap()).unwrap();
+                let map = buffer.map_readable().unwrap();
+
+                let mut pixel_buffer = SharedPixelBuffer::<slint::Rgba8Pixel>::new(info.width(), info.height());
+                unsafe {
+                    let dest = pixel_buffer.make_mut_slice();
+                    let dest_u8 = std::slice::from_raw_parts_mut(dest.as_mut_ptr() as *mut u8, dest.len() * 4);
+                    dest_u8.copy_from_slice(map.as_slice());
+                }
+
+                let ui_clone = ui_weak.clone();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = ui_clone.upgrade() { ui.set_preview_video_frame(slint::Image::from_rgba8(pixel_buffer)); }
+                });
+                Ok(gst::FlowSuccess::Ok)
+            }).build()
+        );
+
+        pipeline.set_state(gst::State::Playing).unwrap();
+        self.pipeline = Some(pipeline);
+    }
+
+    pub fn toggle_play_pause(&mut self) -> bool {
+        if let Some(pipeline) = &self.pipeline {
+            let (_, state, _) = pipeline.state(gst::ClockTime::NONE);
+            if state == gst::State::Playing { pipeline.set_state(gst::State::Paused).unwrap(); return false; } 
+            else { pipeline.set_state(gst::State::Playing).unwrap(); return true; }
+        }
+        false
+    }
+
+    pub fn get_position_and_duration(&self) -> (u64, u64) {
+        if let Some(pipeline) = &self.pipeline {
+            let pos = pipeline.query_position::<gst::ClockTime>().map_or(0, |t| t.mseconds());
+            let dur = pipeline.query_duration::<gst::ClockTime>().map_or(0, |t| t.mseconds());
+            return (pos, dur);
+        }
+        (0, 0)
+    }
+
+    pub fn seek_percentage(&self, percent: f32) {
+        if let Some(pipeline) = &self.pipeline {
+            let dur = pipeline.query_duration::<gst::ClockTime>().map_or(0, |t| t.nseconds());
+            if dur > 0 {
+                let target_ns = (dur as f64 * percent as f64) as u64;
+                // MAGIA AQUÍ: Usamos ACCURATE en lugar de KEY_UNIT para precisión de frame
+                let _ = pipeline.seek_simple(
+                    gst::SeekFlags::FLUSH | gst::SeekFlags::ACCURATE, 
+                    gst::ClockTime::from_nseconds(target_ns)
+                );
+            }
+        }
+    }
+
+    // Ya que estamos aquí, agrega también esta función justo debajo para el control de volumen:
+    pub fn set_mute(&self, mute: bool) {
+        if let Some(pipeline) = &self.pipeline {
+            pipeline.set_property("mute", mute);
+        }
+    }
+
+
+//     // Alternar entre Play y Pause en GStreamer
+//     fn toggle_play_pause(&mut self) -> bool {
+//         if let Some(pipeline) = &self.pipeline {
+//             let (_, state, _) = pipeline.state(gst::ClockTime::NONE);
+//             if state == gst::State::Playing {
+//                 pipeline.set_state(gst::State::Paused).unwrap();
+//                 return false;
+//             } else {
+//                 pipeline.set_state(gst::State::Playing).unwrap();
+//                 return true;
+//             }
+//         }
+//         false
+//     }
+
+//     // Obtener posición y duración en milisegundos
+//     fn get_position_and_duration(&self) -> (u64, u64) {
+//         if let Some(pipeline) = &self.pipeline {
+//             let pos = pipeline.query_position::<gst::ClockTime>().map_or(0, |t| t.mseconds());
+//             let dur = pipeline.query_duration::<gst::ClockTime>().map_or(0, |t| t.mseconds());
+//             return (pos, dur);
+//         }
+//         (0, 0)
+//     }
+
+//     // Saltar a un punto específico del video (0.0 a 1.0)
+//     fn seek_percentage(&self, percent: f32) {
+//         if let Some(pipeline) = &self.pipeline {
+//             let dur = pipeline.query_duration::<gst::ClockTime>().map_or(0, |t| t.nseconds());
+//             if dur > 0 {
+//                 let target_ns = (dur as f64 * percent as f64) as u64;
+//                 pipeline.seek_simple(
+//                     gst::SeekFlags::FLUSH | gst::SeekFlags::KEY_UNIT,
+//                     gst::ClockTime::from_nseconds(target_ns)
+//                 ).unwrap();
+//             }
+//         }
+//     }
+ }
 
 impl Drop for NativeVideoPlayer {
     fn drop(&mut self) {
@@ -454,6 +529,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let proyector = ProjectorWindow::new()?;
     let video_player = Arc::new(Mutex::new(NativeVideoPlayer::new()));
     let multimedia_state = Arc::new(Mutex::new(Vec::<MediaData>::new()));
+    let preview_player = Arc::new(Mutex::new(NativeVideoPlayer::new()));
+
+    let video_state = Arc::new(Mutex::new(Vec::<MediaData>::new()));
+    let preview_player = Arc::new(Mutex::new(NativeVideoPlayer::new()));
 
     {
         match DisplayInfo::all() {
@@ -1099,6 +1178,192 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     });
+
+    // ══════════════════════════════════════════════════════════════
+    // LÓGICA DE VIDEOS (BIBLIOTECA Y PREVIEW)
+    // ══════════════════════════════════════════════════════════════
+    let refresh_videos = {
+        let ui_handle = ui.as_weak();
+        let state_arc = Arc::clone(&video_state);
+        move || {
+            let ui = ui_handle.unwrap();
+            let items = state_arc.lock().unwrap();
+            let mut slint_items = Vec::new();
+            for (i, item) in items.iter().enumerate() {
+                // Aquí usamos una miniatura temporal. (En el futuro puedes generar el frame con ffmpeg)
+                let mut pixel_buffer = SharedPixelBuffer::<slint::Rgba8Pixel>::new(80, 45);
+                let img = slint::Image::from_rgba8(pixel_buffer); // Imagen negra de placeholder
+                
+                slint_items.push(MediaItem {
+                    id: i as i32,
+                    nombre: SharedString::from(&item.name),
+                    path: SharedString::from(&item.path),
+                    img, 
+                    aspecto: SharedString::from("rellenar"),
+                });
+            }
+            ui.set_video_items(ModelRc::from(Rc::new(VecModel::from(slint_items))));
+        }
+    };
+
+    // 1. Agregar Video (Clic derecho)
+    let vid_state = Arc::clone(&video_state);
+    let refresh_vid_clone = refresh_videos.clone();
+    ui.on_agregar_video(move || {
+        if let Some(path) = rfd::FileDialog::new().add_filter("Videos", &["mp4", "mkv", "avi", "mov"]).pick_file() {
+            let file_name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+            vid_state.lock().unwrap().push(MediaData {
+                path: path.to_string_lossy().to_string(),
+                name: file_name,
+                aspecto: "rellenar".to_string(),
+            });
+            refresh_vid_clone();
+        }
+    });
+
+    // 2. Eliminar Video
+    let vid_state = Arc::clone(&video_state);
+    let refresh_vid_clone = refresh_videos.clone();
+    let ui_handle = ui.as_weak();
+    let preview_player_del = Arc::clone(&preview_player);
+    ui.on_eliminar_video(move |idx| {
+        let mut state = vid_state.lock().unwrap();
+        if (idx as usize) < state.len() { state.remove(idx as usize); }
+        drop(state);
+        let ui = ui_handle.unwrap();
+        ui.set_selected_video_idx(-1);
+        preview_player_del.lock().unwrap().detener(); // Detiene si se estaba previsualizando
+        refresh_vid_clone();
+    });
+
+    // EVENTO: Cuando se hace clic en un video de la lista lateral
+    let ui_handle_sel = ui.as_weak();
+    let preview_player_sel = Arc::clone(&preview_player);
+    ui.on_seleccionar_video_lista(move |idx| {
+        let ui = ui_handle_sel.unwrap();
+        ui.set_selected_video_idx(idx);
+        
+        // 1. Apagamos el video anterior
+        preview_player_sel.lock().unwrap().detener();
+        
+        // 2. Limpiamos el caché visual (volvemos la pantalla negra)
+        ui.set_is_preview_playing(false);
+        ui.set_preview_video_frame(slint::Image::default()); 
+        
+        // 3. Apagamos los controles de proyección si cambias de video
+        ui.set_is_video_projecting(false);
+    });
+
+    // 3. Reproducir en Panel Central (Play/Pause)
+    let vid_state = Arc::clone(&video_state);
+    let ui_handle = ui.as_weak();
+    let preview_player_clone = Arc::clone(&preview_player);
+    ui.on_toggle_preview_video(move |idx| {
+        let ui = ui_handle.unwrap();
+        let state = vid_state.lock().unwrap();
+        if let Some(item) = state.get(idx as usize) {
+            let mut player = preview_player_clone.lock().unwrap();
+            let is_playing = ui.get_is_preview_playing();
+            
+            if !is_playing {
+                player.reproducir_preview(&item.path, ui.as_weak());
+                ui.set_is_preview_playing(true);
+            } else {
+                player.detener();
+                ui.set_is_preview_playing(false);
+            }
+        }
+    });
+
+    
+    // 4. Proyectar (Doble clic o Botón -> Mandar a pantalla secundaria)
+    let p_handle = proyector.as_weak();
+    let vid_state = Arc::clone(&video_state);
+    let vp_sync = Arc::clone(&video_player);
+    let ui_handle_proj = ui.as_weak();
+    
+    ui.on_proyectar_video(move |idx| {
+        let p = p_handle.unwrap();
+        let ui = ui_handle_proj.unwrap();
+        let state = vid_state.lock().unwrap();
+        
+        if let Some(item) = state.get(idx as usize) {
+            // REQ 1: Quitar opacidad en el proyector
+            p.set_es_video(true);
+            p.set_bg_color(slint::Color::from_rgb_u8(0, 0, 0));
+            // Si tienes una propiedad de opacidad de capa/fondo en tu proyector.slint, ajústala aquí a 1.0
+            // Ejemplo: p.set_opacidad_fondo(1.0); o p.set_opacidad(1.0);
+            
+            p.set_mostrar_imagen(false);
+            p.set_texto_proyeccion(slint::SharedString::from("")); 
+            
+            vp_sync.lock().unwrap().reproducir(&item.path, p.as_weak());
+            
+            // REQ 3: Actualizar interfaz a estado "Proyectando"
+            ui.set_is_video_projecting(true);
+            ui.set_is_proyector_playing(true);
+        }
+    });
+
+    // REQ 2: Controles de reproducción de la segunda pantalla
+    let vp_controls = Arc::clone(&video_player);
+    let ui_handle_ctrl = ui.as_weak();
+    ui.on_toggle_proyector_play(move || {
+        let ui = ui_handle_ctrl.unwrap();
+        let mut player = vp_controls.lock().unwrap();
+        let is_playing = player.toggle_play_pause();
+        ui.set_is_proyector_playing(is_playing);
+    });
+
+    let vp_mute = Arc::clone(&video_player);
+    let ui_handle_mute = ui.as_weak();
+    ui.on_toggle_proyector_mute(move || {
+        let ui = ui_handle_mute.unwrap();
+        let is_currently_muted = ui.get_is_proyector_muted();
+        
+        // Invertimos el estado (si estaba silenciado, lo activamos y viceversa)
+        let new_mute_state = !is_currently_muted;
+        
+        vp_mute.lock().unwrap().set_mute(new_mute_state);
+        ui.set_is_proyector_muted(new_mute_state);
+    });
+
+    let vp_seek = Arc::clone(&video_player);
+    ui.on_seek_proyector_video(move |percent| {
+        vp_seek.lock().unwrap().seek_percentage(percent);
+    });
+
+    // Temporizador para actualizar la barra de progreso (cada 500ms)
+    // Usamos Box::leak para asegurar que el Timer no se destruya al salir de este bloque
+    let vp_timer = Arc::clone(&video_player);
+    let ui_timer_handle = ui.as_weak();
+    
+    let video_timer = Box::leak(Box::new(slint::Timer::default()));
+    video_timer.start(slint::TimerMode::Repeated, std::time::Duration::from_millis(500), move || {
+        if let Some(ui) = ui_timer_handle.upgrade() {
+            if ui.get_is_video_projecting() {
+                let (pos_ms, dur_ms) = vp_timer.lock().unwrap().get_position_and_duration();
+                if dur_ms > 0 {
+                    // Calculamos el porcentaje de 0.0 a 1.0 para Slint
+                    let progress = (pos_ms as f32) / (dur_ms as f32);
+                    ui.set_proyector_progress(progress);
+                    
+                    // Formateamos los milisegundos a Minutos:Segundos
+                    let pos_sec = pos_ms / 1000;
+                    let dur_sec = dur_ms / 1000;
+                    let time_str = format!("{:02}:{:02} / {:02}:{:02}", 
+                        pos_sec / 60, pos_sec % 60, 
+                        dur_sec / 60, dur_sec % 60
+                    );
+                    ui.set_proyector_time(slint::SharedString::from(time_str));
+                }
+            }
+        }
+    });
+ 
+
+
+
 
     ui.run()?;
     Ok(())

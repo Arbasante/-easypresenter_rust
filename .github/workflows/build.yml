@@ -95,9 +95,15 @@ jobs:
           Write-Host "Copiando DLLs base de GStreamer..."
           Copy-Item "$env:GSTREAMER_ROOT\bin\*.dll" -Destination "target\release\" -Force
           
+          Write-Host "Borrando DLLs de Python que causan el crash..."
+          Remove-Item "target\release\*python*.dll" -ErrorAction SilentlyContinue
+          
           Write-Host "Copiando Plugins de GStreamer..."
           New-Item -ItemType Directory -Force -Path "target\release\lib\gstreamer-1.0"
           Copy-Item "$env:GSTREAMER_ROOT\lib\gstreamer-1.0\*.dll" -Destination "target\release\lib\gstreamer-1.0\" -Force
+          
+          Write-Host "Borrando plugin de Python en GStreamer..."
+          Remove-Item "target\release\lib\gstreamer-1.0\*python*.dll" -ErrorAction SilentlyContinue
 
       # ── EMPAQUETADO ────────────────────────────────────────────────────────
       - name: Generar .deb (Linux)

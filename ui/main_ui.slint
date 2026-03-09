@@ -20,7 +20,7 @@ export struct Canto { id: int, titulo: string, letra: string }
 export struct BookInfo { id: int, nombre: string, capitulos: int }
 export struct DiapositivaUI { orden: string, texto: string } 
 export struct ChapterRow { caps: [int] } 
-export struct MediaItem { id: int, nombre: string, path: string, img: image, aspecto: string }
+export struct MediaItem { id: int, nombre: string, path: string, img: image, aspecto: string, is_loop: bool, }
 
 // --- COMPONENTES PERSONALIZADOS PARA EL MENÚ ---
 
@@ -171,6 +171,10 @@ export component AppWindow inherits Window {
     in-out property <int> menu_video_idx: -1;
     in-out property <length> menu_video_x: 0px;
     in-out property <length> menu_video_y: 0px;
+
+    // Variables para el submenu de reproducción
+    in-out property <bool> mostrar_submenu_reproduccion: false;
+    callback cambiar_modo_reproduccion(int, string);
 
     callback agregar_video();
     callback eliminar_video(int);
@@ -742,7 +746,12 @@ export component AppWindow inherits Window {
                                                     Image { source: item.img; width: 100%; height: 100%; image-fit: cover; }
                                                     Text { text: "▶"; color: rgba(255,255,255,0.7); font-size: 14px; horizontal-alignment: center; vertical-alignment: center; }
                                                 }
-                                                Text { text: item.nombre; color: #f3f4f6; font-size: 11px; font-weight: 700; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
+                                                VerticalLayout {
+                                                    alignment: center; spacing: 4px;
+                                                    Text { text: item.nombre; color: #f3f4f6; font-size: 11px; font-weight: 700; horizontal-stretch: 1; overflow: elide; }
+                                                    // Aparece solo si el bucle está activo
+                                                    if (item.is_loop) : Text { text: "BUCLE ACTIVADO"; color: #0ea5e9; font-size: 9px; font-weight: 800; }
+                                                }
                                             }
                                         }
                                     }
@@ -858,16 +867,59 @@ export component AppWindow inherits Window {
         }
     }
 
-    // ══════════════════════════════════════════
-    // MENÚ CONTEXTUAL VIDEOS
-    // ══════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════
+    // MENÚ CONTEXTUAL VIDEOS (Con Submenú)
+    // ══════════════════════════════════════════════════════════════
     if (root.mostrar_menu_video) : Rectangle {
         width: 100%; height: 100%; background: transparent;
-        TouchArea { clicked => { root.mostrar_menu_video = false; } }
+        TouchArea { 
+            clicked => { 
+                root.mostrar_menu_video = false; 
+                root.mostrar_submenu_reproduccion = false; 
+            } 
+        }
         
+        // 1. SUBMENÚ DE REPRODUCCIÓN (Abre a la izquierda)
+        if (root.mostrar_submenu_reproduccion && root.menu_video_idx != -1) : Rectangle {
+            x: root.menu_video_x - 165px; // Se posiciona a la izquierda
+            y: root.menu_video_y + 35px;  // Alineado con el botón principal
+            width: 160px; height: 72px;
+            background: #1e1e1e; border-radius: 8px; border-width: 1px; border-color: #374151;
+            drop-shadow-color: rgba(0,0,0,0.6); drop-shadow-blur: 16px;
+            
+            VerticalLayout {
+                padding: 4px; spacing: 2px;
+                
+                Rectangle {
+                    height: 30px; border-radius: 4px; background: touch_norm.has-hover ? #374151 : transparent;
+                    touch_norm := TouchArea {
+                        clicked => { 
+                            root.cambiar_modo_reproduccion(root.menu_video_idx, "normal");
+                            root.mostrar_submenu_reproduccion = false; 
+                            root.mostrar_menu_video = false; 
+                        }
+                    }
+                    Text { text: "Normal (Una vez)"; color: white; font-size: 13px; x: 12px; vertical-alignment: center; height: 100%; }
+                }
+                
+                Rectangle {
+                    height: 30px; border-radius: 4px; background: touch_loop.has-hover ? #374151 : transparent;
+                    touch_loop := TouchArea {
+                        clicked => { 
+                            root.cambiar_modo_reproduccion(root.menu_video_idx, "bucle");
+                            root.mostrar_submenu_reproduccion = false; 
+                            root.mostrar_menu_video = false; 
+                        }
+                    }
+                    Text { text: "Bucle Infinito"; color: #0ea5e9; font-size: 13px; font-weight: 700; x: 12px; vertical-alignment: center; height: 100%; }
+                }
+            }
+        }
+
+        // 2. MENÚ PRINCIPAL
         Rectangle {
             x: root.menu_video_x; y: root.menu_video_y;
-            width: 180px; height: root.menu_video_idx != -1 ? 78px : 40px;
+            width: 180px; height: root.menu_video_idx != -1 ? 112px : 40px;
             background: #1e1e1e; border-radius: 8px; border-width: 1px; border-color: #374151;
             drop-shadow-color: rgba(0,0,0,0.6); drop-shadow-blur: 16px;
             TouchArea {} 
@@ -876,13 +928,33 @@ export component AppWindow inherits Window {
                 padding: 4px; spacing: 2px;
                 MenuItem {
                     text: "Agregar Video"; icon: "+";
-                    clicked => { root.mostrar_menu_video = false; root.agregar_video(); }
+                    clicked => { root.mostrar_menu_video = false; root.mostrar_submenu_reproduccion = false; root.agregar_video(); }
                 }
                 if (root.menu_video_idx != -1) : HorizontalLayout { padding-left: 6px; padding-right: 6px; padding-top: 2px; padding-bottom: 2px; Rectangle { height: 1px; background: #2d2d2d; } }
+                
+                // Opción Reproducción con flecha
+                if (root.menu_video_idx != -1) : Rectangle {
+                    height: 30px; border-radius: 4px;
+                    background: touch_rep.has-hover ? #374151 : transparent;
+                    touch_rep := TouchArea {
+                        // Al pasar el mouse, abre el submenú a la izquierda
+                        clicked => { 
+                            root.mostrar_submenu_reproduccion = !root.mostrar_submenu_reproduccion; 
+                        }
+                    }
+                    HorizontalLayout {
+                        padding-left: 8px; padding-right: 8px; alignment: space-between;
+                        Text { text: "🔁 Reproducción"; color: white; font-size: 13px; vertical-alignment: center; }
+                        Text { text: "›"; color: #0ea5e9; font-size: 16px; vertical-alignment: center; font-weight: 700; }
+                    }
+                }
+                
+                if (root.menu_video_idx != -1) : HorizontalLayout { padding-left: 6px; padding-right: 6px; padding-top: 2px; padding-bottom: 2px; Rectangle { height: 1px; background: #2d2d2d; } }
+                
                 if (root.menu_video_idx != -1) : MenuItem {
                     text: "Eliminar Video"; icon: "🗑";
                     text_color: #f87171; icon_color: #f87171;
-                    clicked => { root.mostrar_menu_video = false; root.eliminar_video(root.menu_video_idx); }
+                    clicked => { root.mostrar_menu_video = false; root.mostrar_submenu_reproduccion = false; root.eliminar_video(root.menu_video_idx); }
                 }
             }
         }

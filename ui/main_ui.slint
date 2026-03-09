@@ -17,6 +17,8 @@ export struct BookInfo { id: int, nombre: string, capitulos: int }
 export struct DiapositivaUI { orden: string, texto: string, font_size: float }
 export struct ChapterRow { caps: [int] }
 export struct MediaItem { id: int, nombre: string, path: string, img: image, aspecto: string, is_loop: bool, }
+export struct PdfItem { id: int, nombre: string, miniatura: image, total_paginas: int }
+
 
 // ─────────────────────────────────────────────────────────────
 //  TAB BUTTON (nuevo componente para la barra de navegación)
@@ -110,6 +112,26 @@ export component AppWindow inherits Window {
 
     in-out property <string> default_bg_type: ""; // Puede ser "imagen" o "video"
     in-out property <int> default_bg_idx: -1;
+
+    in-out property <[PdfItem]> pdf_items: [];
+    in-out property <int> selected_pdf_idx: -1;
+    in-out property <[image]> pdf_pages: [];
+    in-out property <int> active_pdf_page: -1;
+
+    in-out property <bool> is_importing_pdf: false;
+    in-out property <float> pdf_import_progress: 0.0;
+    in-out property <string> pdf_import_filename: "";
+
+    callback agregar_pdf();
+    callback eliminar_pdf(int);
+    callback seleccionar_pdf(int);
+    callback proyectar_pdf_pagina(int);
+
+    in-out property <bool> mostrar_menu_pdf: false;
+    in-out property <int> menu_pdf_idx: -1;
+    in-out property <length> menu_pdf_x: 0px;
+    in-out property <length> menu_pdf_y: 0px;
+
 
     in-out property <color> biblias_custom_color: #0ea5e9;
     in-out property <color> cantos_custom_color: #0ea5e9;
@@ -528,11 +550,51 @@ export component AppWindow inherits Window {
                             }
                         }
 
-                        // ── TAB PDF (placeholder) ──
-                        if (root.active-tab == "pdf") : VerticalLayout {
-                            alignment: center; spacing: 16px;
-                            Text { text: "📄"; color: #374151; font-size: 48px; horizontal-alignment: center; }
-                            Text { text: "PRESENTACIONES PDF"; color: #374151; font-size: 13px; font-weight: 700; horizontal-alignment: center; }
+                        // ── TAB PDF (BIBLIOTECA) ──
+                        if (root.active-tab == "pdf") : Rectangle {
+                            vertical-stretch: 1; background: rgba(0, 0, 0, 0.3);
+                            TouchArea {
+                                pointer-event(e) => {
+                                    if (e.button == PointerEventButton.right && e.kind == PointerEventKind.up) {
+                                        root.menu_pdf_idx = -1;
+                                        root.menu_pdf_x = min(self.absolute-position.x + self.mouse-x, root.width - 180px);
+                                        root.menu_pdf_y = min(self.absolute-position.y + self.mouse-y, root.height - 100px);
+                                        root.mostrar_menu_pdf = true;
+                                    }
+                                }
+                            }
+                            ScrollView {
+                                VerticalLayout {
+                                    padding: 8px; spacing: 8px;
+                                    for item[idx] in root.pdf_items : Rectangle {
+                                        height: 60px; border-radius: 6px;
+                                        background: root.selected_pdf_idx == idx ? rgba(14, 165, 233, 0.2) : (touch-pdf.has-hover ? rgba(255, 255, 255, 0.05) : transparent);
+                                        touch-pdf := TouchArea {
+                                            clicked => { root.seleccionar_pdf(idx); }
+                                            pointer-event(e) => {
+                                                if (e.button == PointerEventButton.right && e.kind == PointerEventKind.up) {
+                                                    root.menu_pdf_idx = idx;
+                                                    root.menu_pdf_x = min(self.absolute-position.x + self.mouse-x, root.width - 180px);
+                                                    root.menu_pdf_y = min(self.absolute-position.y + self.mouse-y, root.height - 100px);
+                                                    root.mostrar_menu_pdf = true;
+                                                }
+                                            }
+                                        }
+                                        HorizontalLayout {
+                                            padding: 6px; spacing: 12px;
+                                            Rectangle {
+                                                width: 40px; height: 48px; border-radius: 4px; clip: true; background: #fff;
+                                                Image { source: item.miniatura; width: 100%; height: 100%; image-fit: cover; }
+                                            }
+                                            VerticalLayout {
+                                                alignment: center; spacing: 4px;
+                                                Text { text: item.nombre; color: #f3f4f6; font-size: 11px; font-weight: 700; horizontal-stretch: 1; overflow: elide; }
+                                                Text { text: item.total_paginas + " Páginas"; color: #9ca3af; font-size: 9px; font-weight: 600; }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
 
@@ -848,11 +910,34 @@ export component AppWindow inherits Window {
                                 }
                             }
 
-                            // ── VISTA PDF (placeholder) ──
-                            if (root.active-tab == "pdf") : VerticalLayout {
-                                alignment: center; spacing: 16px;
-                                Text { text: "📄"; color: #374151; font-size: 48px; horizontal-alignment: center; }
-                                Text { text: "PRESENTACIÓN PDF"; color: #374151; font-size: 13px; font-weight: 700; horizontal-alignment: center; }
+                            // ── VISTA PDF (panel central) ──
+                            if (root.active-tab == "pdf") : Rectangle {
+                                width: 100%; height: 100%; background: #18181b;
+                                if (root.pdf_pages.length == 0) : VerticalLayout {
+                                    alignment: center; spacing: 16px;
+                                    Text { text: "📄"; color: #374151; font-size: 48px; horizontal-alignment: center; }
+                                    Text { text: "SELECCIONA O AGREGA UN PDF"; color: #374151; font-size: 13px; font-weight: 700; horizontal-alignment: center; }
+                                }
+                                if (root.pdf_pages.length > 0) : ScrollView {
+                                    GridLayout {
+                                        padding: 16px; spacing: 16px;
+                                        for page[idx] in root.pdf_pages : Rectangle {
+                                            row: idx / 3; col: mod(idx, 3);
+                                            height: 220px; border-radius: 8px; clip: true;
+                                            border-width: 2px;
+                                            border-color: idx == root.active_pdf_page ? #ef4444 : (touch-page.has-hover ? #0ea5e9 : rgba(255,255,255,0.05));
+                                            Image { source: page; width: 100%; height: 100%; image-fit: contain; }
+                                            touch-page := TouchArea { clicked => { root.proyectar_pdf_pagina(idx); } }
+                                            
+                                            // Indicador de número de página
+                                            Rectangle {
+                                                x: 8px; y: 8px; width: 28px; height: 28px; border-radius: 14px; 
+                                                background: idx == root.active_pdf_page ? #ef4444 : rgba(0,0,0,0.8);
+                                                Text { text: idx + 1; color: white; font-size: 11px; font-weight: 900; horizontal-alignment: center; vertical-alignment: center; }
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -1295,6 +1380,51 @@ export component AppWindow inherits Window {
                     }
                 }
             }
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    //  MENÚ CONTEXTUAL PDF
+    // ══════════════════════════════════════════════════════════════
+    if (root.mostrar_menu_pdf) : Rectangle {
+        width: 100%; height: 100%; background: transparent;
+        TouchArea { clicked => { root.mostrar_menu_pdf = false; } }
+        Rectangle {
+            x: root.menu_pdf_x; y: root.menu_pdf_y;
+            width: 180px; height: root.menu_pdf_idx != -1 ? 76px : 40px;
+            background: #1e1e1e; border-radius: 8px; border-width: 1px; border-color: #374151;
+            drop-shadow-color: rgba(0,0,0,0.6); drop-shadow-blur: 16px; TouchArea {}
+            VerticalLayout {
+                padding: 4px; spacing: 2px;
+                MenuItem { text: "Importar PDF..."; icon: "📄"; clicked => { root.mostrar_menu_pdf = false; root.agregar_pdf(); } }
+                if (root.menu_pdf_idx != -1) : HorizontalLayout { padding-left: 6px; padding-right: 6px; padding-top: 2px; padding-bottom: 2px; Rectangle { height: 1px; background: #2d2d2d; } }
+                if (root.menu_pdf_idx != -1) : MenuItem { text: "Eliminar PDF"; icon: "🗑"; text_color: #f87171; icon_color: #f87171; clicked => { root.mostrar_menu_pdf = false; root.eliminar_pdf(root.menu_pdf_idx); } }
+            }
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    //  OVERLAY DE PROGRESO DE IMPORTACIÓN PDF
+    // ══════════════════════════════════════════════════════════════
+    if (root.is_importing_pdf) : Rectangle {
+        width: 100%; height: 100%; background: rgba(0,0,0,0.85);
+        TouchArea {} // Bloquea clics traseros
+        VerticalLayout {
+            alignment: center; spacing: 16px;
+            Text { text: "⚙️ PROCESANDO PDF"; color: white; font-size: 16px; font-weight: 900; horizontal-alignment: center; letter-spacing: 2px;}
+            Text { text: root.pdf_import_filename; color: #0ea5e9; font-size: 13px; font-weight: 700; horizontal-alignment: center; }
+            Text { text: "Convirtiendo páginas a imágenes de alta calidad para una proyección fluida..."; color: #9ca3af; font-size: 11px; horizontal-alignment: center; }
+            
+            Rectangle { height: 16px; } // Espaciador
+            
+            HorizontalLayout {
+                alignment: center;
+                Rectangle {
+                    width: 400px; height: 16px; background: #374151; border-radius: 8px;
+                    Rectangle { x: 0; width: parent.width * root.pdf_import_progress; height: 100%; background: #0ea5e9; border-radius: 8px; }
+                }
+            }
+            Text { text: round(root.pdf_import_progress * 100) + "% completado"; color: white; font-size: 12px; font-weight: 800; horizontal-alignment: center; }
         }
     }
 }

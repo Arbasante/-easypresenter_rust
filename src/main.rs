@@ -10,6 +10,10 @@ use std::thread;
 use regex::Regex;
 use display_info::DisplayInfo;
 
+use pdfium_render::prelude::*;
+use std::fs;
+use std::path::PathBuf;
+
 use gstreamer as gst;
 use gstreamer_app as gst_app;
 use gstreamer_video as gst_video;
@@ -469,6 +473,12 @@ struct MediaData {
     path: String, name: String, aspecto: String, is_loop: bool,
 }
 
+struct PdfData {
+    name: String,
+    thumb_path: String, // Ahora solo guardamos la ruta del archivo
+    pages: Vec<String>,
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     gst::init().expect("Error al inicializar GStreamer.");
 
@@ -492,6 +502,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let multimedia_state = Arc::new(Mutex::new(Vec::<MediaData>::new()));
     let video_state = Arc::new(Mutex::new(Vec::<MediaData>::new()));
     let preview_player = Arc::new(Mutex::new(NativeVideoPlayer::new()));
+    let pdf_state = Arc::new(Mutex::new(Vec::<PdfData>::new()));
 
     {
         match DisplayInfo::all() {
@@ -1218,6 +1229,177 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         drop(state); refresh_vid_mode();
     });
 
+    // ── LÓGICA DE IMPORTACIÓN PDF ──
+    let ui_pdf_add = ui.as_weak();
+    let state_pdf_add = Arc::clone(&pdf_state);
+    ui.on_agregar_pdf(move || {
+        if let Some(path) = rfd::FileDialog::new().add_filter("PDF", &["pdf"]).pick_file() {
+            let ui = ui_pdf_add.unwrap();
+            let file_name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+            
+            ui.set_is_importing_pdf(true);
+            ui.set_pdf_import_progress(0.0);
+            ui.set_pdf_import_filename(SharedString::from(&file_name));
+
+            let ui_thread = ui.as_weak();
+            let state_thread = Arc::clone(&state_pdf_add);
+            let path_clone = path.clone();
+
+            thread::spawn(move || {
+                // Configurar Pdfium buscando la DLL en la raíz (donde está el .exe)
+                let bind = Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path("./")).unwrap();
+                let pdfium = Pdfium::new(bind);
+                
+                if let Ok(document) = pdfium.load_pdf_from_file(&path_clone, None) {
+                    let total_pages = document.pages().len();
+                    
+                    // Crear carpeta en data/pdfs/ para guardar las imágenes extraídas
+                    let safe_name = file_name.replace(" ", "_").replace(".pdf", "");
+                    let out_dir = PathBuf::from(format!("data/pdfs/{}", safe_name));
+                    let _ = fs::create_dir_all(&out_dir);
+
+                    let mut saved_pages_paths = Vec::new();
+                    let mut thumb_path_str = String::new(); // Guardaremos la ruta aquí
+
+                    for (i, page) in document.pages().iter().enumerate() {
+                        let config = PdfRenderConfig::new().set_target_width(1920);
+                        if let Ok(bitmap) = page.render_with_config(&config) {
+                            let img = bitmap.as_image();
+                            let page_path = out_dir.join(format!("page_{}.jpg", i));
+                            
+                            // Guardar la página en disco
+                            let _ = img.save(&page_path);
+                            saved_pages_paths.push(page_path.to_string_lossy().to_string());
+
+                            // Guardar la miniatura como archivo 'thumb.jpg' en lugar de memoria
+                            if i == 0 {
+                                let thumb_config = PdfRenderConfig::new().thumbnail(200);
+                                if let Ok(thumb_bitmap) = page.render_with_config(&thumb_config) {
+                                    let t_path = out_dir.join("thumb.jpg");
+                                    let _ = thumb_bitmap.as_image().save(&t_path);
+                                    thumb_path_str = t_path.to_string_lossy().to_string();
+                                }
+                            }
+                        }
+
+                        // Actualizar barra de progreso
+                        let progress = (i as f32 + 1.0) / total_pages as f32;
+                        let ui_prog = ui_thread.clone();
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = ui_prog.upgrade() { ui.set_pdf_import_progress(progress); }
+                        });
+                    }
+
+                    // Guardar en la memoria global (Solo Strings, 100% seguro entre hilos)
+                    let mut st = state_thread.lock().unwrap();
+                    st.push(PdfData {
+                        name: file_name.clone(),
+                        thumb_path: thumb_path_str,
+                        pages: saved_pages_paths,
+                    });
+                }
+
+                // Finalizar actualización en la Interfaz
+                let ui_fin = ui_thread.clone();
+                let state_fin = Arc::clone(&state_thread);
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = ui_fin.upgrade() {
+                        ui.set_is_importing_pdf(false);
+                        
+                        // Refrescar lista lateral cargando la imagen directamente en el hilo principal
+                        let items = state_fin.lock().unwrap();
+                        let mut slint_items = Vec::new();
+                        for (i, item) in items.iter().enumerate() {
+                            let img = slint::Image::load_from_path(std::path::Path::new(&item.thumb_path)).unwrap_or_default();
+                            slint_items.push(PdfItem {
+                                id: i as i32,
+                                nombre: SharedString::from(&item.name),
+                                miniatura: img,
+                                total_paginas: item.pages.len() as i32
+                            });
+                        }
+                        ui.set_pdf_items(ModelRc::from(Rc::new(VecModel::from(slint_items))));
+                    }
+                });
+            });
+
+    // ── MOSTRAR PÁGINAS DEL PDF SELECCIONADO ──
+    let ui_pdf_sel = ui.as_weak();
+    let state_pdf_sel = Arc::clone(&pdf_state);
+    ui.on_seleccionar_pdf(move |idx| {
+        let ui = ui_pdf_sel.unwrap();
+        ui.set_selected_pdf_idx(idx);
+        ui.set_active_pdf_page(-1); // Reset
+        
+        let state = state_pdf_sel.lock().unwrap();
+        if let Some(pdf) = state.get(idx as usize) {
+            ui.set_elemento_seleccionado(SharedString::from(&pdf.name));
+            
+            // Cargar imágenes de la carpeta
+            let mut pages_img = Vec::new();
+            for path in &pdf.pages {
+                if let Ok(img) = slint::Image::load_from_path(std::path::Path::new(path)) {
+                    pages_img.push(img);
+                }
+            }
+            ui.set_pdf_pages(ModelRc::from(Rc::new(VecModel::from(pages_img))));
+        }
+    });
+
+    // ── PROYECTAR PÁGINA DEL PDF ──
+    let ui_pdf_proj = ui.as_weak();
+    let p_handle_pdf = proyector.as_weak();
+    let vp_pdf = Arc::clone(&video_player);
+    ui.on_proyectar_pdf_pagina(move |page_idx| {
+        let ui = ui_pdf_proj.unwrap();
+        let p = p_handle_pdf.unwrap();
+        ui.set_active_pdf_page(page_idx);
+
+        let current_pages = ui.get_pdf_pages();
+        if let Some(img) = current_pages.row_data(page_idx as usize) {
+            // Reutilizamos la lógica del proyector para imágenes
+            vp_pdf.lock().unwrap().detener();
+            p.set_es_video(false);
+            p.set_bg_color(slint::Color::from_rgb_u8(0, 0, 0));
+            p.set_texto_proyeccion(slint::SharedString::from(""));
+            p.set_referencia(slint::SharedString::from(""));
+            p.set_fondo_opacity(0.0);
+            p.set_fondo_imagen_aspecto(slint::SharedString::from("contain")); // Importante para PDF
+            p.set_fondo_imagen(img);
+            p.set_mostrar_imagen(true);
+        }
+    });
+
+    // ── ELIMINAR PDF DE LA LISTA ──
+    let ui_pdf_del = ui.as_weak();
+    let state_pdf_del = Arc::clone(&pdf_state);
+    ui.on_eliminar_pdf(move |idx| {
+        let ui = ui_pdf_del.unwrap();
+        let mut state = state_pdf_del.lock().unwrap();
+        if (idx as usize) < state.len() {
+            state.remove(idx as usize);
+        }
+        
+        ui.set_selected_pdf_idx(-1);
+        ui.set_pdf_pages(ModelRc::from(Rc::new(VecModel::<slint::Image>::from(vec![]))));
+        ui.set_elemento_seleccionado(SharedString::from(""));
+        
+        // Refrescar lista
+        let mut slint_items = Vec::new();
+        for (i, item) in state.iter().enumerate() {
+            let img = slint::Image::load_from_path(std::path::Path::new(&item.thumb_path)).unwrap_or_default();
+            slint_items.push(PdfItem { 
+                id: i as i32, 
+                nombre: SharedString::from(&item.name), 
+                miniatura: img, 
+                total_paginas: item.pages.len() as i32 
+            });
+        }
+        ui.set_pdf_items(ModelRc::from(Rc::new(VecModel::from(slint_items))));
+    });
+
+    } // <-- ESTA LLAVE CIERRA EL 'if let Some(path)...'
+    });
     ui.run()?;
     Ok(())
 }

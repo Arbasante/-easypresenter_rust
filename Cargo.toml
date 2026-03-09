@@ -20,6 +20,7 @@ gstreamer = "0.22"
 gstreamer-app = "0.22"
 gstreamer-video = "0.22"
 
+
 [build-dependencies]
 slint-build = "1.8.0" # VERSIÓN ACTUALIZADA
 

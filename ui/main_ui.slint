@@ -12,12 +12,13 @@ import "./fonts/Inter-Regular.ttf";
 import "./fonts/Inter-Medium.ttf";
 import "./fonts/Inter-Bold.ttf";
 
-export struct Canto { id: int, titulo: string, letra: string }
+export struct Canto { id: int, titulo: string, letra: string, favorito: bool }
 export struct BookInfo { id: int, nombre: string, capitulos: int }
-export struct DiapositivaUI { orden: string, texto: string, font_size: float }
+export struct DiapositivaUI { orden: string, texto: string, font_size: float, favorito: bool }
 export struct ChapterRow { caps: [int] }
 export struct MediaItem { id: int, nombre: string, path: string, img: image, aspecto: string, is_loop: bool, }
 export struct PdfItem { id: int, nombre: string, miniatura: image, total_paginas: int }
+
 
 
 // ─────────────────────────────────────────────────────────────
@@ -77,11 +78,19 @@ component MenuItem inherits Rectangle {
 
 
 
+// 👇 Aquí está la estructura que te está pidiendo
+export struct FavoritoItem { tipo: string, id: int, titulo: string, referencia: string }
+
 // ─────────────────────────────────────────────────────────────
 //  APP WINDOW
 // ─────────────────────────────────────────────────────────────
 export component AppWindow inherits Window {
     min-width: 800px; min-height: 600px; background: #18181b; default-font-family: "Google Sans";
+
+    in property <[FavoritoItem]> favoritos: [];
+    callback toggle_favorito_canto(int);
+    callback toggle_favorito_estrofa(string, string);  // referencia, texto
+    callback abrir_favorito(FavoritoItem);
 
     in-out property <string> active-tab: "cantos";
     in property <[Canto]> cantos: [];
@@ -366,9 +375,23 @@ export component AppWindow inherits Window {
                                                 }
                                             }
                                             HorizontalLayout {
-                                                padding-left: 10px; padding-right: 10px; spacing: 8px;
-                                                Text { text: canto.titulo; color: #e5e7eb; font-size: 11px; font-weight: 700; vertical-alignment: center; horizontal-stretch: 1; }
-                                            }
+        padding-left: 10px; padding-right: 4px; spacing: 4px;
+        Text { text: canto.titulo; color: #e5e7eb; font-size: 11px; font-weight: 700; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
+        
+        // ── ESTA ES LA ESTRELLA A AGREGAR ──
+        Rectangle {
+            width: 28px; height: 28px; border-radius: 6px;
+            background: star-touch.has-hover ? rgba(255,200,0,0.12) : transparent;
+            star-touch := TouchArea {
+                clicked => { root.toggle_favorito_canto(canto.id); }
+            }
+            Text {
+                text: canto.favorito ? "★" : "☆";
+                color: canto.favorito ? #fbbf24 : (star-touch.has-hover ? #fbbf24 : #4b5563);
+                font-size: 13px; horizontal-alignment: center; vertical-alignment: center;
+            }
+        }
+    }
                                             Rectangle { y: parent.height - 1px; height: 1px; background: rgba(255, 255, 255, 0.05); }
                                         }
                                     }
@@ -608,19 +631,63 @@ export component AppWindow inherits Window {
                                 height: 28px;
                                 HorizontalLayout {
                                     padding-left: 12px; padding-right: 12px;
-                                    Text { text: "★  FAVORITOS"; color: #374151; font-size: 9px; font-weight: 700; letter-spacing: 0.4px; vertical-alignment: center; horizontal-stretch: 1; }
+                                    Text { text: "★  FAVORITOS"; color: #fbbf24; font-size: 9px; font-weight: 700; letter-spacing: 0.4px; vertical-alignment: center; horizontal-stretch: 1; }
+                                    Text { text: root.favoritos.length > 0 ? root.favoritos.length + "" : ""; color: #4b5563; font-size: 9px; font-weight: 700; vertical-alignment: center; }
                                 }
                                 Rectangle { y: parent.height - 1px; height: 1px; background: rgba(255,255,255,0.04); }
                             }
 
-                            // Área de favoritos
+                            // Lista de favoritos
                             Rectangle {
-                                vertical-stretch: 1;
-                                Text {
-                                    text: "Mantén pulsado un elemento\npara añadirlo a favoritos";
+                                vertical-stretch: 1; clip: true;
+                                if (root.favoritos.length == 0) : Text {
+                                    text: "Pulsa ☆ en un canto o versículo\npara añadirlo aquí";
                                     color: #2d2d2d; font-size: 9px; font-weight: 600;
                                     horizontal-alignment: center; vertical-alignment: center;
                                     wrap: word-wrap; width: 100%; height: 100%;
+                                }
+                                if (root.favoritos.length > 0) : ScrollView {
+                                    VerticalLayout {
+                                        padding: 4px; spacing: 0px;
+                                        for fav in root.favoritos : Rectangle {
+                                            height: 34px; border-radius: 4px;
+                                            background: touch-fav.has-hover ? rgba(251,191,36,0.08) : transparent;
+                                            touch-fav := TouchArea {
+                                                clicked => { root.abrir_favorito(fav); }
+                                            }
+                                            HorizontalLayout {
+                                                padding-left: 10px; padding-right: 8px; spacing: 8px;
+                                                // Icono tipo
+                                                Text {
+                                                    text: fav.tipo == "canto" ? "♪" : "✝";
+                                                    color: fav.tipo == "canto" ? #0ea5e9 : #a78bfa;
+                                                    font-size: 10px; vertical-alignment: center;
+                                                    width: 14px;
+                                                }
+                                                // Título
+                                                Text {
+                                                    text: fav.referencia != "" ? fav.referencia : fav.titulo;
+                                                    color: touch-fav.has-hover ? #fbbf24 : #9ca3af;
+                                                    font-size: 10px; font-weight: 600;
+                                                    vertical-alignment: center; horizontal-stretch: 1;
+                                                    overflow: elide;
+                                                }
+                                                // Estrella para quitar
+                                                Rectangle {
+                                                    width: 22px; height: 22px; border-radius: 4px;
+                                                    background: del-fav.has-hover ? rgba(255,255,255,0.06) : transparent;
+                                                    del-fav := TouchArea {
+                                                        clicked => {
+                                                            if (fav.tipo == "canto") { root.toggle_favorito_canto(fav.id); }
+                                                            else { root.toggle_favorito_estrofa(fav.referencia, fav.titulo); }
+                                                        }
+                                                    }
+                                                    Text { text: "★"; color: del-fav.has-hover ? #6b7280 : #fbbf24; font-size: 11px; horizontal-alignment: center; vertical-alignment: center; }
+                                                }
+                                            }
+                                        }
+                                        Rectangle { height: 1px; background: rgba(255,255,255,0.03); }
+                                    }
                                 }
                             }
                         }
@@ -760,15 +827,39 @@ export component AppWindow inherits Window {
                                                 VerticalLayout {
                                                     padding: 10px; spacing: 6px;
 
-                                                    // ── Cabecera: número + badge LIVE/PROYECTAR ──
+                                                    // ── Cabecera: número + estrellita + badge LIVE/PROYECTAR ──
                                                     HorizontalLayout {
                                                         spacing: 6px; alignment: space-between;
-                                                        Text {
-                                                            text: estrofa.orden;
-                                                            color: idx == root.active_estrofa_index ? #dc2626 : #0ea5e9;
-                                                            font-weight: 900; font-size: 10px;
-                                                            vertical-alignment: center;
+                                                        
+                                                        // Agrupamos el número y la estrellita a la izquierda
+                                                        HorizontalLayout {
+                                                            spacing: 8px;
+                                                            Text {
+                                                                text: estrofa.orden;
+                                                                color: idx == root.active_estrofa_index ? #dc2626 : #0ea5e9;
+                                                                font-weight: 900; font-size: 10px;
+                                                                vertical-alignment: center;
+                                                            }
+                                                            
+                                                            // Aquí está la estrellita nueva
+                                                            Rectangle {
+                                                                width: 20px;
+                                                                TouchArea {
+                                                                    mouse-cursor: pointer;
+                                                                    clicked => {
+                                                                        root.toggle_favorito_estrofa(root.elemento_seleccionado + ":" + estrofa.orden, estrofa.texto);
+                                                                    }
+                                                                    Text {
+                                                                        text: estrofa.favorito ? "★" : "☆";
+                                                                        color: estrofa.favorito ? #FFC107 : #666666;
+                                                                        font-size: 14px;
+                                                                        horizontal-alignment: center;
+                                                                        vertical-alignment: center;
+                                                                    }
+                                                                }
+                                                            }
                                                         }
+
                                                         Rectangle {
                                                             width: 54px; height: 18px; border-radius: 4px; border-width: 1px;
                                                             background: idx == root.active_estrofa_index ? #dc2626 : transparent;

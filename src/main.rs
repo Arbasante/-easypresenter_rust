@@ -1,5 +1,3 @@
-#![windows_subsystem = "windows"]
-
 use rusqlite::{Connection, Result};
 use slint::{ModelRc, SharedString, VecModel, ComponentHandle, SharedPixelBuffer};
 use slint::Model;
@@ -9,10 +7,6 @@ use std::rc::Rc;
 use std::thread;
 use regex::Regex;
 use display_info::DisplayInfo;
-
-use pdfium_render::prelude::*;
-use std::fs;
-use std::path::PathBuf;
 
 use gstreamer as gst;
 use gstreamer_app as gst_app;
@@ -57,13 +51,6 @@ fn buscar_libro_inteligente(query: &str) -> Option<(i32, String)> {
 
 // ══════════════════════════════════════════════════════════════
 // CALCULA EL TAMAÑO DE FUENTE ÓPTIMO PARA UNA TARJETA DE CUADRÍCULA
-//
-// Dimensiones del área de texto útil dentro de la tarjeta (px lógicos):
-//   ancho_util ≈ 296 px  (tarjeta ~316 − 20px de padding interno horizontal)
-//   alto_util  ≈ 119 px  (tarjeta 180 − cabecera 28 − separador 1 − padding 12 − spacing 20)
-//
-// El algoritmo hace búsqueda binaria entre 7px y 28px para encontrar
-// el tamaño máximo que hace caber el texto en esa área.
 // ══════════════════════════════════════════════════════════════
 fn calcular_font_size_tarjeta(texto: &str) -> f32 {
     const ANCHO_UTIL: f32 = 296.0;
@@ -99,15 +86,28 @@ fn diapositiva_a_ui(d: &DiapositivaDB) -> DiapositivaUI {
         orden: SharedString::from(d.orden.to_string()),
         texto: SharedString::from(d.texto.clone()),
         font_size: calcular_font_size_tarjeta(&d.texto),
+        favorito: false,
     }
 }
 
 // ── Helper: VersiculoDB → DiapositivaUI con font_size calculado ──
+#[allow(dead_code)]
 fn versiculo_a_ui(v: &VersiculoDB) -> DiapositivaUI {
     DiapositivaUI {
         orden: SharedString::from(v.versiculo.to_string()),
         texto: SharedString::from(v.texto.clone()),
         font_size: calcular_font_size_tarjeta(&v.texto),
+        favorito: false,
+    }
+}
+
+fn versiculo_a_ui_fav(v: &VersiculoDB, fav_refs: &std::collections::HashSet<String>, libro_cap: &str) -> DiapositivaUI {
+    let referencia = format!("{} {}", libro_cap, v.versiculo);
+    DiapositivaUI {
+        orden: SharedString::from(v.versiculo.to_string()),
+        texto: SharedString::from(v.texto.clone()),
+        font_size: calcular_font_size_tarjeta(&v.texto),
+        favorito: fav_refs.contains(&referencia),
     }
 }
 
@@ -127,6 +127,17 @@ impl AppState {
         let biblias_db = Connection::open("data/biblias.db")?;
         cantos_db.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;")?;
         biblias_db.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;")?;
+        // Recrear tabla favoritos con el esquema correcto
+        cantos_db.execute_batch("
+            DROP TABLE IF EXISTS favoritos;
+            CREATE TABLE favoritos (
+                id      INTEGER PRIMARY KEY AUTOINCREMENT,
+                tipo    TEXT    NOT NULL DEFAULT 'canto',
+                ref_id  INTEGER NOT NULL DEFAULT 0,
+                referencia  TEXT    NOT NULL DEFAULT '',
+                titulo  TEXT    NOT NULL DEFAULT ''
+            );
+        ")?;
         let mut state = Self {
             cantos_db, biblias_db, versiones: Vec::new(), current_version_id: 1,
             chapter_cache: HashMap::new(),
@@ -228,6 +239,54 @@ impl AppState {
         self.cantos_db.execute("DELETE FROM diapositivas WHERE canto_id = ?", [id]).unwrap();
         self.cantos_db.execute("DELETE FROM cantos WHERE id = ?", [id]).unwrap();
     }
+
+    // ── Favoritos ─────────────────────────────────────────────
+    fn get_favoritos_ids_cantos(&self) -> std::collections::HashSet<i32> {
+        let mut stmt = self.cantos_db.prepare("SELECT ref_id FROM favoritos WHERE tipo='canto'").unwrap();
+        stmt.query_map([], |r| r.get::<_, i32>(0)).unwrap().filter_map(Result::ok).collect()
+    }
+    fn get_favoritos_refs_versiculos(&self) -> std::collections::HashSet<String> {
+        let mut stmt = self.cantos_db.prepare("SELECT referencia FROM favoritos WHERE tipo='versiculo'").unwrap();
+        stmt.query_map([], |r| r.get::<_, String>(0)).unwrap().filter_map(Result::ok).collect()
+    }
+    fn get_all_favoritos(&self) -> Vec<FavoritoItem> {
+        let mut stmt = self.cantos_db.prepare(
+            "SELECT tipo, ref_id, titulo, referencia FROM favoritos ORDER BY id DESC"
+        ).unwrap();
+        stmt.query_map([], |r| Ok(FavoritoItem {
+            tipo: SharedString::from(r.get::<_, String>(0)?),
+            id:   r.get::<_, i32>(1)?,
+            titulo: SharedString::from(r.get::<_, String>(2)?),
+            referencia: SharedString::from(r.get::<_, String>(3)?),
+        })).unwrap().filter_map(Result::ok).collect()
+    }
+    fn toggle_favorito_canto(&self, id: i32, titulo: &str) {
+        let exists: bool = self.cantos_db
+            .query_row("SELECT 1 FROM favoritos WHERE tipo='canto' AND ref_id=?", [id], |_| Ok(true))
+            .unwrap_or(false);
+        if exists {
+            self.cantos_db.execute("DELETE FROM favoritos WHERE tipo='canto' AND ref_id=?", [id]).unwrap();
+        } else {
+            self.cantos_db.execute(
+                "INSERT INTO favoritos (tipo, ref_id, referencia, titulo) VALUES ('canto', ?, '', ?)",
+                rusqlite::params![id, titulo]
+            ).unwrap();
+        }
+    }
+    fn toggle_favorito_versiculo(&self, referencia: &str, texto: &str) {
+        let exists: bool = self.cantos_db
+            .query_row("SELECT 1 FROM favoritos WHERE tipo='versiculo' AND referencia=?", [referencia], |_| Ok(true))
+            .unwrap_or(false);
+        if exists {
+            self.cantos_db.execute("DELETE FROM favoritos WHERE tipo='versiculo' AND referencia=?", [referencia]).unwrap();
+        } else {
+            let titulo = if texto.len() > 60 { format!("{}…", &texto[..60]) } else { texto.to_string() };
+            self.cantos_db.execute(
+                "INSERT INTO favoritos (tipo, ref_id, referencia, titulo) VALUES ('versiculo', 0, ?, ?)",
+                rusqlite::params![referencia, titulo]
+            ).unwrap();
+        }
+    }
 }
 
 fn mover_proyector_a_pantalla(p_weak: slint::Weak<ProjectorWindow>, x: i32, y: i32, width: u32, height: u32) {
@@ -244,7 +303,7 @@ fn mover_proyector_a_pantalla(p_weak: slint::Weak<ProjectorWindow>, x: i32, y: i
                 if let Some(p) = p_clone.upgrade() {
                     p.window().set_position(slint::PhysicalPosition::new(x, y));
                     p.window().set_size(slint::PhysicalSize::new(width, height));
-                    if es_ultimo { p.window().set_fullscreen(true); }
+                    if es_ultimo { p.window().set_maximized(true); }
                 }
             });
         });
@@ -473,12 +532,6 @@ struct MediaData {
     path: String, name: String, aspecto: String, is_loop: bool,
 }
 
-struct PdfData {
-    name: String,
-    thumb_path: String, // Ahora solo guardamos la ruta del archivo
-    pages: Vec<String>,
-}
-
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     gst::init().expect("Error al inicializar GStreamer.");
 
@@ -502,7 +555,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let multimedia_state = Arc::new(Mutex::new(Vec::<MediaData>::new()));
     let video_state = Arc::new(Mutex::new(Vec::<MediaData>::new()));
     let preview_player = Arc::new(Mutex::new(NativeVideoPlayer::new()));
-    let pdf_state = Arc::new(Mutex::new(Vec::<PdfData>::new()));
 
     {
         match DisplayInfo::all() {
@@ -539,12 +591,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cargar_cantos = move |busqueda: String| {
         let ui = ui_handle.unwrap();
         let estado = state_clone.lock().unwrap();
+        let fav_ids = estado.get_favoritos_ids_cantos();
         let cantos_db = if busqueda.is_empty() { estado.get_all_cantos() } else { estado.get_cantos_filtrados(&busqueda) };
-        let mut cantos_slint: Vec<Canto> = cantos_db.into_iter().map(|c| Canto { id: c.id, titulo: SharedString::from(c.titulo), letra: SharedString::from("") }).collect();
+        let mut cantos_slint: Vec<Canto> = cantos_db.into_iter().map(|c| {
+            let is_fav = fav_ids.contains(&c.id);
+            Canto { id: c.id, titulo: SharedString::from(c.titulo), letra: SharedString::from(""), favorito: is_fav }
+        }).collect();
         if cantos_slint.is_empty() {
-            cantos_slint.push(Canto { id: 0, titulo: SharedString::from("Click derecho para agregar canto"), letra: SharedString::from("") });
+            cantos_slint.push(Canto { id: 0, titulo: SharedString::from("Click derecho para agregar canto"), letra: SharedString::from(""), favorito: false });
         }
         ui.set_cantos(ModelRc::from(Rc::new(VecModel::from(cantos_slint))));
+        // Sincronizar lista de favoritos en UI
+        let favs = estado.get_all_favoritos();
+        ui.set_favoritos(ModelRc::from(Rc::new(VecModel::from(favs))));
     };
     cargar_cantos(String::new());
 
@@ -658,7 +717,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             thread::spawn(move || {
                 thread::sleep(std::time::Duration::from_millis(100));
                 let _ = slint::invoke_from_event_loop(move || {
-                    if let Some(p) = p_weak.upgrade() { p.window().set_fullscreen(true); }
+                    if let Some(p) = p_weak.upgrade() { p.window().set_maximized(true); }
                 });
             });
         }
@@ -733,12 +792,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ui.set_elemento_seleccionado(SharedString::from(&titulo));
         let state_thread = Arc::clone(&state_clone);
         let ui_thread = ui.as_weak();
+        let titulo2 = titulo.clone();
         thread::spawn(move || {
-            let versiculos = state_thread.lock().unwrap().get_capitulo(book.id, cap);
+            let (versiculos, fav_refs) = {
+                let mut estado = state_thread.lock().unwrap();
+                (estado.get_capitulo(book.id, cap), estado.get_favoritos_refs_versiculos())
+            };
             let _ = slint::invoke_from_event_loop(move || {
                 let ui = ui_thread.unwrap();
-                // ── font_size calculado por versículo ──
-                let diapos: Vec<DiapositivaUI> = versiculos.iter().map(versiculo_a_ui).collect();
+                let diapos: Vec<DiapositivaUI> = versiculos.iter().map(|v| versiculo_a_ui_fav(v, &fav_refs, &titulo2)).collect();
                 ui.set_estrofas_actuales(ModelRc::from(Rc::new(VecModel::from(diapos.clone()))));
                 ui.set_active_estrofa_index(0);
                 if !diapos.is_empty() {
@@ -769,18 +831,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let state_thread = Arc::clone(&state_clone);
                 let ui_thread = ui.as_weak();
                 thread::spawn(move || {
-                    let versiculos = state_thread.lock().unwrap().get_capitulo(libro_id, capitulo);
+                    let (versiculos, fav_refs) = {
+                        let mut estado = state_thread.lock().unwrap();
+                        (estado.get_capitulo(libro_id, capitulo), estado.get_favoritos_refs_versiculos())
+                    };
                     let _ = slint::invoke_from_event_loop(move || {
                         let ui = ui_thread.unwrap();
                         let mut target_index = 0;
-                        // ── font_size calculado por versículo ──
                         let diapos: Vec<DiapositivaUI> = versiculos.iter().enumerate().map(|(i, v)| {
                             if v.versiculo == versiculo_obj { target_index = i as i32; }
-                            versiculo_a_ui(v)
+                            versiculo_a_ui_fav(v, &fav_refs, &titulo)
                         }).collect();
                         ui.set_estrofas_actuales(ModelRc::from(Rc::new(VecModel::from(diapos.clone()))));
                         ui.set_active_estrofa_index(target_index);
-                        ui.set_scroll_to_y(-((target_index as f32) * 115.0));
+                        ui.set_scroll_to_y(target_index as f32 * 115.0);
                         if (target_index as usize) < diapos.len() {
                             let text = diapos[target_index as usize].texto.clone();
                             let ord = diapos[target_index as usize].orden.clone();
@@ -810,14 +874,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         if lib != -1 && cap != -1 && !versiculos_nuevos.is_empty() {
             let active_idx = ui.get_active_estrofa_index();
-            // ── font_size calculado ──
-            let diapos: Vec<DiapositivaUI> = versiculos_nuevos.iter().map(versiculo_a_ui).collect();
+            let book_name = ui.get_selected_bible_book().nombre;
+            let titulo = format!("{} {}", book_name, cap);
+            let fav_refs = state_clone.lock().unwrap().get_favoritos_refs_versiculos();
+            let diapos: Vec<DiapositivaUI> = versiculos_nuevos.iter().map(|v| versiculo_a_ui_fav(v, &fav_refs, &titulo)).collect();
             ui.set_estrofas_actuales(ModelRc::from(Rc::new(VecModel::from(diapos.clone()))));
             if active_idx >= 0 && (active_idx as usize) < diapos.len() {
                 let texto_nuevo = diapos[active_idx as usize].texto.clone();
                 let orden = diapos[active_idx as usize].orden.clone();
-                let book_name = ui.get_selected_bible_book().nombre;
-                let titulo = format!("{} {}", book_name, cap);
                 ui.invoke_proyectar_estrofa(texto_nuevo, SharedString::from(format!("{}:{}", titulo, orden)));
             }
         }
@@ -1167,17 +1231,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let ui = ui_handle_proj.unwrap();
         let state = vid_state.lock().unwrap();
         if let Some(item) = state.get(idx as usize) {
-            p.set_es_video(true); 
-            p.set_bg_color(slint::Color::from_rgb_u8(0, 0, 0));
-            p.set_mostrar_imagen(false); 
-            
-            
-            p.set_texto_proyeccion(slint::SharedString::from(""));
-            p.set_referencia(slint::SharedString::from(""));
-            
+            p.set_es_video(true); p.set_bg_color(slint::Color::from_rgb_u8(0, 0, 0));
+            p.set_mostrar_imagen(false); p.set_texto_proyeccion(slint::SharedString::from(""));
             vp_sync.lock().unwrap().reproducir(&item.path, p.as_weak(), item.is_loop);
-            ui.set_is_video_projecting(true); 
-            ui.set_is_proyector_playing(true);
+            ui.set_is_video_projecting(true); ui.set_is_proyector_playing(true);
         }
     });
 
@@ -1229,177 +1286,112 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         drop(state); refresh_vid_mode();
     });
 
-    // ── LÓGICA DE IMPORTACIÓN PDF ──
-    let ui_pdf_add = ui.as_weak();
-    let state_pdf_add = Arc::clone(&pdf_state);
-    ui.on_agregar_pdf(move || {
-        if let Some(path) = rfd::FileDialog::new().add_filter("PDF", &["pdf"]).pick_file() {
-            let ui = ui_pdf_add.unwrap();
-            let file_name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
-            
-            ui.set_is_importing_pdf(true);
-            ui.set_pdf_import_progress(0.0);
-            ui.set_pdf_import_filename(SharedString::from(&file_name));
+    // ── FAVORITOS ──────────────────────────────────────────────
+    let ui_h_fc = ui.as_weak();
+    let state_fc = Arc::clone(&state);
+    let cc_fc = cargar_cantos.clone();
+    ui.on_toggle_favorito_canto(move |id| {
+        let ui = ui_h_fc.unwrap();
+        let titulo = {
+            let estado = state_fc.lock().unwrap();
+            estado.toggle_favorito_canto(id, &estado.get_canto_titulo(id));
+            estado.get_all_favoritos()
+        };
+        ui.set_favoritos(ModelRc::from(Rc::new(VecModel::from(titulo))));
+        cc_fc(ui.get_buscador_texto().to_string());
+    });
 
-            let ui_thread = ui.as_weak();
-            let state_thread = Arc::clone(&state_pdf_add);
-            let path_clone = path.clone();
+    let ui_h_fv = ui.as_weak();
+    let state_fv = Arc::clone(&state);
+    let cb_lib_fv = Arc::clone(&current_biblia_libro);
+    let cb_cap_fv = Arc::clone(&current_biblia_capitulo);
+    ui.on_toggle_favorito_estrofa(move |referencia, texto| {
+        let ui = ui_h_fv.unwrap();
+        {
+            let estado = state_fv.lock().unwrap();
+            estado.toggle_favorito_versiculo(&referencia, &texto);
+        }
+        // Re-cargar el capítulo actual con los favoritos actualizados
+        let lib = *cb_lib_fv.lock().unwrap();
+        let cap = *cb_cap_fv.lock().unwrap();
+        let (versiculos, fav_refs, favs, titulo_cap) = {
+            let mut estado = state_fv.lock().unwrap();
+            let book_name = ui.get_selected_bible_book().nombre.to_string();
+            let t = format!("{} {}", book_name, cap);
+            let vs = if lib != -1 && cap != -1 { estado.get_capitulo(lib, cap) } else { Vec::new() };
+            let fr = estado.get_favoritos_refs_versiculos();
+            let fa = estado.get_all_favoritos();
+            (vs, fr, fa, t)
+        };
+        if !versiculos.is_empty() {
+            let diapos: Vec<DiapositivaUI> = versiculos.iter().map(|v| versiculo_a_ui_fav(v, &fav_refs, &titulo_cap)).collect();
+            ui.set_estrofas_actuales(ModelRc::from(Rc::new(VecModel::from(diapos))));
+        }
+        ui.set_favoritos(ModelRc::from(Rc::new(VecModel::from(favs))));
+    });
 
-            thread::spawn(move || {
-                // Configurar Pdfium buscando la DLL en la raíz (donde está el .exe)
-                let bind = Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path("./")).unwrap();
-                let pdfium = Pdfium::new(bind);
-                
-                if let Ok(document) = pdfium.load_pdf_from_file(&path_clone, None) {
-                    let total_pages = document.pages().len();
-                    
-                    // Crear carpeta en data/pdfs/ para guardar las imágenes extraídas
-                    let safe_name = file_name.replace(" ", "_").replace(".pdf", "");
-                    let out_dir = PathBuf::from(format!("data/pdfs/{}", safe_name));
-                    let _ = fs::create_dir_all(&out_dir);
-
-                    let mut saved_pages_paths = Vec::new();
-                    let mut thumb_path_str = String::new(); // Guardaremos la ruta aquí
-
-                    for (i, page) in document.pages().iter().enumerate() {
-                        let config = PdfRenderConfig::new().set_target_width(1920);
-                        if let Ok(bitmap) = page.render_with_config(&config) {
-                            let img = bitmap.as_image();
-                            let page_path = out_dir.join(format!("page_{}.jpg", i));
-                            
-                            // Guardar la página en disco
-                            let _ = img.save(&page_path);
-                            saved_pages_paths.push(page_path.to_string_lossy().to_string());
-
-                            // Guardar la miniatura como archivo 'thumb.jpg' en lugar de memoria
-                            if i == 0 {
-                                let thumb_config = PdfRenderConfig::new().thumbnail(200);
-                                if let Ok(thumb_bitmap) = page.render_with_config(&thumb_config) {
-                                    let t_path = out_dir.join("thumb.jpg");
-                                    let _ = thumb_bitmap.as_image().save(&t_path);
-                                    thumb_path_str = t_path.to_string_lossy().to_string();
-                                }
-                            }
-                        }
-
-                        // Actualizar barra de progreso
-                        let progress = (i as f32 + 1.0) / total_pages as f32;
-                        let ui_prog = ui_thread.clone();
+    let ui_h_af = ui.as_weak();
+    let state_af = Arc::clone(&state);
+    let cb_lib_af = Arc::clone(&current_biblia_libro);
+    let cb_cap_af = Arc::clone(&current_biblia_capitulo);
+    ui.on_abrir_favorito(move |fav| {
+        let ui = ui_h_af.unwrap();
+        if fav.tipo == "canto" {
+            ui.set_active_tab(SharedString::from("cantos"));
+            let id = fav.id;
+            let titulo = {
+                let estado = state_af.lock().unwrap();
+                estado.get_canto_titulo(id)
+            };
+            ui.set_elemento_seleccionado(SharedString::from(&titulo));
+            let diapos: Vec<DiapositivaUI> = state_af.lock().unwrap()
+                .get_canto_diapositivas(id).iter().map(diapositiva_a_ui).collect();
+            ui.set_estrofas_actuales(ModelRc::from(Rc::new(VecModel::from(diapos))));
+            ui.set_active_estrofa_index(-1);
+        } else {
+            // Versículo: parsear "Libro cap:versiculo"
+            ui.set_active_tab(SharedString::from("biblias"));
+            let ref_str = fav.referencia.to_string();
+            // referencia = "Juan 3 16" o "Juan 3:16" → parse
+            let re = regex::Regex::new(r"^(.*?)\s+(\d+)\s*[: ]\s*(\d+)$").unwrap();
+            if let Some(caps) = re.captures(&ref_str) {
+                let libro_nombre = caps[1].to_string();
+                let capitulo: i32 = caps[2].parse().unwrap_or(1);
+                let versiculo_num: i32 = caps[3].parse().unwrap_or(1);
+                if let Some((libro_id, nombre_real)) = buscar_libro_inteligente(&libro_nombre) {
+                    *cb_lib_af.lock().unwrap() = libro_id;
+                    *cb_cap_af.lock().unwrap() = capitulo;
+                    let titulo = format!("{} {}", nombre_real, capitulo);
+                    ui.set_elemento_seleccionado(SharedString::from(&titulo));
+                    let state_thread = Arc::clone(&state_af);
+                    let ui_thread = ui.as_weak();
+                    thread::spawn(move || {
+                        let (versiculos, fav_refs) = {
+                            let mut estado = state_thread.lock().unwrap();
+                            (estado.get_capitulo(libro_id, capitulo), estado.get_favoritos_refs_versiculos())
+                        };
                         let _ = slint::invoke_from_event_loop(move || {
-                            if let Some(ui) = ui_prog.upgrade() { ui.set_pdf_import_progress(progress); }
+                            let ui = ui_thread.unwrap();
+                            let mut target_idx = 0i32;
+                            let diapos: Vec<DiapositivaUI> = versiculos.iter().enumerate().map(|(i, v)| {
+                                if v.versiculo == versiculo_num { target_idx = i as i32; }
+                                versiculo_a_ui_fav(v, &fav_refs, &titulo)
+                            }).collect();
+                            ui.set_estrofas_actuales(ModelRc::from(Rc::new(VecModel::from(diapos.clone()))));
+                            ui.set_active_estrofa_index(target_idx);
+                            if (target_idx as usize) < diapos.len() {
+                                let text = diapos[target_idx as usize].texto.clone();
+                                let ord = diapos[target_idx as usize].orden.clone();
+                                ui.invoke_proyectar_estrofa(text, SharedString::from(format!("{}:{}", titulo, ord)));
+                            }
+                            ui.invoke_focus_panel();
                         });
-                    }
-
-                    // Guardar en la memoria global (Solo Strings, 100% seguro entre hilos)
-                    let mut st = state_thread.lock().unwrap();
-                    st.push(PdfData {
-                        name: file_name.clone(),
-                        thumb_path: thumb_path_str,
-                        pages: saved_pages_paths,
                     });
                 }
-
-                // Finalizar actualización en la Interfaz
-                let ui_fin = ui_thread.clone();
-                let state_fin = Arc::clone(&state_thread);
-                let _ = slint::invoke_from_event_loop(move || {
-                    if let Some(ui) = ui_fin.upgrade() {
-                        ui.set_is_importing_pdf(false);
-                        
-                        // Refrescar lista lateral cargando la imagen directamente en el hilo principal
-                        let items = state_fin.lock().unwrap();
-                        let mut slint_items = Vec::new();
-                        for (i, item) in items.iter().enumerate() {
-                            let img = slint::Image::load_from_path(std::path::Path::new(&item.thumb_path)).unwrap_or_default();
-                            slint_items.push(PdfItem {
-                                id: i as i32,
-                                nombre: SharedString::from(&item.name),
-                                miniatura: img,
-                                total_paginas: item.pages.len() as i32
-                            });
-                        }
-                        ui.set_pdf_items(ModelRc::from(Rc::new(VecModel::from(slint_items))));
-                    }
-                });
-            });
-
-    // ── MOSTRAR PÁGINAS DEL PDF SELECCIONADO ──
-    let ui_pdf_sel = ui.as_weak();
-    let state_pdf_sel = Arc::clone(&pdf_state);
-    ui.on_seleccionar_pdf(move |idx| {
-        let ui = ui_pdf_sel.unwrap();
-        ui.set_selected_pdf_idx(idx);
-        ui.set_active_pdf_page(-1); // Reset
-        
-        let state = state_pdf_sel.lock().unwrap();
-        if let Some(pdf) = state.get(idx as usize) {
-            ui.set_elemento_seleccionado(SharedString::from(&pdf.name));
-            
-            // Cargar imágenes de la carpeta
-            let mut pages_img = Vec::new();
-            for path in &pdf.pages {
-                if let Ok(img) = slint::Image::load_from_path(std::path::Path::new(path)) {
-                    pages_img.push(img);
-                }
             }
-            ui.set_pdf_pages(ModelRc::from(Rc::new(VecModel::from(pages_img))));
         }
     });
 
-    // ── PROYECTAR PÁGINA DEL PDF ──
-    let ui_pdf_proj = ui.as_weak();
-    let p_handle_pdf = proyector.as_weak();
-    let vp_pdf = Arc::clone(&video_player);
-    ui.on_proyectar_pdf_pagina(move |page_idx| {
-        let ui = ui_pdf_proj.unwrap();
-        let p = p_handle_pdf.unwrap();
-        ui.set_active_pdf_page(page_idx);
-
-        let current_pages = ui.get_pdf_pages();
-        if let Some(img) = current_pages.row_data(page_idx as usize) {
-            // Reutilizamos la lógica del proyector para imágenes
-            vp_pdf.lock().unwrap().detener();
-            p.set_es_video(false);
-            p.set_bg_color(slint::Color::from_rgb_u8(0, 0, 0));
-            p.set_texto_proyeccion(slint::SharedString::from(""));
-            p.set_referencia(slint::SharedString::from(""));
-            p.set_fondo_opacity(0.0);
-            p.set_fondo_imagen_aspecto(slint::SharedString::from("contain")); // Importante para PDF
-            p.set_fondo_imagen(img);
-            p.set_mostrar_imagen(true);
-        }
-    });
-
-    // ── ELIMINAR PDF DE LA LISTA ──
-    let ui_pdf_del = ui.as_weak();
-    let state_pdf_del = Arc::clone(&pdf_state);
-    ui.on_eliminar_pdf(move |idx| {
-        let ui = ui_pdf_del.unwrap();
-        let mut state = state_pdf_del.lock().unwrap();
-        if (idx as usize) < state.len() {
-            state.remove(idx as usize);
-        }
-        
-        ui.set_selected_pdf_idx(-1);
-        ui.set_pdf_pages(ModelRc::from(Rc::new(VecModel::<slint::Image>::from(vec![]))));
-        ui.set_elemento_seleccionado(SharedString::from(""));
-        
-        // Refrescar lista
-        let mut slint_items = Vec::new();
-        for (i, item) in state.iter().enumerate() {
-            let img = slint::Image::load_from_path(std::path::Path::new(&item.thumb_path)).unwrap_or_default();
-            slint_items.push(PdfItem { 
-                id: i as i32, 
-                nombre: SharedString::from(&item.name), 
-                miniatura: img, 
-                total_paginas: item.pages.len() as i32 
-            });
-        }
-        ui.set_pdf_items(ModelRc::from(Rc::new(VecModel::from(slint_items))));
-    });
-
-    } // <-- ESTA LLAVE CIERRA EL 'if let Some(path)...'
-    });
     ui.run()?;
     Ok(())
 }

@@ -1579,48 +1579,60 @@ in-out property <float> margen_inferior: 0;
 
         Rectangle {
             width: 400px; height: 350px;
-            background: white;
+            
+            // 1. Fondo oscuro y un borde sutil
+            background: #141414;
             border-radius: 8px;
+            border-width: 1px;
+            border-color: #333333;
             
             VerticalLayout {
                 padding: 20px;
                 spacing: 15px;
 
-               Text { text: "Márgenes de Proyección"; font-size: 18px; font-weight: 700; horizontal-alignment: center; }
+               Text { 
+                   text: "Márgenes de Proyección"; 
+                   font-size: 18px; 
+                   font-weight: 700; 
+                   horizontal-alignment: center; 
+                   color: white; // Texto blanco
+               }
 
                 HorizontalLayout {
-                    Text { text: "Superior:"; vertical-alignment: center; width: 80px;}
+                    Text { text: "Superior:"; vertical-alignment: center; width: 80px; color: #cccccc; }
                     Slider { 
                         minimum: 0; maximum: 300; value: root.margen_superior;
                         changed(val) => { root.margen_superior = val; root.actualizar_margenes(root.margen_izquierdo, root.margen_derecho, root.margen_superior, root.margen_inferior); }
                     }
-                    Text { text: floor(root.margen_superior); width: 30px;}
+                    Text { text: floor(root.margen_superior); width: 30px; color: #00bfff; font-weight: 700; } // Valor en azul
                 }
                 HorizontalLayout {
-                    Text { text: "Inferior:"; vertical-alignment: center; width: 80px;}
+                    Text { text: "Inferior:"; vertical-alignment: center; width: 80px; color: #cccccc; }
                     Slider { 
                         minimum: 0; maximum: 300; value: root.margen_inferior;
                         changed(val) => { root.margen_inferior = val; root.actualizar_margenes(root.margen_izquierdo, root.margen_derecho, root.margen_superior, root.margen_inferior); }
                     }
-                    Text { text: floor(root.margen_inferior); width: 30px;}
+                    Text { text: floor(root.margen_inferior); width: 30px; color: #00bfff; font-weight: 700; }
                 }
                 HorizontalLayout {
-                    Text { text: "Izquierdo:"; vertical-alignment: center; width: 80px;}
+                    Text { text: "Izquierdo:"; vertical-alignment: center; width: 80px; color: #cccccc; }
                     Slider { 
                         minimum: 0; maximum: 500; value: root.margen_izquierdo;
                         changed(val) => { root.margen_izquierdo = val; root.actualizar_margenes(root.margen_izquierdo, root.margen_derecho, root.margen_superior, root.margen_inferior); }
                     }
-                    Text { text: floor(root.margen_izquierdo); width: 30px;}
+                    Text { text: floor(root.margen_izquierdo); width: 30px; color: #00bfff; font-weight: 700; }
                 }
                 HorizontalLayout {
-                    Text { text: "Derecho:"; vertical-alignment: center; width: 80px;}
+                    Text { text: "Derecho:"; vertical-alignment: center; width: 80px; color: #cccccc; }
                     Slider { 
                         minimum: 0; maximum: 500; value: root.margen_derecho;
                         changed(val) => { root.margen_derecho = val; root.actualizar_margenes(root.margen_izquierdo, root.margen_derecho, root.margen_superior, root.margen_inferior); }
                     }
-                    Text { text: floor(root.margen_derecho); width: 30px;}
+                    Text { text: floor(root.margen_derecho); width: 30px; color: #00bfff; font-weight: 700; }
                 }
 
+                // El botón estándar de Slint se adapta al tema del sistema. 
+                // Si en tu PC se sigue viendo blanco y desentona mucho, avísame y te armo un botón oscuro personalizado.
                 Button {
                     text: "Cerrar";
                     clicked => { root.mostrar_modal_margenes = false; }

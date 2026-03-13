@@ -556,6 +556,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let video_state = Arc::new(Mutex::new(Vec::<MediaData>::new()));
     let preview_player = Arc::new(Mutex::new(NativeVideoPlayer::new()));
 
+    let proyector_margenes_weak = proyector.as_weak();
+    ui.on_actualizar_margenes(move |izq, der, sup, inf| {
+        if let Some(p) = proyector_margenes_weak.upgrade() {
+            p.set_margen_izquierdo(izq);
+            p.set_margen_derecho(der);
+            p.set_margen_superior(sup);
+            p.set_margen_inferior(inf);
+        }
+    });
+
+    
     {
         match DisplayInfo::all() {
             Ok(pantallas) => {

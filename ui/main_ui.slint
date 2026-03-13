@@ -3,6 +3,7 @@ import { ProjectorWindow } from "projector_ui.slint";
 import "./fonts/Inter-VariableFont_opsz,wght.ttf";
 export { ProjectorWindow }
 import { LineEdit, Button, TextEdit, CheckBox } from "std-widgets.slint";
+import { Button, Slider } from "std-widgets.slint";
 
 import "./fonts/GoogleSans-Regular.ttf";
 import "./fonts/GoogleSans-Medium.ttf";
@@ -87,6 +88,14 @@ export struct FavoritoItem { tipo: string, id: int, titulo: string, referencia: 
 export component AppWindow inherits Window {
     min-width: 800px; min-height: 600px; background: #18181b; default-font-family: "Google Sans";
 
+    in-out property <bool> mostrar_modal_margenes: false;
+    in-out property <float> margen_izquierdo: 0;
+in-out property <float> margen_derecho: 0;
+in-out property <float> margen_superior: 0;
+in-out property <float> margen_inferior: 0;
+    
+    callback actualizar_margenes(float, float, float, float);
+
     in property <[FavoritoItem]> favoritos: [];
     callback toggle_favorito_canto(int);
     callback toggle_favorito_estrofa(string, string);  // referencia, texto
@@ -103,6 +112,12 @@ export component AppWindow inherits Window {
     in-out property <bool> mostrar_personalizar: false;
     in-out property <string> modal_tab: "biblias";
     callback sync_estilos();
+    
+
+    // Variables para el nuevo menú de configuración
+    in-out property <bool> mostrar_menu_config: false;
+    in-out property <length> menu_config_x: 0px;
+    in-out property <length> menu_config_y: 0px;
     callback sync_font_scale();  // solo actualiza tamano_letra, sin tocar fondos
 
     in-out property <string> biblias_bg_type: "negro";
@@ -712,12 +727,20 @@ export component AppWindow inherits Window {
                                 color: root.elemento_seleccionado == "" ? #6b7280 : #0ea5e9;
                                 font-size: 12px; font-weight: 900; vertical-alignment: center; horizontal-stretch: 1;
                             }
-                            // ── Botón PERSONALIZAR ──
+                           
+                            // ── Botón PERSONALIZAR (ACTUALIZADO A MENÚ) ──
                             Rectangle {
                                 width: 28px; height: 28px; border-radius: 8px;
                                 background: touch-pers-top.has-hover ? rgba(255,255,255,0.08) : rgba(255,255,255,0.04);
                                 border-width: 1px; border-color: rgba(255,255,255,0.06);
-                                touch-pers-top := TouchArea { clicked => { root.mostrar_personalizar = true; } }
+                                touch-pers-top := TouchArea { 
+                                    clicked => { 
+                                        // Calculamos la posición justo debajo del botón
+                                        root.menu_config_x = min(self.absolute-position.x - 170px, root.width - 200px); 
+                                        root.menu_config_y = self.absolute-position.y + self.height + 4px;
+                                        root.mostrar_menu_config = !root.mostrar_menu_config;
+                                    } 
+                                }
                                 Text { text: "⚙"; font-size: 12px; color: touch-pers-top.has-hover ? white : #4b5563; horizontal-alignment: center; vertical-alignment: center; }
                             }
                             
@@ -1475,6 +1498,59 @@ export component AppWindow inherits Window {
     }
 
     // ══════════════════════════════════════════════════════════════
+    //  MENÚ DESPLEGABLE DE CONFIGURACIÓN PRINCIPAL
+    // ══════════════════════════════════════════════════════════════
+    if (root.mostrar_menu_config) : Rectangle {
+        width: 100%; height: 100%; background: transparent;
+        TouchArea { clicked => { root.mostrar_menu_config = false; } } // Cierra el menú al hacer clic fuera
+
+        Rectangle {
+            x: root.menu_config_x; y: root.menu_config_y;
+            width: 200px; height: 110px;
+            background: #1e1e1e; border-radius: 8px; border-width: 1px; border-color: #374151;
+            drop-shadow-color: rgba(0,0,0,0.6); drop-shadow-blur: 16px;
+            TouchArea {} // Evita que los clics pasen al fondo
+
+            VerticalLayout {
+                padding: 4px; spacing: 2px;
+                
+                // Opción 1: Mantiene la lógica original de los fondos
+                MenuItem { 
+                    text: "Fondos"; 
+                    clicked => { 
+                        root.mostrar_menu_config = false; 
+                        root.mostrar_personalizar = true; 
+                    } 
+                }
+                
+                HorizontalLayout { padding-left: 6px; padding-right: 6px; padding-top: 2px; padding-bottom: 2px; Rectangle { height: 1px; background: #2d2d2d; } }
+                
+                // Opción 2: Configuración de la segunda pantalla
+                MenuItem { 
+                    text: "Opciones Proyector"; 
+                    clicked => { 
+        root.mostrar_menu_config = false; // Cierra el menú desplegable
+        root.mostrar_modal_margenes = true; // ABRE EL MODAL DE MÁRGENES
+    }
+                }
+                
+                HorizontalLayout { padding-left: 6px; padding-right: 6px; padding-top: 2px; padding-bottom: 2px; Rectangle { height: 1px; background: #2d2d2d; } }
+                
+                // Opción 3: Importar/Exportar
+                MenuItem { 
+                    text: "Importar/Exportar"; 
+                    
+                    clicked => { 
+                        root.mostrar_menu_config = false; 
+                        // Aquí puedes añadir tu callback o lógica futura:
+                        // root.abrir_importar_exportar();
+                    } 
+                }
+            }
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════
     //  MENÚ CONTEXTUAL PDF
     // ══════════════════════════════════════════════════════════════
     if (root.mostrar_menu_pdf) : Rectangle {
@@ -1490,6 +1566,65 @@ export component AppWindow inherits Window {
                 MenuItem { text: "Importar PDF..."; icon: "📄"; clicked => { root.mostrar_menu_pdf = false; root.agregar_pdf(); } }
                 if (root.menu_pdf_idx != -1) : HorizontalLayout { padding-left: 6px; padding-right: 6px; padding-top: 2px; padding-bottom: 2px; Rectangle { height: 1px; background: #2d2d2d; } }
                 if (root.menu_pdf_idx != -1) : MenuItem { text: "Eliminar PDF"; icon: "🗑"; text_color: #f87171; icon_color: #f87171; clicked => { root.mostrar_menu_pdf = false; root.eliminar_pdf(root.menu_pdf_idx); } }
+            }
+        }
+    }
+
+
+    // 👇 MODAL DE MÁRGENES
+    if (root.mostrar_modal_margenes) : Rectangle {
+        width: 100%; height: 100%;
+        background: rgba(0, 0, 0, 0.5); // Fondo oscuro semi-transparente
+        TouchArea {} // Para bloquear clics debajo
+
+        Rectangle {
+            width: 400px; height: 350px;
+            background: white;
+            border-radius: 8px;
+            
+            VerticalLayout {
+                padding: 20px;
+                spacing: 15px;
+
+               Text { text: "Márgenes de Proyección"; font-size: 18px; font-weight: 700; horizontal-alignment: center; }
+
+                HorizontalLayout {
+                    Text { text: "Superior:"; vertical-alignment: center; width: 80px;}
+                    Slider { 
+                        minimum: 0; maximum: 300; value: root.margen_superior;
+                        changed(val) => { root.margen_superior = val; root.actualizar_margenes(root.margen_izquierdo, root.margen_derecho, root.margen_superior, root.margen_inferior); }
+                    }
+                    Text { text: floor(root.margen_superior); width: 30px;}
+                }
+                HorizontalLayout {
+                    Text { text: "Inferior:"; vertical-alignment: center; width: 80px;}
+                    Slider { 
+                        minimum: 0; maximum: 300; value: root.margen_inferior;
+                        changed(val) => { root.margen_inferior = val; root.actualizar_margenes(root.margen_izquierdo, root.margen_derecho, root.margen_superior, root.margen_inferior); }
+                    }
+                    Text { text: floor(root.margen_inferior); width: 30px;}
+                }
+                HorizontalLayout {
+                    Text { text: "Izquierdo:"; vertical-alignment: center; width: 80px;}
+                    Slider { 
+                        minimum: 0; maximum: 500; value: root.margen_izquierdo;
+                        changed(val) => { root.margen_izquierdo = val; root.actualizar_margenes(root.margen_izquierdo, root.margen_derecho, root.margen_superior, root.margen_inferior); }
+                    }
+                    Text { text: floor(root.margen_izquierdo); width: 30px;}
+                }
+                HorizontalLayout {
+                    Text { text: "Derecho:"; vertical-alignment: center; width: 80px;}
+                    Slider { 
+                        minimum: 0; maximum: 500; value: root.margen_derecho;
+                        changed(val) => { root.margen_derecho = val; root.actualizar_margenes(root.margen_izquierdo, root.margen_derecho, root.margen_superior, root.margen_inferior); }
+                    }
+                    Text { text: floor(root.margen_derecho); width: 30px;}
+                }
+
+                Button {
+                    text: "Cerrar";
+                    clicked => { root.mostrar_modal_margenes = false; }
+                }
             }
         }
     }

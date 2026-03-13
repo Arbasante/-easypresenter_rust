@@ -164,16 +164,32 @@ struct AppState {
 
 impl AppState {
     fn new() -> Result<Self> {
-        let cantos_db  = Connection::open("data/cantos.db")?;
-        let biblias_db = Connection::open("data/biblias.db")?;
+        // 1. Definir la ruta segura según el sistema operativo
+        let data_dir = if cfg!(target_os = "windows") {
+            // En Windows: Junto al ejecutable (ej. C:\Archivos de Programa\EasyPresenter\data)
+            let mut path = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("."));
+            path.pop();
+            path.join("data")
+        } else {
+            // En Linux: En la carpeta oculta del usuario (~/.local/share/easy-presenter/data)
+            let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+            std::path::PathBuf::from(home).join(".local/share/easy-presenter/data")
+        };
 
-        // WAL + NORMAL es el mejor balance para hardware lento con poco RAM
+        // 2. Crear la carpeta si no existe (¡Esto evita el Error 14!)
+        std::fs::create_dir_all(&data_dir).ok();
+
+        // 3. Apuntar a los archivos dentro de esa carpeta segura
+        let cantos_path = data_dir.join("cantos.db");
+        let biblias_path = data_dir.join("biblias.db");
+
+        // 4. Abrir las conexiones
+        let cantos_db = Connection::open(cantos_path)?;
+        let biblias_db = Connection::open(biblias_path)?;
+
         cantos_db.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;")?;
         biblias_db.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;")?;
 
-        // OPT-1 & OPT-6: Aumentamos el caché de statements preparados.
-        //   Por defecto rusqlite guarda 16; con 32 evitamos re-parseos en
-        //   consultas frecuentes (get_capitulo, get_cantos_filtrados, favoritos…)
         cantos_db.set_prepared_statement_cache_capacity(32);
         biblias_db.set_prepared_statement_cache_capacity(32);
 

@@ -2,7 +2,9 @@ export component ProjectorWindow inherits Window {
     no-frame: true;
     always-on-top: true;
     title: "";
-    background: root.bg_color;
+    
+    // 1. El fondo real de la ventana de Windows siempre será negro
+    background: black;
 
     default-font-family: "Google Sans";
 
@@ -18,68 +20,92 @@ export component ProjectorWindow inherits Window {
     in property <bool>   es_video: false;
     in property <float>  fondo_opacity: 0.0;
 
-    // ── Capa 1: Imagen estática ────────────────────────────────────
-    if (root.mostrar_imagen && !root.es_video) : Image {
-        source: root.fondo_imagen;
-        width: 100%; height: 100%;
-        image-fit: root.fondo_imagen_aspecto == "rellenar" ? cover
-                 : (root.fondo_imagen_aspecto == "estirar" ? fill : contain);
-    }
+    in property <float> margen_izquierdo: 0;
+    in property <float> margen_derecho: 0;
+    in property <float> margen_superior: 0;
+    in property <float> margen_inferior: 0;
 
-    // ── Capa 1.5: Frame de video ───────────────────────────────────
-    if (root.es_video) : Image {
-        source: root.fondo_video_frame;
-        width: 100%; height: 100%;
-        image-fit: contain;
-    }
-
-    // ── Capa 2: Velo oscurecedor (aplica a imagen Y video) ─────────
-    // Para fondos de imagen: usa fondo_opacity (0 = transparente, 1 = negro total)
-    // Para fondos de video:  usa fondo_opacity también (0 por defecto = sin velo)
+    // 2. EL CONTENEDOR MÁGICO: Este Rectangle es tu nueva "Área de Proyección"
     Rectangle {
-        width: 100%; height: 100%;
-        background: rgba(0, 0, 0, root.fondo_opacity);
-    }
+        // Empujamos el contenedor desde la izquierda y arriba
+        x: root.margen_izquierdo * 1px;
+        y: root.margen_superior * 1px;
+        
+        // Reducimos el tamaño total restándole los márgenes
+        width: parent.width - (root.margen_izquierdo + root.margen_derecho) * 1px;
+        height: parent.height - (root.margen_superior + root.margen_inferior) * 1px;
+        
+        // Evita que las imágenes, videos o textos se salgan de este rectángulo
+        clip: true; 
 
-    // ── Capa 3: Texto ──────────────────────────────────────────────
-    VerticalLayout {
-        x: 0; y: 0;
-        width: 100%; height: 100%;
-        padding: 50px;
-        padding-bottom: root.referencia != "" ? 16px : 50px;
-        spacing: 0px;
+        // El color de fondo que elige el usuario
+        background: root.bg_color;
 
-        Rectangle {
-            vertical-stretch: 1;
-            background: transparent;
-            clip: true;
-            Text {
-                text: root.texto_proyeccion;
-                color: root.text_color;
-                font-size: root.tamano_letra * 1px;
-                font-weight: 900;
-                wrap: word-wrap;
-                overflow: elide;
-                horizontal-alignment: center;
-                vertical-alignment: center;
-                width: parent.width;
-                height: parent.height;
-            }
+        // ── Capa 1: Imagen estática ────────────────────────────────────
+        if (root.mostrar_imagen && !root.es_video) : Image {
+            source: root.fondo_imagen;
+            width: 100%; height: 100%;
+            image-fit: root.fondo_imagen_aspecto == "rellenar" ? cover
+                     : (root.fondo_imagen_aspecto == "estirar" ? fill : contain);
         }
 
-        if (root.referencia != "") : Rectangle {
-            height: 70px;
-            background: transparent;
-            Text {
-                text: root.referencia;
-                color: root.text_color;
-                font-size: 36px;
-                font-weight: 800;
-                font-italic: true;
-                horizontal-alignment: right;
-                vertical-alignment: center;
-                width: parent.width;
-                height: parent.height;
+        // ── Capa 1.5: Frame de video ───────────────────────────────────
+        if (root.es_video) : Image {
+            source: root.fondo_video_frame;
+            width: 100%; height: 100%;
+            image-fit: contain;
+        }
+
+        // ── Capa 2: Velo oscurecedor (aplica a imagen Y video) ─────────
+        Rectangle {
+            width: 100%; height: 100%;
+            background: rgba(0, 0, 0, root.fondo_opacity);
+        }
+
+        // ── Capa 3: Texto ──────────────────────────────────────────────
+        VerticalLayout {
+            // Ya no usamos padding aquí, porque el Rectangle padre ya tiene el tamaño correcto
+            width: 100%; height: 100%;
+            spacing: 0px;
+
+            padding-left: 30px;
+            padding-right: 30px;
+            padding-top: 30px;
+            padding-bottom: 30px;
+
+            Rectangle {
+                vertical-stretch: 1;
+                background: transparent;
+                Text {
+                    text: root.texto_proyeccion;
+                    color: root.text_color;
+                    font-size: root.tamano_letra * 1px;
+                    font-weight: 900;
+                    wrap: word-wrap;
+                    overflow: elide;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    width: parent.width;
+                    height: parent.height;
+                }
+            }
+
+            if (root.referencia != "") : Rectangle {
+                height: 70px;
+                background: transparent;
+                Text {
+                    text: root.referencia;
+                    color: root.text_color;
+                    font-size: 36px;
+                    font-weight: 800;
+                    font-italic: true;
+                    // Le damos un pequeño margen derecho interno para que no quede pegado al borde absoluto
+                    padding-right: 20px; 
+                    horizontal-alignment: right;
+                    vertical-alignment: center;
+                    width: parent.width;
+                    height: parent.height;
+                }
             }
         }
     }

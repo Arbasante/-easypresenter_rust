@@ -8,6 +8,10 @@ use std::thread;
 use regex::Regex;
 use display_info::DisplayInfo;
 
+use pdfium_render::prelude::*;
+use std::fs;
+use std::path::PathBuf;
+
 use gstreamer as gst;
 use gstreamer_app as gst_app;
 use gstreamer_video as gst_video;
@@ -342,6 +346,8 @@ fn calcular_font_size(texto: &str, tiene_referencia: bool, screen_w: f32, screen
     size_final.clamp(30.0, screen_h * 0.18)
 }
 
+
+
 struct NativeVideoPlayer {
     pipeline: Option<gst::Element>,
 }
@@ -532,6 +538,12 @@ struct MediaData {
     path: String, name: String, aspecto: String, is_loop: bool,
 }
 
+struct PdfData {
+    name: String,
+    thumb_path: String,
+    pages: Vec<String>,
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     gst::init().expect("Error al inicializar GStreamer.");
 
@@ -555,6 +567,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let multimedia_state = Arc::new(Mutex::new(Vec::<MediaData>::new()));
     let video_state = Arc::new(Mutex::new(Vec::<MediaData>::new()));
     let preview_player = Arc::new(Mutex::new(NativeVideoPlayer::new()));
+
+    let bloqueo_estilos = Arc::new(Mutex::new(false));
+
+    let modo_actual_proyeccion = Arc::new(Mutex::new(String::new()));
 
     let proyector_margenes_weak = proyector.as_weak();
     ui.on_actualizar_margenes(move |izq, der, sup, inf| {
@@ -741,9 +757,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let last_modo = Arc::new(Mutex::new(String::new()));
     let segunda_pantalla_proy = Arc::clone(&segunda_pantalla);
 
+    let modo_proy_estrofa = Arc::clone(&modo_actual_proyeccion);
+
+    let bloqueo_estrofa = Arc::clone(&bloqueo_estilos);
+
     ui.on_proyectar_estrofa(move |texto, referencia| {
         let p = proyector_handle.unwrap();
-        let ui = ui_h_proy.unwrap();
+        let ui_local = ui_h_proy.unwrap();
+        
+        ui_local.set_is_video_projecting(false);
+        
+        // 👇 ABRIMOS EL CANDADO (Para que los textos cambien de fondo sin problema) 👇
+        *bloqueo_estrofa.lock().unwrap() = false;
+
         p.set_texto_proyeccion(texto.clone());
         let mut ref_str = referencia.to_string();
         if !ref_str.is_empty() {
@@ -755,17 +781,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let info = *segunda_pantalla_proy.lock().unwrap();
         let (screen_w, screen_h) = if let Some((_, _, w, h)) = info { (w as f32, h as f32) } else { (1280.0, 720.0) };
         let base_font_size = calcular_font_size(&texto, tiene_referencia, screen_w, screen_h);
-        // Aplicar escala del usuario (cantos o biblias según modo)
-        let scale = if tiene_referencia { ui.get_biblias_font_scale() } else { ui.get_cantos_font_scale() };
+        let scale = if tiene_referencia { ui_local.get_biblias_font_scale() } else { ui_local.get_cantos_font_scale() };
         let font_size = base_font_size * scale;
         p.set_tamano_letra(font_size);
         let modo_actual = if tiene_referencia { "biblias" } else { "cantos" };
         let mut l_modo = last_modo.lock().unwrap();
         let forzar_video = *l_modo != modo_actual;
         *l_modo = modo_actual.to_string();
-        aplicar_estilos(&ui, &p, &vp_proy, modo_actual, forzar_video);
+        aplicar_estilos(&ui_local, &p, &vp_proy, modo_actual, forzar_video);
     });
-
     let ui_h = ui.as_weak();
     ui.on_bible_search_changed(move |query| {
         let ui = ui_h.unwrap();
@@ -901,10 +925,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ui_h_sync = ui.as_weak();
     let p_h_sync = proyector.as_weak();
     let vp_sync = Arc::clone(&video_player);
+    let modo_proy_multi = Arc::clone(&modo_actual_proyeccion);
     let segunda_pantalla_sync = Arc::clone(&segunda_pantalla);
+
+    let bloqueo_sync = Arc::clone(&bloqueo_estilos);
+
+    let modo_proy_sync = Arc::clone(&modo_actual_proyeccion);
     ui.on_sync_estilos(move || {
         let ui = ui_h_sync.unwrap();
         let p = p_h_sync.unwrap();
+
+        // 👇 SI EL CANDADO ESTÁ CERRADO, IGNORAMOS EL CAMBIO DE PESTAÑA 👇
+        if *bloqueo_sync.lock().unwrap() {
+            return;
+        }
+
         let modo = ui.get_modal_tab();
         aplicar_estilos(&ui, &p, &vp_sync, modo.as_str(), true);
 
@@ -1130,6 +1165,134 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
+    // ══════════════════════════════════════════════════════════════
+    //  LÓGICA DE IMPORTACIÓN PDF (CON RENDERIZADO REAL)
+    // ══════════════════════════════════════════════════════════════
+    let ui_pdf_add = ui.as_weak();
+    let pdf_state = Arc::new(Mutex::new(Vec::<PdfData>::new())); // Asegúrate de tener esta variable creada arriba
+    let state_pdf_add = Arc::clone(&pdf_state);
+
+    ui.on_agregar_pdf(move || {
+        let ui = ui_pdf_add.unwrap();
+        if let Some(path) = rfd::FileDialog::new().add_filter("PDF", &["pdf"]).pick_file() {
+            let file_name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+
+            ui.set_is_importing_pdf(true);
+            ui.set_pdf_import_progress(0.0);
+            ui.set_pdf_import_filename(SharedString::from(&file_name));
+
+            let ui_thread = ui_pdf_add.clone();
+            let state_thread = Arc::clone(&state_pdf_add);
+            let path_clone = path.clone();
+
+            thread::spawn(move || {
+                // Configurar Pdfium (Busca el .so/.dll en la raíz del proyecto)
+                let bind = Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path("./")).unwrap();
+                let pdfium = Pdfium::new(bind);
+
+                if let Ok(document) = pdfium.load_pdf_from_file(&path_clone, None) {
+                    let total_pages = document.pages().len();
+                    let safe_name = file_name.replace(" ", "_").replace(".pdf", "");
+                    let out_dir = PathBuf::from(format!("data/pdfs/{}", safe_name));
+                    let _ = fs::create_dir_all(&out_dir);
+
+                    let mut saved_pages_paths = Vec::new();
+                    let mut thumb_path_str = String::new();
+
+                    for (i, page) in document.pages().iter().enumerate() {
+                        let config = PdfRenderConfig::new().set_target_width(1920);
+                        if let Ok(bitmap) = page.render_with_config(&config) {
+                            let img = bitmap.as_image();
+                            let page_path = out_dir.join(format!("page_{}.jpg", i));
+                            let _ = img.save(&page_path);
+                            saved_pages_paths.push(page_path.to_string_lossy().to_string());
+
+                            if i == 0 { // Crear miniatura
+                                let t_path = out_dir.join("thumb.jpg");
+                                let _ = page.render_with_config(&PdfRenderConfig::new().thumbnail(200))
+                                    .unwrap().as_image().save(&t_path);
+                                thumb_path_str = t_path.to_string_lossy().to_string();
+                            }
+                        }
+
+                        let progress = (i as f32 + 1.0) / total_pages as f32;
+                        let ui_prog = ui_thread.clone();
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = ui_prog.upgrade() { ui.set_pdf_import_progress(progress); }
+                        });
+                    }
+
+                    state_thread.lock().unwrap().push(PdfData {
+                        name: file_name,
+                        thumb_path: thumb_path_str,
+                        pages: saved_pages_paths,
+                    });
+                }
+
+                let ui_fin = ui_thread.clone();
+                let state_fin = Arc::clone(&state_thread);
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = ui_fin.upgrade() {
+                        ui.set_is_importing_pdf(false);
+                        let items = state_fin.lock().unwrap();
+                        let mut slint_items = Vec::new();
+                        for (i, item) in items.iter().enumerate() {
+                            let img = slint::Image::load_from_path(std::path::Path::new(&item.thumb_path)).unwrap_or_default();
+                            slint_items.push(PdfItem { id: i as i32, nombre: SharedString::from(&item.name), miniatura: img, total_paginas: item.pages.len() as i32 });
+                        }
+                        ui.set_pdf_items(ModelRc::from(Rc::new(VecModel::from(slint_items))));
+                    }
+                });
+            });
+        }
+    });
+
+    // ── MOSTRAR PÁGINAS AL SELECCIONAR PDF ──
+    let ui_pdf_sel = ui.as_weak();
+    let state_pdf_sel = Arc::clone(&pdf_state);
+    ui.on_seleccionar_pdf(move |idx| {
+        let ui = ui_pdf_sel.unwrap();
+        let state = state_pdf_sel.lock().unwrap();
+        if let Some(pdf) = state.get(idx as usize) {
+            ui.set_selected_pdf_idx(idx);
+            let mut pages_img = Vec::new();
+            for path in &pdf.pages {
+                if let Ok(img) = slint::Image::load_from_path(std::path::Path::new(path)) { pages_img.push(img); }
+            }
+            ui.set_pdf_pages(ModelRc::from(Rc::new(VecModel::from(pages_img))));
+        }
+    });
+
+    // ── PROYECTAR PÁGINA (CON CANDADO DE SEGURIDAD) ──
+    let ui_pdf_proj = ui.as_weak();
+    let p_handle_pdf = proyector.as_weak();
+    let vp_pdf = Arc::clone(&video_player);
+    let bloqueo_pdf = Arc::clone(&bloqueo_estilos);
+    ui.on_proyectar_pdf_pagina(move |page_idx| {
+        let ui = ui_pdf_proj.unwrap();
+        let p = p_handle_pdf.unwrap();
+        
+        *bloqueo_pdf.lock().unwrap() = true; // CERRAMOS EL CANDADO
+        ui.set_is_video_projecting(false); 
+        ui.set_active_pdf_page(page_idx);
+
+        let current_pages = ui.get_pdf_pages();
+        if let Some(img) = current_pages.row_data(page_idx as usize) {
+            vp_pdf.lock().unwrap().detener();
+            p.set_es_video(false);
+            p.set_fondo_imagen_aspecto(slint::SharedString::from("contain")); 
+            p.set_fondo_imagen(img);
+            p.set_mostrar_imagen(true);
+        }
+    });
+    // ══════════════════════════════════════════════════════════════
+    //  LÓGICA PARA ELIMINAR PDF
+    // ══════════════════════════════════════════════════════════════
+    ui.on_eliminar_pdf(move |idx| {
+        println!("Eliminando PDF en el índice: {}", idx);
+        // Aquí agrega tu lógica para borrar el archivo de la lista y del disco si es necesario
+    });
+
     let multi_state = Arc::clone(&multimedia_state);
     let refresh_clone = refresh_multimedia.clone();
     ui.on_cambiar_aspecto_multimedia(move |idx, aspecto| {
@@ -1152,8 +1315,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let p_handle = proyector.as_weak();
     let multi_state = Arc::clone(&multimedia_state);
     let vp_sync = Arc::clone(&video_player);
+    let ui_h_multi = ui.as_weak(); // Creamos el enlace débil
+
+    let bloqueo_multi = Arc::clone(&bloqueo_estilos);
+    
     ui.on_proyectar_multimedia(move |idx| {
         let p = p_handle.unwrap();
+        let ui_local = ui_h_multi.unwrap();
+        
+        ui_local.set_is_video_projecting(false);
+        
+        // 👇 CERRAMOS EL CANDADO (Para proteger la imagen de la 2da pantalla) 👇
+        *bloqueo_multi.lock().unwrap() = true;
+
         let state = multi_state.lock().unwrap();
         if let Some(item) = state.get(idx as usize) {
             if let Ok(img) = slint::Image::load_from_path(std::path::Path::new(&item.path)) {
@@ -1237,13 +1411,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let vid_state = Arc::clone(&video_state);
     let vp_sync = Arc::clone(&video_player);
     let ui_handle_proj = ui.as_weak();
+    let modo_proy_vid = Arc::clone(&modo_actual_proyeccion);
+
+    let bloqueo_vid = Arc::clone(&bloqueo_estilos);
+
     ui.on_proyectar_video(move |idx| {
         let p = p_handle.unwrap();
         let ui = ui_handle_proj.unwrap();
         let state = vid_state.lock().unwrap();
+        
+        // 👇 CERRAMOS EL CANDADO (Para proteger el video) 👇
+        *bloqueo_vid.lock().unwrap() = true;
+
         if let Some(item) = state.get(idx as usize) {
             p.set_es_video(true); p.set_bg_color(slint::Color::from_rgb_u8(0, 0, 0));
             p.set_mostrar_imagen(false); p.set_texto_proyeccion(slint::SharedString::from(""));
+            p.set_referencia(slint::SharedString::from(""));
             vp_sync.lock().unwrap().reproducir(&item.path, p.as_weak(), item.is_loop);
             ui.set_is_video_projecting(true); ui.set_is_proyector_playing(true);
         }

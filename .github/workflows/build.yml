@@ -122,39 +122,56 @@ jobs:
               "$ICON_DEST"
           fi
 
-      # GStreamer fix: NO bundlear libglib ni libgstreamer porque los plugins
-      # del sistema objetivo pueden estar compilados contra una versión distinta.
-      # El AppRun detecta si el sistema tiene GStreamer y lo usa; si no, usa el bundle.
-      - name: Crear AppRun personalizado para GStreamer
-        run: |
-          cat > AppDir/AppRun << 'APPRUN'
-          #!/bin/bash
-          HERE="$(dirname "$(readlink -f "${0}")")"
-          export LD_LIBRARY_PATH="${HERE}/usr/lib:${LD_LIBRARY_PATH}"
-          if gst-inspect-1.0 --version &>/dev/null 2>&1; then
-            unset GST_PLUGIN_PATH
-            unset GST_PLUGIN_SYSTEM_PATH_1_0
-          else
-            export GST_PLUGIN_PATH="${HERE}/usr/lib/gstreamer-1.0"
-            export GST_PLUGIN_SYSTEM_PATH_1_0="${HERE}/usr/lib/gstreamer-1.0"
-          fi
-          exec "${HERE}/usr/bin/easy-presenter-slint" "$@"
-          APPRUN
-          chmod +x AppDir/AppRun
-
-      - name: Empaquetar AppImage
+      # ── AppImage: deploy → limpiar GStreamer → empaquetar ────────────────
+      # PASO 1: linuxdeploy solo despliega dependencias (sin crear AppImage aún)
+      - name: Desplegar dependencias con linuxdeploy
         run: |
           $LINUXDEPLOY \
             --appdir AppDir \
-            --output appimage \
             --desktop-file AppDir/usr/share/applications/easy-presenter.desktop \
-            --icon-file AppDir/usr/share/icons/hicolor/256x256/apps/easy-presenter.png \
-            --exclude-library "libglib-2.0.so*" \
-            --exclude-library "libgobject-2.0.so*" \
-            --exclude-library "libgstreamer-1.0.so*" \
-            --exclude-library "libgstapp-1.0.so*" \
-            --exclude-library "libgstvideo-1.0.so*"
-          mv EasyPresenter*.AppImage EasyPresenter-Linux.AppImage
+            --icon-file AppDir/usr/share/icons/hicolor/256x256/apps/easy-presenter.png
+
+      # PASO 2: Borrar TODAS las libs GStreamer/GLib del bundle.
+      # El AppImage usará las del sistema del usuario.
+      # Esto evita "symbol lookup error" por mismatch Ubuntu 22 vs 24.
+      - name: Limpiar libs GStreamer y GLib del AppDir
+        run: |
+          echo "=== Eliminando libs GStreamer/GLib bundleadas ==="
+          find AppDir/usr/lib \( \
+            -name "libgst*.so*"     -o \
+            -name "libglib*.so*"    -o \
+            -name "libgobject*.so*" -o \
+            -name "libgmodule*.so*" -o \
+            -name "libgthread*.so*" -o \
+            -name "libgio*.so*"     \
+          \) -print -delete
+          echo "=== Libs restantes en AppDir/usr/lib ==="
+          ls AppDir/usr/lib/
+
+      # PASO 3: AppRun minimalista — solo agrega libpdfium al LD_LIBRARY_PATH
+      - name: Crear AppRun
+        run: |
+          cat > AppDir/AppRun << 'MYEOF'
+          #!/bin/bash
+          HERE="$(dirname "$(readlink -f "${0}")")"
+          export LD_LIBRARY_PATH="${HERE}/usr/lib:${LD_LIBRARY_PATH}"
+          unset GST_PLUGIN_PATH
+          unset GST_PLUGIN_SYSTEM_PATH_1_0
+          exec "${HERE}/usr/bin/easy-presenter-slint" "$@"
+          MYEOF
+          chmod +x AppDir/AppRun
+
+      # PASO 4: appimagetool crea el AppImage final desde el AppDir ya limpio
+      - name: Descargar appimagetool
+        run: |
+          curl -L \
+            "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage" \
+            -o appimagetool
+          chmod +x appimagetool
+
+      - name: Crear AppImage final
+        run: |
+          ARCH=x86_64 ./appimagetool --appimage-extract-and-run AppDir EasyPresenter-Linux.AppImage
 
       # ── Artefactos y Release ──────────────────────────────────────────────
       - name: Subir .deb como artefacto

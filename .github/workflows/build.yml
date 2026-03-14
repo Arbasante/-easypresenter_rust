@@ -5,138 +5,264 @@ on:
     tags:
       - 'v*'
 
-# 🟢 ESTA ES LA LLAVE MAESTRA PARA EVITAR EL ERROR 403
 permissions:
   contents: write
 
 jobs:
-  build:
-    name: Compilar para ${{ matrix.target_name }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - target_name: Linux (Ubuntu)
-            os: ubuntu-22.04
-            rust_version: stable
-            artifact_name: EasyPresenter-Linux.deb
-            is_linux: true
-            is_windows: false
-
-          - target_name: Windows 10-11
-            os: windows-latest
-            rust_version: stable
-            artifact_name: EasyPresenter-Win10-11.exe
-            is_linux: false
-            is_windows: true
+  # ══════════════════════════════════════════════════════════════════════════
+  # JOB 1: LINUX → genera .deb  Y  AppImage en una sola compilación
+  # ══════════════════════════════════════════════════════════════════════════
+  build-linux:
+    name: Linux (.deb + AppImage)
+    runs-on: ubuntu-22.04
 
     steps:
-      - name: Descargar el código
+      - name: Descargar código fuente
         uses: actions/checkout@v4
 
-      - name: Configurar Rust (${{ matrix.rust_version }})
+      - name: Configurar Rust (stable)
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: ${{ matrix.rust_version }}
+          toolchain: stable
 
-      # ── LINUX ──────────────────────────────────────────────────────────────
-      - name: Instalar Dependencias (Linux)
-        if: matrix.is_linux
+      # ── Dependencias del sistema ──────────────────────────────────────────
+      - name: Instalar dependencias del sistema
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             libx11-dev libxkbcommon-dev libfontconfig1-dev \
             libasound2-dev libsqlite3-dev libunwind-dev \
-            libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
+            libssl-dev pkg-config \
+            imagemagick \
+            libfuse2 \
+            libgstreamer1.0-dev \
+            libgstreamer-plugins-base1.0-dev \
+            gstreamer1.0-plugins-base \
+            gstreamer1.0-plugins-good \
+            gstreamer1.0-plugins-bad \
+            gstreamer1.0-plugins-ugly \
+            gstreamer1.0-libav
 
-      # ── WINDOWS: INSTALAR GSTREAMER EN LA MÁQUINA VIRTUAL ──────────────────
-      - name: Instalar GStreamer vía Chocolatey (Windows)
-        if: matrix.is_windows
+      # ── Compilación ───────────────────────────────────────────────────────
+      - name: Compilar (Release)
+        run: cargo build --release
+
+      # libpdfium.so ya está en la raíz del repo
+      - name: Copiar libpdfium.so al output
+        run: cp libpdfium.so target/release/
+
+      # ─────────────────────────────────────────────────────────────────────
+      # PASO A: Generar .deb
+      # NOTA: Cargo.toml assets debe incluir libpdfium.so:
+      #   ["target/release/libpdfium.so", "usr/share/easy-presenter-slint/", "755"]
+      # ─────────────────────────────────────────────────────────────────────
+      - name: Instalar cargo-deb
+        run: cargo install cargo-deb --locked
+
+      - name: Generar .deb
+        run: |
+          cargo deb
+          cp target/debian/*.deb EasyPresenter-Linux.deb
+
+      # ─────────────────────────────────────────────────────────────────────
+      # PASO B: Generar AppImage
+      # linuxdeploy analiza el binario y copia automáticamente todas sus
+      # dependencias compartidas (.so), incluidos GStreamer y pdfium.
+      # ─────────────────────────────────────────────────────────────────────
+      - name: Descargar linuxdeploy
+        run: |
+          curl -L \
+            "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage" \
+            -o linuxdeploy
+          chmod +x linuxdeploy
+          # En CI no hay FUSE → usar modo extracción
+          echo "LINUXDEPLOY=./linuxdeploy --appimage-extract-and-run" >> $GITHUB_ENV
+
+      - name: Preparar AppDir
+        run: |
+          mkdir -p AppDir/usr/bin
+          mkdir -p AppDir/usr/lib
+          mkdir -p AppDir/usr/share/applications
+          mkdir -p AppDir/usr/share/icons/hicolor/256x256/apps
+          mkdir -p AppDir/usr/share/easy-presenter-slint/data
+
+          # Binario principal
+          cp target/release/easy-presenter-slint AppDir/usr/bin/
+
+          # pdfium dentro del AppImage (desde la raíz del repo)
+          cp libpdfium.so AppDir/usr/lib/
+
+          # Bases de datos
+          cp data/*.db AppDir/usr/share/easy-presenter-slint/data/
+
+      - name: Crear archivo .desktop
+        run: |
+          cat > AppDir/usr/share/applications/easy-presenter.desktop << 'EOF'
+          [Desktop Entry]
+          Name=EasyPresenter
+          Exec=easy-presenter-slint
+          Icon=easy-presenter
+          Type=Application
+          Categories=AudioVideo;Utility;
+          Comment=Presentación multimedia, letras y Biblias
+          EOF
+
+      - name: Preparar icono
+        run: |
+          ICON_DEST="AppDir/usr/share/icons/hicolor/256x256/apps/easy-presenter.png"
+          if [ -f "assets/icon.png" ]; then
+            cp assets/icon.png "$ICON_DEST"
+          elif [ -f "assets/icon.ico" ]; then
+            convert "assets/icon.ico[0]" -resize 256x256 "$ICON_DEST"
+          else
+            # Icono placeholder si no existe ninguno
+            convert -size 256x256 xc:#1a1a3e \
+              -fill white -font DejaVu-Sans-Bold -pointsize 80 \
+              -gravity Center -annotate 0 "EP" \
+              "$ICON_DEST"
+          fi
+
+      - name: Empaquetar AppImage
+        run: |
+          $LINUXDEPLOY \
+            --appdir AppDir \
+            --output appimage \
+            --desktop-file AppDir/usr/share/applications/easy-presenter.desktop \
+            --icon-file AppDir/usr/share/icons/hicolor/256x256/apps/easy-presenter.png
+          # linuxdeploy nombra el archivo con nombre+versión del .desktop
+          mv EasyPresenter*.AppImage EasyPresenter-Linux.AppImage
+
+      # ── Artefactos y Release ──────────────────────────────────────────────
+      - name: Subir .deb como artefacto
+        uses: actions/upload-artifact@v4
+        with:
+          name: EasyPresenter-Linux.deb
+          path: EasyPresenter-Linux.deb
+
+      - name: Subir AppImage como artefacto
+        uses: actions/upload-artifact@v4
+        with:
+          name: EasyPresenter-Linux.AppImage
+          path: EasyPresenter-Linux.AppImage
+
+      - name: Publicar en GitHub Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            EasyPresenter-Linux.deb
+            EasyPresenter-Linux.AppImage
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # JOB 2: WINDOWS → genera instalador .exe con Inno Setup
+  # ══════════════════════════════════════════════════════════════════════════
+  build-windows:
+    name: Windows (.exe installer)
+    runs-on: windows-latest
+
+    steps:
+      - name: Descargar código fuente
+        uses: actions/checkout@v4
+
+      - name: Configurar Rust (stable)
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+
+      # ── GStreamer ─────────────────────────────────────────────────────────
+      - name: Instalar GStreamer vía Chocolatey
         shell: pwsh
         run: |
           choco install gstreamer-devel -y --no-progress
 
-          $searchRoots = @("C:\Program Files\gstreamer", "C:\gstreamer", "C:\ProgramData\gstreamer")
+          $searchRoots = @(
+            "C:\Program Files\gstreamer",
+            "C:\gstreamer",
+            "C:\ProgramData\gstreamer"
+          )
           $gstBin = $null
           foreach ($root in $searchRoots) {
-            $exe = Get-ChildItem $root -Recurse -Filter "gst-launch-1.0.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+            $exe = Get-ChildItem $root -Recurse -Filter "gst-launch-1.0.exe" `
+                   -ErrorAction SilentlyContinue | Select-Object -First 1
             if ($exe) { $gstBin = $exe.DirectoryName; break }
           }
           if (-not $gstBin) {
-            $exe = Get-ChildItem "C:\" -Recurse -Filter "gst-launch-1.0.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+            $exe = Get-ChildItem "C:\" -Recurse -Filter "gst-launch-1.0.exe" `
+                   -ErrorAction SilentlyContinue | Select-Object -First 1
             if ($exe) { $gstBin = $exe.DirectoryName }
           }
           if (-not $gstBin) { Write-Error "❌ GStreamer no encontrado"; exit 1 }
 
           $GstPath = Split-Path $gstBin -Parent
-          Write-Host "✅ GStreamer en: $GstPath"
+          Write-Host "✅ GStreamer encontrado en: $GstPath"
           echo "GSTREAMER_ROOT=$GstPath" >> $env:GITHUB_ENV
 
-      - name: Configurar entorno de compilación GStreamer (Windows)
-        if: matrix.is_windows
+      - name: Configurar PKG_CONFIG para GStreamer
         shell: pwsh
         run: |
           $GstPath = $env:GSTREAMER_ROOT
           choco install pkgconfiglite -y --no-progress
-
           echo "PKG_CONFIG_PATH=$GstPath\lib\pkgconfig"  >> $env:GITHUB_ENV
           echo "GSTREAMER_1_0_ROOT_X86_64=$GstPath"      >> $env:GITHUB_ENV
           echo "$GstPath\bin"                             >> $env:GITHUB_PATH
 
-      # ── COMPILACIÓN Y COPIA DE LIBRERÍAS ───────────────────────────────────
-      - name: Compilar Proyecto (Release)
+      # ── Compilación ───────────────────────────────────────────────────────
+      - name: Compilar (Release)
         run: cargo build --release
 
-      - name: Copiar DLLs de GStreamer al output (Windows)
-        if: matrix.is_windows
+      # ── Copiar DLLs al directorio de salida ───────────────────────────────
+      - name: Copiar DLLs de GStreamer
         shell: pwsh
         run: |
           Write-Host "Copiando DLLs base de GStreamer..."
           Copy-Item "$env:GSTREAMER_ROOT\bin\*.dll" -Destination "target\release\" -Force
-          
-          Write-Host "Borrando DLLs de Python que causan el crash..."
+
+          Write-Host "Eliminando DLLs de Python (evitan crash)..."
           Remove-Item "target\release\*python*.dll" -ErrorAction SilentlyContinue
-          
-          Write-Host "Copiando Plugins de GStreamer..."
+
+          Write-Host "Copiando plugins de GStreamer..."
           New-Item -ItemType Directory -Force -Path "target\release\lib\gstreamer-1.0"
-          Copy-Item "$env:GSTREAMER_ROOT\lib\gstreamer-1.0\*.dll" -Destination "target\release\lib\gstreamer-1.0\" -Force
-          
-          Write-Host "Borrando plugin de Python en GStreamer..."
+          Copy-Item "$env:GSTREAMER_ROOT\lib\gstreamer-1.0\*.dll" `
+                    "target\release\lib\gstreamer-1.0\" -Force
           Remove-Item "target\release\lib\gstreamer-1.0\*python*.dll" -ErrorAction SilentlyContinue
 
-      # ── EMPAQUETADO ────────────────────────────────────────────────────────
-      - name: Generar .deb (Linux)
-        if: matrix.is_linux
+      - name: Copiar pdfium.dll
+        shell: pwsh
         run: |
-          cargo install cargo-deb
-          cargo deb
-          cp target/debian/*.deb ${{ matrix.artifact_name }}
+          # pdfium.dll ya está en la raíz del repo
+          Copy-Item "pdfium.dll" -Destination "target\release\" -Force
+          Write-Host "✅ pdfium.dll copiado"
 
-      - name: Generar Instalador Inno Setup (Windows)
-        if: matrix.is_windows
+      # ── Inno Setup ────────────────────────────────────────────────────────
+      - name: Generar instalador con Inno Setup
         shell: pwsh
         run: |
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
 
-      - name: Mover Instalador (Windows)
-        if: matrix.is_windows
+      - name: Mover instalador al raíz
         shell: pwsh
         run: |
-          if (Test-Path "Output/Instalar_EasyPresenter_v1.0.exe") {
-            Move-Item "Output/Instalar_EasyPresenter_v1.0.exe" "${{ matrix.artifact_name }}"
+          $candidate = Get-ChildItem "Output" -Filter "*.exe" | Select-Object -First 1
+          if ($candidate) {
+            Move-Item $candidate.FullName "EasyPresenter-Win10-11.exe"
+            Write-Host "✅ Instalador listo: EasyPresenter-Win10-11.exe"
+          } else {
+            Write-Error "❌ No se encontró el .exe generado por Inno Setup"
+            exit 1
           }
 
-      # ── ARTEFACTOS Y PUBLICACIÓN ───────────────────────────────────────────
-      - name: Subir Artefacto Terminado
+      # ── Artefactos y Release ──────────────────────────────────────────────
+      - name: Subir artefacto
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact_name }}
-          path: ${{ matrix.artifact_name }}
+          name: EasyPresenter-Win10-11.exe
+          path: EasyPresenter-Win10-11.exe
 
       - name: Publicar en GitHub Releases
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ matrix.artifact_name }}
+          files: EasyPresenter-Win10-11.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

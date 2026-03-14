@@ -75,15 +75,15 @@ jobs:
 
       - name: Crear .desktop
         run: |
-          cat > AppDir/usr/share/applications/easy-presenter.desktop << 'EOF'
-[Desktop Entry]
-Name=EasyPresenter
-Exec=easy-presenter-slint
-Icon=easy-presenter
-Type=Application
-Categories=AudioVideo;Utility;
-Comment=Presentacion multimedia, letras y Biblias
-EOF
+          printf '%s\n' \
+            '[Desktop Entry]' \
+            'Name=EasyPresenter' \
+            'Exec=easy-presenter-slint' \
+            'Icon=easy-presenter' \
+            'Type=Application' \
+            'Categories=AudioVideo;Utility;' \
+            'Comment=Presentacion multimedia, letras y Biblias' \
+            > AppDir/usr/share/applications/easy-presenter.desktop
 
       - name: Preparar icono
         run: |

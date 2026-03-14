@@ -1555,7 +1555,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let state_t   = Arc::clone(&state_pdf);
                 let path_clone = path.clone();
                 thread::spawn(move || {
-                    let bind    = Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path("./")).unwrap();
+                    let pdfium_paths = [
+    "./",
+    "/usr/share/easy-presenter-slint/",
+];
+let bind = pdfium_paths.iter()
+    .find_map(|p| Pdfium::bind_to_library(
+        Pdfium::pdfium_platform_library_name_at_path(p)
+    ).ok())
+    .expect("No se encontró libpdfium.so en ninguna ruta conocida");
                     let pdfium  = Pdfium::new(bind);
                     if let Ok(document) = pdfium.load_pdf_from_file(&path_clone, None) {
                         let total_pages = document.pages().len();

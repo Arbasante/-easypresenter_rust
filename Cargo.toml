@@ -33,3 +33,10 @@ EasyPresenter: Software de presentación multimedia, letras y Biblias
 con soporte de video nativo mediante GStreamer.
 """
 depends = "$auto, libgstreamer1.0-0, gstreamer1.0-plugins-base, gstreamer1.0-plugins-good, gstreamer1.0-plugins-bad, gstreamer1.0-plugins-ugly, gstreamer1.0-libav"
+
+assets = [
+    # 1. Copia el ejecutable a /usr/bin/ con permisos de ejecución (755)
+    ["target/release/easy-presenter-slint", "usr/bin/", "755"],
+    # 2. Copia tus bases de datos originales a una carpeta compartida del sistema
+    ["data/*.db", "usr/share/easy-presenter-slint/data/", "644"]
+]

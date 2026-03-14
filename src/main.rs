@@ -11,6 +11,7 @@ use std::thread;
 use regex::Regex;
 use display_info::DisplayInfo;
 use lru::LruCache;
+use directories::ProjectDirs;
 
 use pdfium_render::prelude::*;
 use std::fs;
@@ -162,34 +163,57 @@ struct AppState {
     cantos_video_paths:  Vec<String>,
 }
 
+
+
 impl AppState {
     fn new() -> Result<Self> {
-        // 1. Definir la ruta segura según el sistema operativo
-        let data_dir = if cfg!(target_os = "windows") {
-            // En Windows: Junto al ejecutable (ej. C:\Archivos de Programa\EasyPresenter\data)
+        // 1. Determinar las rutas de forma inteligente
+        let (user_data_dir, system_data_dir) = if std::path::Path::new("data/cantos.db").exists() {
+            // 🟢 MODO DESARROLLADOR: Si corres 'cargo run', usa la carpeta local
+            let base = std::env::current_dir().unwrap().join("data");
+            (base.clone(), base)
+        } else if cfg!(target_os = "windows") {
+            // 🔵 WINDOWS (Instalado)
             let mut path = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("."));
             path.pop();
-            path.join("data")
+            let base = path.join("data");
+            (base.clone(), base)
         } else {
-            // En Linux: En la carpeta oculta del usuario (~/.local/share/easy-presenter/data)
-            let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-            std::path::PathBuf::from(home).join(".local/share/easy-presenter/data")
+            // 🟠 LINUX (Instalado via .deb)
+            let proj_dirs = ProjectDirs::from("com", "Arbasante", "EasyPresenter")
+                .expect("No se pudo encontrar el directorio del usuario");
+            let user_dir = proj_dirs.data_dir().to_path_buf();
+            let sys_dir = std::path::PathBuf::from("/usr/share/easy-presenter-slint/data");
+            (user_dir, sys_dir)
         };
 
-        // 2. Crear la carpeta si no existe (¡Esto evita el Error 14!)
-        std::fs::create_dir_all(&data_dir).ok();
+        println!("📂 DIRECTORIO DE BASES DE DATOS: {:?}", user_data_dir);
 
-        // 3. Apuntar a los archivos dentro de esa carpeta segura
-        let cantos_path = data_dir.join("cantos.db");
-        let biblias_path = data_dir.join("biblias.db");
+        // 2. Crear la carpeta si no existe
+        std::fs::create_dir_all(&user_data_dir).ok();
 
-        // 4. Abrir las conexiones
+        let cantos_path = user_data_dir.join("cantos.db");
+        let biblias_path = user_data_dir.join("biblias.db");
+
+        // 3. PRIMERA EJECUCIÓN (Solo copia si estamos en Linux/Windows instalado y faltan archivos)
+        if !cantos_path.exists() || std::fs::metadata(&cantos_path).map(|m| m.len()).unwrap_or(0) < 10000 {
+            let sys_cantos = system_data_dir.join("cantos.db");
+            if sys_cantos.exists() { std::fs::copy(&sys_cantos, &cantos_path).ok(); }
+        }
+
+        if !biblias_path.exists() || std::fs::metadata(&biblias_path).map(|m| m.len()).unwrap_or(0) < 10000 {
+            let sys_biblias = system_data_dir.join("biblias.db");
+            if sys_biblias.exists() { std::fs::copy(&sys_biblias, &biblias_path).ok(); }
+        }
+
+
+        // 4. Abrir la conexión a las bases de datos (ahora garantizado que existen y tienen permisos)
         let cantos_db = Connection::open(cantos_path)?;
         let biblias_db = Connection::open(biblias_path)?;
 
+        // Optimizaciones de SQLite
         cantos_db.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;")?;
         biblias_db.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;")?;
-
         cantos_db.set_prepared_statement_cache_capacity(32);
         biblias_db.set_prepared_statement_cache_capacity(32);
 
@@ -208,7 +232,7 @@ impl AppState {
             biblias_db,
             versiones:           Vec::new(),
             current_version_id:  1,
-            chapter_cache:       LruCache::new(NonZeroUsize::new(150).unwrap()),
+            chapter_cache:       LruCache::new(std::num::NonZeroUsize::new(150).unwrap()),
             biblias_image_paths: Vec::new(),
             cantos_image_paths:  Vec::new(),
             biblias_video_paths: Vec::new(),

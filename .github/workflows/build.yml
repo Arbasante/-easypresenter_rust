@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   # ══════════════════════════════════════════════════════════════════════════
-  # JOB 1: LINUX → genera .deb  Y  AppImage en una sola compilación
+  # JOB 1: LINUX → .deb + AppImage
   # ══════════════════════════════════════════════════════════════════════════
   build-linux:
     name: Linux (.deb + AppImage)
@@ -25,58 +25,42 @@ jobs:
         with:
           toolchain: stable
 
-      # ── Dependencias del sistema ──────────────────────────────────────────
       - name: Instalar dependencias del sistema
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             libx11-dev libxkbcommon-dev libfontconfig1-dev \
             libasound2-dev libsqlite3-dev libunwind-dev \
-            libssl-dev pkg-config \
-            imagemagick \
-            libfuse2 \
-            libgstreamer1.0-dev \
-            libgstreamer-plugins-base1.0-dev \
-            gstreamer1.0-plugins-base \
-            gstreamer1.0-plugins-good \
-            gstreamer1.0-plugins-bad \
-            gstreamer1.0-plugins-ugly \
+            libssl-dev pkg-config imagemagick libfuse2 \
+            libgtk-3-dev \
+            libdbus-1-dev \
+            libxrandr-dev \
+            libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+            gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
+            gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly \
             gstreamer1.0-libav
 
-      # ── Compilación ───────────────────────────────────────────────────────
       - name: Compilar (Release)
         run: cargo build --release
 
-      # libpdfium.so ya está en la raíz del repo
       - name: Copiar libpdfium.so al output
         run: cp libpdfium.so target/release/
 
-      # ─────────────────────────────────────────────────────────────────────
-      # PASO A: Generar .deb
-      # NOTA: Cargo.toml assets debe incluir libpdfium.so:
-      #   ["target/release/libpdfium.so", "usr/share/easy-presenter-slint/", "755"]
-      # ─────────────────────────────────────────────────────────────────────
+      # ── .deb ─────────────────────────────────────────────────────────────
       - name: Instalar cargo-deb
-        run: cargo install cargo-deb --locked
+        run: cargo install cargo-deb
 
       - name: Generar .deb
         run: |
           cargo deb
           cp target/debian/*.deb EasyPresenter-Linux.deb
 
-      # ─────────────────────────────────────────────────────────────────────
-      # PASO B: Generar AppImage
-      # linuxdeploy analiza el binario y copia automáticamente todas sus
-      # dependencias compartidas (.so), incluidos GStreamer y pdfium.
-      # ─────────────────────────────────────────────────────────────────────
-      - name: Descargar linuxdeploy
+      # ── AppImage ──────────────────────────────────────────────────────────
+      - name: Descargar herramientas AppImage
         run: |
-          curl -L \
-            "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage" \
-            -o linuxdeploy
-          chmod +x linuxdeploy
-          # En CI no hay FUSE → usar modo extracción
-          echo "LINUXDEPLOY=./linuxdeploy --appimage-extract-and-run" >> $GITHUB_ENV
+          curl -L "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage" -o linuxdeploy
+          curl -L "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage" -o appimagetool
+          chmod +x linuxdeploy appimagetool
 
       - name: Preparar AppDir
         run: |
@@ -85,58 +69,46 @@ jobs:
           mkdir -p AppDir/usr/share/applications
           mkdir -p AppDir/usr/share/icons/hicolor/256x256/apps
           mkdir -p AppDir/usr/share/easy-presenter-slint/data
-
-          # Binario principal
           cp target/release/easy-presenter-slint AppDir/usr/bin/
-
-          # pdfium dentro del AppImage (desde la raíz del repo)
           cp libpdfium.so AppDir/usr/lib/
-
-          # Bases de datos
           cp data/*.db AppDir/usr/share/easy-presenter-slint/data/
 
-      - name: Crear archivo .desktop
+      - name: Crear .desktop
         run: |
           cat > AppDir/usr/share/applications/easy-presenter.desktop << 'EOF'
-          [Desktop Entry]
-          Name=EasyPresenter
-          Exec=easy-presenter-slint
-          Icon=easy-presenter
-          Type=Application
-          Categories=AudioVideo;Utility;
-          Comment=Presentación multimedia, letras y Biblias
-          EOF
+[Desktop Entry]
+Name=EasyPresenter
+Exec=easy-presenter-slint
+Icon=easy-presenter
+Type=Application
+Categories=AudioVideo;Utility;
+Comment=Presentacion multimedia, letras y Biblias
+EOF
 
       - name: Preparar icono
         run: |
-          ICON_DEST="AppDir/usr/share/icons/hicolor/256x256/apps/easy-presenter.png"
+          DEST="AppDir/usr/share/icons/hicolor/256x256/apps/easy-presenter.png"
           if [ -f "assets/icon.png" ]; then
-            cp assets/icon.png "$ICON_DEST"
+            cp assets/icon.png "$DEST"
           elif [ -f "assets/icon.ico" ]; then
-            convert "assets/icon.ico[0]" -resize 256x256 "$ICON_DEST"
+            convert "assets/icon.ico[0]" -resize 256x256 "$DEST"
           else
-            # Icono placeholder si no existe ninguno
             convert -size 256x256 xc:#1a1a3e \
               -fill white -font DejaVu-Sans-Bold -pointsize 80 \
-              -gravity Center -annotate 0 "EP" \
-              "$ICON_DEST"
+              -gravity Center -annotate 0 "EP" "$DEST"
           fi
 
-      # ── AppImage: deploy → limpiar GStreamer → empaquetar ────────────────
-      # PASO 1: linuxdeploy solo despliega dependencias (sin crear AppImage aún)
       - name: Desplegar dependencias con linuxdeploy
         run: |
-          $LINUXDEPLOY \
+          ./linuxdeploy --appimage-extract-and-run \
             --appdir AppDir \
             --desktop-file AppDir/usr/share/applications/easy-presenter.desktop \
             --icon-file AppDir/usr/share/icons/hicolor/256x256/apps/easy-presenter.png
 
-      # PASO 2: Borrar TODAS las libs GStreamer/GLib del bundle.
-      # El AppImage usará las del sistema del usuario.
-      # Esto evita "symbol lookup error" por mismatch Ubuntu 22 vs 24.
+      # Eliminar libs GStreamer/GLib del bundle para evitar mismatch de versiones.
+      # El AppImage usa las del sistema del usuario (Ubuntu 20+, Debian 11+).
       - name: Limpiar libs GStreamer y GLib del AppDir
         run: |
-          echo "=== Eliminando libs GStreamer/GLib bundleadas ==="
           find AppDir/usr/lib \( \
             -name "libgst*.so*"     -o \
             -name "libglib*.so*"    -o \
@@ -145,42 +117,34 @@ jobs:
             -name "libgthread*.so*" -o \
             -name "libgio*.so*"     \
           \) -print -delete
-          echo "=== Libs restantes en AppDir/usr/lib ==="
-          ls AppDir/usr/lib/
 
-      # PASO 3: AppRun minimalista — solo agrega libpdfium al LD_LIBRARY_PATH
+      # printf evita el bug de indentacion YAML que corrompia el AppRun
+      # y causaba la ruta duplicada usr/bin/usr/bin
       - name: Crear AppRun
         run: |
-          cat > AppDir/AppRun << 'MYEOF'
-          #!/bin/bash
-          HERE="$(dirname "$(readlink -f "${0}")")"
-          export LD_LIBRARY_PATH="${HERE}/usr/lib:${LD_LIBRARY_PATH}"
-          unset GST_PLUGIN_PATH
-          unset GST_PLUGIN_SYSTEM_PATH_1_0
-          exec "${HERE}/usr/bin/easy-presenter-slint" "$@"
-          MYEOF
+          printf '%s\n' \
+            '#!/bin/bash' \
+            'HERE="$(dirname "$(readlink -f "${0}")")"' \
+            'export LD_LIBRARY_PATH="${HERE}/usr/lib:${LD_LIBRARY_PATH}"' \
+            'unset GST_PLUGIN_PATH' \
+            'unset GST_PLUGIN_SYSTEM_PATH_1_0' \
+            'exec "${HERE}/usr/bin/easy-presenter-slint" "$@"' \
+            > AppDir/AppRun
           chmod +x AppDir/AppRun
-
-      # PASO 4: appimagetool crea el AppImage final desde el AppDir ya limpio
-      - name: Descargar appimagetool
-        run: |
-          curl -L \
-            "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage" \
-            -o appimagetool
-          chmod +x appimagetool
+          echo "=== Verificacion AppRun ===" && cat AppDir/AppRun
 
       - name: Crear AppImage final
         run: |
           ARCH=x86_64 ./appimagetool --appimage-extract-and-run AppDir EasyPresenter-Linux.AppImage
 
       # ── Artefactos y Release ──────────────────────────────────────────────
-      - name: Subir .deb como artefacto
+      - name: Subir .deb
         uses: actions/upload-artifact@v4
         with:
           name: EasyPresenter-Linux.deb
           path: EasyPresenter-Linux.deb
 
-      - name: Subir AppImage como artefacto
+      - name: Subir AppImage
         uses: actions/upload-artifact@v4
         with:
           name: EasyPresenter-Linux.AppImage
@@ -197,7 +161,7 @@ jobs:
 
 
   # ══════════════════════════════════════════════════════════════════════════
-  # JOB 2: WINDOWS → genera instalador .exe con Inno Setup
+  # JOB 2: WINDOWS → instalador .exe con Inno Setup
   # ══════════════════════════════════════════════════════════════════════════
   build-windows:
     name: Windows (.exe installer)
@@ -212,32 +176,23 @@ jobs:
         with:
           toolchain: stable
 
-      # ── GStreamer ─────────────────────────────────────────────────────────
-      - name: Instalar GStreamer vía Chocolatey
+      - name: Instalar GStreamer via Chocolatey
         shell: pwsh
         run: |
           choco install gstreamer-devel -y --no-progress
-
-          $searchRoots = @(
-            "C:\Program Files\gstreamer",
-            "C:\gstreamer",
-            "C:\ProgramData\gstreamer"
-          )
+          $searchRoots = @("C:\Program Files\gstreamer", "C:\gstreamer", "C:\ProgramData\gstreamer")
           $gstBin = $null
           foreach ($root in $searchRoots) {
-            $exe = Get-ChildItem $root -Recurse -Filter "gst-launch-1.0.exe" `
-                   -ErrorAction SilentlyContinue | Select-Object -First 1
+            $exe = Get-ChildItem $root -Recurse -Filter "gst-launch-1.0.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
             if ($exe) { $gstBin = $exe.DirectoryName; break }
           }
           if (-not $gstBin) {
-            $exe = Get-ChildItem "C:\" -Recurse -Filter "gst-launch-1.0.exe" `
-                   -ErrorAction SilentlyContinue | Select-Object -First 1
+            $exe = Get-ChildItem "C:\" -Recurse -Filter "gst-launch-1.0.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
             if ($exe) { $gstBin = $exe.DirectoryName }
           }
-          if (-not $gstBin) { Write-Error "❌ GStreamer no encontrado"; exit 1 }
-
+          if (-not $gstBin) { Write-Error "GStreamer no encontrado"; exit 1 }
           $GstPath = Split-Path $gstBin -Parent
-          Write-Host "✅ GStreamer encontrado en: $GstPath"
+          Write-Host "GStreamer en: $GstPath"
           echo "GSTREAMER_ROOT=$GstPath" >> $env:GITHUB_ENV
 
       - name: Configurar PKG_CONFIG para GStreamer
@@ -249,52 +204,37 @@ jobs:
           echo "GSTREAMER_1_0_ROOT_X86_64=$GstPath"      >> $env:GITHUB_ENV
           echo "$GstPath\bin"                             >> $env:GITHUB_PATH
 
-      # ── Compilación ───────────────────────────────────────────────────────
       - name: Compilar (Release)
         run: cargo build --release
 
-      # ── Copiar DLLs al directorio de salida ───────────────────────────────
       - name: Copiar DLLs de GStreamer
         shell: pwsh
         run: |
-          Write-Host "Copiando DLLs base de GStreamer..."
           Copy-Item "$env:GSTREAMER_ROOT\bin\*.dll" -Destination "target\release\" -Force
-
-          Write-Host "Eliminando DLLs de Python (evitan crash)..."
           Remove-Item "target\release\*python*.dll" -ErrorAction SilentlyContinue
-
-          Write-Host "Copiando plugins de GStreamer..."
           New-Item -ItemType Directory -Force -Path "target\release\lib\gstreamer-1.0"
-          Copy-Item "$env:GSTREAMER_ROOT\lib\gstreamer-1.0\*.dll" `
-                    "target\release\lib\gstreamer-1.0\" -Force
+          Copy-Item "$env:GSTREAMER_ROOT\lib\gstreamer-1.0\*.dll" "target\release\lib\gstreamer-1.0\" -Force
           Remove-Item "target\release\lib\gstreamer-1.0\*python*.dll" -ErrorAction SilentlyContinue
 
       - name: Copiar pdfium.dll
         shell: pwsh
-        run: |
-          # pdfium.dll ya está en la raíz del repo
-          Copy-Item "pdfium.dll" -Destination "target\release\" -Force
-          Write-Host "✅ pdfium.dll copiado"
+        run: Copy-Item "pdfium.dll" -Destination "target\release\" -Force
 
-      # ── Inno Setup ────────────────────────────────────────────────────────
       - name: Generar instalador con Inno Setup
         shell: pwsh
         run: |
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
 
-      - name: Mover instalador al raíz
+      - name: Mover instalador al raiz
         shell: pwsh
         run: |
-          $candidate = Get-ChildItem "Output" -Filter "*.exe" | Select-Object -First 1
-          if ($candidate) {
-            Move-Item $candidate.FullName "EasyPresenter-Win10-11.exe"
-            Write-Host "✅ Instalador listo: EasyPresenter-Win10-11.exe"
+          $exe = Get-ChildItem "Output" -Filter "*.exe" | Select-Object -First 1
+          if ($exe) {
+            Move-Item $exe.FullName "EasyPresenter-Win10-11.exe"
           } else {
-            Write-Error "❌ No se encontró el .exe generado por Inno Setup"
-            exit 1
+            Write-Error "No se encontro el .exe de Inno Setup"; exit 1
           }
 
-      # ── Artefactos y Release ──────────────────────────────────────────────
       - name: Subir artefacto
         uses: actions/upload-artifact@v4
         with:

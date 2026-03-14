@@ -179,13 +179,22 @@ impl AppState {
             let base = path.join("data");
             (base.clone(), base)
         } else {
-            // 🟠 LINUX (Instalado via .deb)
-            let proj_dirs = ProjectDirs::from("com", "Arbasante", "EasyPresenter")
-                .expect("No se pudo encontrar el directorio del usuario");
-            let user_dir = proj_dirs.data_dir().to_path_buf();
-            let sys_dir = std::path::PathBuf::from("/usr/share/easy-presenter-slint/data");
-            (user_dir, sys_dir)
-        };
+    // 🟠 LINUX (Instalado via .deb o AppImage)
+    let proj_dirs = ProjectDirs::from("com", "Arbasante", "EasyPresenter")
+        .expect("No se pudo encontrar el directorio del usuario");
+    let user_dir = proj_dirs.data_dir().to_path_buf();
+
+    // Si corremos dentro de un AppImage, $APPDIR apunta a la raíz del bundle.
+    // Si es un .deb instalado normalmente, usamos la ruta del sistema.
+    let sys_dir = if let Ok(appdir) = std::env::var("APPDIR") {
+        std::path::PathBuf::from(appdir)
+            .join("usr/share/easy-presenter-slint/data")
+    } else {
+        std::path::PathBuf::from("/usr/share/easy-presenter-slint/data")
+    };
+
+    (user_dir, sys_dir)
+};
 
         println!("📂 DIRECTORIO DE BASES DE DATOS: {:?}", user_data_dir);
 

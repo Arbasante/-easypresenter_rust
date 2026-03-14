@@ -10,10 +10,10 @@ permissions:
 
 jobs:
   # ══════════════════════════════════════════════════════════════════════════
-  # JOB 1: LINUX → .deb + AppImage
+  # JOB 1: LINUX → solo .deb
   # ══════════════════════════════════════════════════════════════════════════
   build-linux:
-    name: Linux (.deb + AppImage)
+    name: Linux (.deb)
     runs-on: ubuntu-22.04
 
     steps:
@@ -31,7 +31,7 @@ jobs:
           sudo apt-get install -y \
             libx11-dev libxkbcommon-dev libfontconfig1-dev \
             libasound2-dev libsqlite3-dev libunwind-dev \
-            libssl-dev pkg-config imagemagick libfuse2 \
+            libssl-dev pkg-config \
             libgtk-3-dev \
             libdbus-1-dev \
             libxrandr-dev \
@@ -46,7 +46,6 @@ jobs:
       - name: Copiar libpdfium.so al output
         run: cp libpdfium.so target/release/
 
-      # ── .deb ─────────────────────────────────────────────────────────────
       - name: Instalar cargo-deb
         run: cargo install cargo-deb
 
@@ -55,107 +54,16 @@ jobs:
           cargo deb
           cp target/debian/*.deb EasyPresenter-Linux.deb
 
-      # ── AppImage ──────────────────────────────────────────────────────────
-      - name: Descargar herramientas AppImage
-        run: |
-          curl -L "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage" -o linuxdeploy
-          curl -L "https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage" -o appimagetool
-          chmod +x linuxdeploy appimagetool
-
-      - name: Preparar AppDir
-        run: |
-          mkdir -p AppDir/usr/bin
-          mkdir -p AppDir/usr/lib
-          mkdir -p AppDir/usr/share/applications
-          mkdir -p AppDir/usr/share/icons/hicolor/256x256/apps
-          mkdir -p AppDir/usr/share/easy-presenter-slint/data
-          cp target/release/easy-presenter-slint AppDir/usr/bin/
-          cp libpdfium.so AppDir/usr/lib/
-          cp data/*.db AppDir/usr/share/easy-presenter-slint/data/
-
-      - name: Crear .desktop
-        run: |
-          printf '%s\n' \
-            '[Desktop Entry]' \
-            'Name=EasyPresenter' \
-            'Exec=easy-presenter-slint' \
-            'Icon=easy-presenter' \
-            'Type=Application' \
-            'Categories=AudioVideo;Utility;' \
-            'Comment=Presentacion multimedia, letras y Biblias' \
-            > AppDir/usr/share/applications/easy-presenter.desktop
-
-      - name: Preparar icono
-        run: |
-          DEST="AppDir/usr/share/icons/hicolor/256x256/apps/easy-presenter.png"
-          if [ -f "assets/icon.png" ]; then
-            cp assets/icon.png "$DEST"
-          elif [ -f "assets/icon.ico" ]; then
-            convert "assets/icon.ico[0]" -resize 256x256 "$DEST"
-          else
-            convert -size 256x256 xc:#1a1a3e \
-              -fill white -font DejaVu-Sans-Bold -pointsize 80 \
-              -gravity Center -annotate 0 "EP" "$DEST"
-          fi
-
-      - name: Desplegar dependencias con linuxdeploy
-        run: |
-          ./linuxdeploy --appimage-extract-and-run \
-            --appdir AppDir \
-            --desktop-file AppDir/usr/share/applications/easy-presenter.desktop \
-            --icon-file AppDir/usr/share/icons/hicolor/256x256/apps/easy-presenter.png
-
-      # Eliminar libs GStreamer/GLib del bundle para evitar mismatch de versiones.
-      # El AppImage usa las del sistema del usuario (Ubuntu 20+, Debian 11+).
-      - name: Limpiar libs GStreamer y GLib del AppDir
-        run: |
-          find AppDir/usr/lib \( \
-            -name "libgst*.so*"     -o \
-            -name "libglib*.so*"    -o \
-            -name "libgobject*.so*" -o \
-            -name "libgmodule*.so*" -o \
-            -name "libgthread*.so*" -o \
-            -name "libgio*.so*"     \
-          \) -print -delete
-
-      # printf evita el bug de indentacion YAML que corrompia el AppRun
-      # y causaba la ruta duplicada usr/bin/usr/bin
-      - name: Crear AppRun
-        run: |
-          printf '%s\n' \
-            '#!/bin/bash' \
-            'HERE="$(dirname "$(readlink -f "${0}")")"' \
-            'export LD_LIBRARY_PATH="${HERE}/usr/lib:${LD_LIBRARY_PATH}"' \
-            'unset GST_PLUGIN_PATH' \
-            'unset GST_PLUGIN_SYSTEM_PATH_1_0' \
-            'exec "${HERE}/usr/bin/easy-presenter-slint" "$@"' \
-            > AppDir/AppRun
-          chmod +x AppDir/AppRun
-          echo "=== Verificacion AppRun ===" && cat AppDir/AppRun
-
-      - name: Crear AppImage final
-        run: |
-          ARCH=x86_64 ./appimagetool --appimage-extract-and-run AppDir EasyPresenter-Linux.AppImage
-
-      # ── Artefactos y Release ──────────────────────────────────────────────
-      - name: Subir .deb
+      - name: Subir .deb como artefacto
         uses: actions/upload-artifact@v4
         with:
           name: EasyPresenter-Linux.deb
           path: EasyPresenter-Linux.deb
 
-      - name: Subir AppImage
-        uses: actions/upload-artifact@v4
-        with:
-          name: EasyPresenter-Linux.AppImage
-          path: EasyPresenter-Linux.AppImage
-
       - name: Publicar en GitHub Releases
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            EasyPresenter-Linux.deb
-            EasyPresenter-Linux.AppImage
+          files: EasyPresenter-Linux.deb
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

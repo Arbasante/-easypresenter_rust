@@ -205,15 +205,31 @@ impl AppState {
         let biblias_path = user_data_dir.join("biblias.db");
 
         // 3. PRIMERA EJECUCIÓN (Solo copia si estamos en Linux/Windows instalado y faltan archivos)
-        if !cantos_path.exists() || std::fs::metadata(&cantos_path).map(|m| m.len()).unwrap_or(0) < 10000 {
-            let sys_cantos = system_data_dir.join("cantos.db");
-            if sys_cantos.exists() { std::fs::copy(&sys_cantos, &cantos_path).ok(); }
-        }
+        let cantos_ok = Connection::open(&cantos_path)
+    .ok()
+    .and_then(|c| c.query_row("SELECT 1 FROM cantos LIMIT 1", [], |_| Ok(())).ok())
+    .is_some();
 
-        if !biblias_path.exists() || std::fs::metadata(&biblias_path).map(|m| m.len()).unwrap_or(0) < 10000 {
-            let sys_biblias = system_data_dir.join("biblias.db");
-            if sys_biblias.exists() { std::fs::copy(&sys_biblias, &biblias_path).ok(); }
-        }
+if !cantos_ok {
+    let sys_cantos = system_data_dir.join("cantos.db");
+    if sys_cantos.exists() {
+        std::fs::copy(&sys_cantos, &cantos_path)
+            .unwrap_or_else(|e| panic!("No se pudo copiar cantos.db: {}", e));
+    }
+}
+
+        let biblias_ok = Connection::open(&biblias_path)
+    .ok()
+    .and_then(|c| c.query_row("SELECT 1 FROM versiculos LIMIT 1", [], |_| Ok(())).ok())
+    .is_some();
+
+if !biblias_ok {
+    let sys_biblias = system_data_dir.join("biblias.db");
+    if sys_biblias.exists() {
+        std::fs::copy(&sys_biblias, &biblias_path)
+            .unwrap_or_else(|e| panic!("No se pudo copiar biblias.db: {}", e));
+    }
+}
 
 
         // 4. Abrir la conexión a las bases de datos (ahora garantizado que existen y tienen permisos)

@@ -517,40 +517,75 @@ fn mover_proyector_a_pantalla(p_weak: slint::Weak<ProjectorWindow>, x: i32, y: i
         });
     }
 }
+// Constantes que deben coincidir exactamente con los valores del .slint
+const PROJ_PADDING: f32 = 30.0;  // padding-* del VerticalLayout en ProjectorWindow
+const REF_ZONE_H:   f32 = 70.0;  // height del bloque "if referencia != """
+const CHAR_W:       f32 = 0.65;  // calibrado para font-weight 900 + Google Sans
+const LINE_H:       f32 = 1.28;  // line-height efectivo del Text de Slint
 
-fn calcular_font_size(texto: &str, tiene_referencia: bool, screen_w: f32, screen_h: f32) -> f32 {
-    let padding_w: f32 = 140.0;
-    let padding_h: f32 = if tiene_referencia { 200.0 } else { 120.0 };
-    let ancho_util = (screen_w - padding_w).max(800.0);
-    let alto_util  = (screen_h - padding_h).max(600.0);
-    let char_width_factor: f32  = 0.55;
-    let line_height_factor: f32 = 1.25;
+// Para cantos: usa TODO el alto disponible (sin zona de cita)
+fn calcular_font_size_canto(texto: &str, screen_w: f32, screen_h: f32) -> f32 {
+    let ancho_util = screen_w - PROJ_PADDING * 2.0;
+    let alto_util  = screen_h - PROJ_PADDING * 2.0;
+    _busqueda_binaria(texto, ancho_util, alto_util)
+}
+
+// Para versículos: reserva la zona fija de la cita y maximiza el verso
+fn calcular_font_size_versiculo(texto: &str, screen_w: f32, screen_h: f32) -> f32 {
+    let ancho_util = screen_w - PROJ_PADDING * 2.0;
+    let alto_util  = screen_h - PROJ_PADDING * 2.0 - REF_ZONE_H - 8.0;
+    let size = _busqueda_binaria(texto, ancho_util, alto_util);
+
+    // Techo de confort: evita que versículos muy cortos llenen toda la pantalla.
+    // Solo aplica a Biblia — cantos no tienen este techo.
+    let chars = texto.chars().count() as f32;
+    let techo = if chars < 15.0 {
+        screen_h * 0.26   // "Jesús lloró." → letra grande pero no enorme
+    } else if chars < 35.0 {
+        screen_h * 0.36   // versículos cortos de 1 línea
+    } else if chars < 80.0 {
+        screen_h * 0.52   // versículos medianos
+    } else {
+        f32::MAX           // versículos largos: sin techo, aprovecha todo
+    };
+
+    size.min(techo)
+}
+
+fn _busqueda_binaria(texto: &str, ancho_util: f32, alto_util: f32) -> f32 {
+    if texto.is_empty() { return 60.0; }
+
+    let max_word_chars = texto
+        .split_whitespace()
+        .map(|w| w.chars().count())
+        .max()
+        .unwrap_or(1) as f32;
 
     let estimar_lineas = |font_size: f32| -> f32 {
-        let chars_por_linea = (ancho_util / (font_size * char_width_factor)).floor().max(1.0);
+        let chars_por_linea = (ancho_util / (font_size * CHAR_W)).floor().max(1.0);
         let mut total = 0.0f32;
         for linea in texto.lines() {
             let chars = linea.chars().count() as f32;
-            if chars == 0.0 { total += 0.3; } else { total += (chars / chars_por_linea).ceil(); }
+            if chars == 0.0 { total += 0.4; } else { total += (chars / chars_por_linea).ceil(); }
         }
         total.max(1.0)
     };
 
     let mut min_size: f32 = 20.0;
-    let mut max_size: f32 = 300.0;
-    for _ in 0..30 {
-        let mid    = (min_size + max_size) / 2.0;
-        let lineas = estimar_lineas(mid);
-        let alto_necesario  = lineas * mid * line_height_factor;
-        let max_word_len    = texto.split_whitespace().map(|w| w.chars().count()).max().unwrap_or(1) as f32;
-        let ancho_max_palabra = max_word_len * mid * char_width_factor;
-        if alto_necesario <= alto_util && ancho_max_palabra <= ancho_util {
+    let mut max_size: f32 = alto_util * 0.85;
+
+    for _ in 0..40 {
+        let mid           = (min_size + max_size) / 2.0;
+        let alto_ocupado  = estimar_lineas(mid) * mid * LINE_H;
+        let ancho_palabra = max_word_chars * mid * CHAR_W;
+        if alto_ocupado <= alto_util && ancho_palabra <= ancho_util {
             min_size = mid;
         } else {
             max_size = mid;
         }
     }
-    (min_size * 0.92).clamp(30.0, screen_h * 0.18)
+
+    (min_size * 0.98).clamp(24.0, alto_util * 0.82)
 }
 
 // ---------------------------------------------------------------------------
@@ -959,6 +994,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let c_clone      = cargar_cantos.clone();
         let ui_handle    = ui.as_weak();
         let p_handle     = proyector.as_weak();
+        let sp_guardar   = Arc::clone(&segunda_pantalla);
         ui.on_guardar_canto(move |id, titulo, letra| {
             {
                 let estado = state_clone.lock().unwrap();
@@ -983,8 +1019,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     } else if !diapos_slint.is_empty() {
                         ui.set_active_estrofa_index(0); 0
                     } else { return; };
+                    let info_screen = *sp_guardar.lock().unwrap();
+                    let (screen_w, screen_h) = if let Some((_, _, w, h)) = info_screen { (w as f32, h as f32) } else { (1920.0, 1080.0) };
                     let texto_nuevo = diapos_slint[idx].texto.clone();
-                    let font_size   = calcular_font_size(&texto_nuevo, false, 1920.0, 1080.0);
+                    let font_size   = calcular_font_size_canto(&texto_nuevo, screen_w, screen_h);
                     p.set_texto_proyeccion(texto_nuevo);
                     p.set_tamano_letra(font_size);
                     p.set_referencia(SharedString::from(""));
@@ -1086,7 +1124,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let tiene_referencia = !ref_str.is_empty();
             let info = *sp.lock().unwrap();
             let (screen_w, screen_h) = if let Some((_, _, w, h)) = info { (w as f32, h as f32) } else { (1280.0, 720.0) };
-            let base_font_size = calcular_font_size(&texto, tiene_referencia, screen_w, screen_h);
+            let base_font_size = if tiene_referencia {
+                calcular_font_size_versiculo(&texto, screen_w, screen_h)
+            } else {
+                calcular_font_size_canto(&texto, screen_w, screen_h)
+            };
             let scale = if tiene_referencia { ui_local.get_biblias_font_scale() } else { ui_local.get_cantos_font_scale() };
             p.set_tamano_letra(base_font_size * scale);
             let modo_actual = if tiene_referencia { "biblias" } else { "cantos" };
@@ -1204,7 +1246,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             }).collect();
                             ui.set_estrofas_actuales(ModelRc::from(Rc::new(VecModel::from(diapos.clone()))));
                             ui.set_active_estrofa_index(target_index);
-                            ui.set_scroll_to_y(target_index as f32 * 115.0);
+                            let offset = target_index as f32 * 115.0;
+                            ui.set_scroll_to_y(if offset > 150.0 { -(offset - 150.0) } else { 0.0 });
                             if (target_index as usize) < diapos.len() {
                                 let text = diapos[target_index as usize].texto.clone();
                                 let ord  = diapos[target_index as usize].orden.clone();
@@ -1285,7 +1328,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let info       = *sp.lock().unwrap();
                         let (sw, sh)   = if let Some((_, _, w, h)) = info { (w as f32, h as f32) } else { (1280.0, 720.0) };
                         let scale      = if modo == "biblias" { ui.get_biblias_font_scale() } else { ui.get_cantos_font_scale() };
-                        p.set_tamano_letra(calcular_font_size(&texto, tiene_ref, sw, sh) * scale);
+                        let base_size  = if tiene_ref {
+                            calcular_font_size_versiculo(&texto, sw, sh)
+                        } else {
+                            calcular_font_size_canto(&texto, sw, sh)
+                        };
+                        p.set_tamano_letra(base_size * scale);
                     }
                 }
             }
@@ -1313,7 +1361,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let (sw, sh)   = if let Some((_, _, w, h)) = info { (w as f32, h as f32) } else { (1280.0, 720.0) };
                 let modo       = ui.get_modal_tab();
                 let scale      = if modo == "biblias" { ui.get_biblias_font_scale() } else { ui.get_cantos_font_scale() };
-                p.set_tamano_letra(calcular_font_size(&texto, tiene_ref, sw, sh) * scale);
+                let base_size = if tiene_ref {
+                    calcular_font_size_versiculo(&texto, sw, sh)
+                } else {
+                    calcular_font_size_canto(&texto, sw, sh)
+                };
+                p.set_tamano_letra(base_size * scale);
             }
         });
     }

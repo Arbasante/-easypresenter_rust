@@ -27,6 +27,7 @@ slint-build = "1.8.0" # VERSIÓN ACTUALIZADA
 
 # --- CONFIGURACIÓN PARA EL INSTALADOR DE LINUX (.deb) ---
 [package.metadata.deb]
+name = "easy-presenter"
 maintainer = "Arbasante"
 copyright = "2026, MIT LICENSE"
 extended-description = """
@@ -34,10 +35,9 @@ EasyPresenter: Software de presentación multimedia, letras y Biblias
 con soporte de video nativo mediante GStreamer.
 """
 depends = "$auto, libgstreamer1.0-0, gstreamer1.0-plugins-base, gstreamer1.0-plugins-good, gstreamer1.0-plugins-bad, gstreamer1.0-plugins-ugly, gstreamer1.0-libav"
-
 assets = [
-    # 1. Copia el ejecutable a /usr/bin/ con permisos de ejecución (755)
-    ["target/release/easy-presenter-slint", "usr/bin/", "755"],
-    # 2. Copia tus bases de datos originales a una carpeta compartida del sistema
-    ["data/*.db", "usr/share/easy-presenter-slint/data/", "644"]
+    ["target/release/easy-presenter-slint", "usr/bin/easy-presenter", "755"],
+    ["data/*.db", "usr/share/easy-presenter/data/", "644"],
+    ["assets/easy-presenter.desktop", "usr/share/applications/", "644"],
+    ["assets/icon.png", "usr/share/icons/hicolor/256x256/apps/easy-presenter.png", "644"]
 ]

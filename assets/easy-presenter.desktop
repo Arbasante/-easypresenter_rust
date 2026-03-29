@@ -1,0 +1,12 @@
+[Desktop Entry]
+Version=1.1.0
+Type=Application
+Name=Easy Presenter
+GenericName=Presentation Software
+Comment=Presentación multimedia, letras y Biblias
+Exec=easy-presenter
+Icon=easy-presenter
+Terminal=false
+Categories=Office;Presentation;
+Keywords=presentacion;biblia;cantos;slides;
+StartupNotify=true

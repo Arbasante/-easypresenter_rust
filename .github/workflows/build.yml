@@ -40,6 +40,16 @@ jobs:
             gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly \
             gstreamer1.0-libav
 
+      - name: Preparar assets para el .deb
+        run: |
+          mkdir -p assets
+          # Si no tienes icono propio, genera uno placeholder
+          if [ ! -f assets/icon.png ]; then
+            sudo apt-get install -y imagemagick
+            convert -size 256x256 xc:#0ea5e9 -fill white -pointsize 48 \
+              -gravity center -annotate 0 "EP" assets/icon.png
+          fi
+
       - name: Compilar (Release)
         run: cargo build --release
 
@@ -51,7 +61,7 @@ jobs:
 
       - name: Generar .deb
         run: |
-          cargo deb
+          cargo deb --deb-version "${{ github.ref_name }}"
           cp target/debian/*.deb EasyPresenter-Linux.deb
 
       - name: Subir .deb como artefacto

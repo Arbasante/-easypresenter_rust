@@ -12,6 +12,73 @@ use regex::Regex;
 use display_info::DisplayInfo;
 use lru::LruCache;
 use directories::ProjectDirs;
+use serde::{Deserialize, Serialize};
+
+// ── Configuración persistente ────────────────────────────────────────────────
+#[derive(Serialize, Deserialize, Default, Clone)]
+struct ConfigApp {
+    // Galería de fondos
+    biblias_image_paths: Vec<String>,
+    cantos_image_paths:  Vec<String>,
+    biblias_video_paths: Vec<String>,
+    cantos_video_paths:  Vec<String>,
+    biblias_selected_img: i32,
+    cantos_selected_img:  i32,
+    biblias_selected_vid: i32,
+    cantos_selected_vid:  i32,
+    biblias_video_path:  String,
+    cantos_video_path:   String,
+
+    // Apariencia
+    biblias_bg_type:      String,
+    cantos_bg_type:       String,
+    biblias_font_color:   [u8; 3],   // [r, g, b]
+    cantos_font_color:    [u8; 3],
+    biblias_fondo_opacity: f32,
+    cantos_fondo_opacity:  f32,
+    biblias_font_scale:   f32,
+    cantos_font_scale:    f32,
+
+    // Multimedia proyectable (imágenes y vídeos)
+    multimedia_paths: Vec<String>,
+    multimedia_names: Vec<String>,
+    multimedia_aspectos: Vec<String>,
+    video_paths: Vec<String>,
+    video_names: Vec<String>,
+    video_loops: Vec<bool>,
+
+    // Márgenes del proyector
+    margen_izquierdo: f32,
+    margen_derecho:   f32,
+    margen_superior:  f32,
+    margen_inferior:  f32,
+}
+
+fn config_path(user_data_dir: &std::path::Path) -> std::path::PathBuf {
+    user_data_dir.join("config.json")
+}
+
+fn cargar_config(user_data_dir: &std::path::Path) -> ConfigApp {
+    let path = config_path(user_data_dir);
+    if let Ok(data) = std::fs::read_to_string(&path) {
+        serde_json::from_str(&data).unwrap_or_default()
+    } else {
+        let mut cfg = ConfigApp::default();
+        cfg.biblias_bg_type   = "negro".to_string();
+        cfg.cantos_bg_type    = "negro".to_string();
+        cfg.biblias_font_color = [255, 255, 255];
+        cfg.cantos_font_color  = [255, 255, 255];
+        cfg.biblias_font_scale = 1.0;
+        cfg.cantos_font_scale  = 1.0;
+        cfg
+    }
+}
+
+fn guardar_config(user_data_dir: &std::path::Path, cfg: &ConfigApp) {
+    if let Ok(data) = serde_json::to_string_pretty(cfg) {
+        let _ = std::fs::write(config_path(user_data_dir), data);
+    }
+}
 
 use pdfium_render::prelude::*;
 use std::fs;
@@ -154,13 +221,12 @@ struct AppState {
     biblias_db: Connection,
     versiones:          Vec<VersionInfo>,
     current_version_id: i32,
-    // OPT-5: LRU con límite explícito. 150 capítulos × ~30 versículos × ~120 bytes
-    //        ≈ 540 KB máx. vs HashMap ilimitado que podía crecer indefinidamente.
     chapter_cache: LruCache<CacheKey, Vec<VersiculoDB>>,
     biblias_image_paths: Vec<String>,
     cantos_image_paths:  Vec<String>,
     biblias_video_paths: Vec<String>,
     cantos_video_paths:  Vec<String>,
+    user_data_dir: std::path::PathBuf,   // ← nuevo
 }
 
 
@@ -262,6 +328,7 @@ if !biblias_ok {
             cantos_image_paths:  Vec::new(),
             biblias_video_paths: Vec::new(),
             cantos_video_paths:  Vec::new(),
+            user_data_dir: user_data_dir.clone(),
         };
         state.procesar_versiones();
         Ok(state)
@@ -878,17 +945,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let bloqueo_estilos = Arc::new(AtomicBool::new(false));
 
     // ── Márgenes del proyector ───────────────────────────────────────────────
-    {
-        let p_weak = proyector.as_weak();
-        ui.on_actualizar_margenes(move |izq, der, sup, inf| {
-            if let Some(p) = p_weak.upgrade() {
-                p.set_margen_izquierdo(izq);
-                p.set_margen_derecho(der);
-                p.set_margen_superior(sup);
-                p.set_margen_inferior(inf);
-            }
-        });
-    }
+    // {
+    //     let p_weak = proyector.as_weak();
+        
+    //     ui.on_actualizar_margenes(move |izq, der, sup, inf| {
+    //         if let Some(p) = p_weak.upgrade() {
+    //             p.set_margen_izquierdo(izq);
+    //             p.set_margen_derecho(der);
+    //             p.set_margen_superior(sup);
+    //             p.set_margen_inferior(inf);
+    //         }
+    //         bsc_margenes();
+    //     });
+    // }
 
     // ── Detección de segunda pantalla ────────────────────────────────────────
     {
@@ -910,6 +979,168 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    // ── Cargar configuración persistente ────────────────────────────────────
+    let user_data_dir_cfg = state.lock().unwrap().user_data_dir.clone();
+    let cfg = cargar_config(&user_data_dir_cfg);
+
+    // Restaurar rutas de galería en AppState
+    {
+        let mut st = state.lock().unwrap();
+        st.biblias_image_paths = cfg.biblias_image_paths.clone();
+        st.cantos_image_paths  = cfg.cantos_image_paths.clone();
+        st.biblias_video_paths = cfg.biblias_video_paths.clone();
+        st.cantos_video_paths  = cfg.cantos_video_paths.clone();
+    }
+
+    // Restaurar multimedia proyectable
+    {
+        let mut mm = multimedia_state.write().unwrap();
+        for i in 0..cfg.multimedia_paths.len() {
+            mm.push(MediaData {
+                path:    cfg.multimedia_paths.get(i).cloned().unwrap_or_default(),
+                name:    cfg.multimedia_names.get(i).cloned().unwrap_or_default(),
+                aspecto: cfg.multimedia_aspectos.get(i).cloned().unwrap_or_else(|| "centro".to_string()),
+                is_loop: false,
+            });
+        }
+    }
+    {
+        let mut vs = video_state.write().unwrap();
+        for i in 0..cfg.video_paths.len() {
+            vs.push(MediaData {
+                path:    cfg.video_paths.get(i).cloned().unwrap_or_default(),
+                name:    cfg.video_names.get(i).cloned().unwrap_or_default(),
+                aspecto: "rellenar".to_string(),
+                is_loop: *cfg.video_loops.get(i).unwrap_or(&false),
+            });
+        }
+    }
+
+    // Restaurar UI: apariencia
+    ui.set_biblias_bg_type(SharedString::from(&cfg.biblias_bg_type));
+    ui.set_cantos_bg_type(SharedString::from(&cfg.cantos_bg_type));
+    ui.set_biblias_font_color(slint::Color::from_rgb_u8(cfg.biblias_font_color[0], cfg.biblias_font_color[1], cfg.biblias_font_color[2]));
+    ui.set_cantos_font_color(slint::Color::from_rgb_u8(cfg.cantos_font_color[0], cfg.cantos_font_color[1], cfg.cantos_font_color[2]));
+    ui.set_biblias_fondo_opacity(cfg.biblias_fondo_opacity);
+    ui.set_cantos_fondo_opacity(cfg.cantos_fondo_opacity);
+    ui.set_biblias_font_scale(if cfg.biblias_font_scale == 0.0 { 1.0 } else { cfg.biblias_font_scale });
+    ui.set_cantos_font_scale(if cfg.cantos_font_scale == 0.0 { 1.0 } else { cfg.cantos_font_scale });
+    ui.set_margen_izquierdo(cfg.margen_izquierdo);
+    ui.set_margen_derecho(cfg.margen_derecho);
+    ui.set_margen_superior(cfg.margen_superior);
+    ui.set_margen_inferior(cfg.margen_inferior);
+
+    // Restaurar galería de imágenes en la UI
+    {
+        let st = state.lock().unwrap();
+        let images_b: Vec<slint::Image> = st.biblias_image_paths.iter()
+            .filter_map(|p| load_image_cached(&image_cache, p))
+            .collect();
+        let images_c: Vec<slint::Image> = st.cantos_image_paths.iter()
+            .filter_map(|p| load_image_cached(&image_cache, p))
+            .collect();
+        let names_bv: Vec<SharedString> = st.biblias_video_paths.iter()
+            .map(|p| SharedString::from(std::path::Path::new(p).file_name().unwrap_or_default().to_string_lossy().to_string()))
+            .collect();
+        let names_cv: Vec<SharedString> = st.cantos_video_paths.iter()
+            .map(|p| SharedString::from(std::path::Path::new(p).file_name().unwrap_or_default().to_string_lossy().to_string()))
+            .collect();
+
+        if !images_b.is_empty() {
+            ui.set_biblias_image_data(ModelRc::from(Rc::new(VecModel::from(images_b))));
+            ui.set_biblias_selected_img(cfg.biblias_selected_img);
+            if let Some(img) = load_image_cached(&image_cache, st.biblias_image_paths.get(cfg.biblias_selected_img as usize).map(|s| s.as_str()).unwrap_or("")) {
+                ui.set_biblias_bg_image(img);
+                ui.set_biblias_has_image(true);
+            }
+        }
+        if !images_c.is_empty() {
+            ui.set_cantos_image_data(ModelRc::from(Rc::new(VecModel::from(images_c))));
+            ui.set_cantos_selected_img(cfg.cantos_selected_img);
+            if let Some(img) = load_image_cached(&image_cache, st.cantos_image_paths.get(cfg.cantos_selected_img as usize).map(|s| s.as_str()).unwrap_or("")) {
+                ui.set_cantos_bg_image(img);
+                ui.set_cantos_has_image(true);
+            }
+        }
+        if !names_bv.is_empty() {
+            ui.set_biblias_video_names(ModelRc::from(Rc::new(VecModel::from(names_bv))));
+            ui.set_biblias_video_path(SharedString::from(cfg.biblias_video_path.as_str()));
+            ui.set_biblias_selected_vid(cfg.biblias_selected_vid);
+        }
+        if !names_cv.is_empty() {
+            ui.set_cantos_video_names(ModelRc::from(Rc::new(VecModel::from(names_cv))));
+            ui.set_cantos_video_path(SharedString::from(cfg.cantos_video_path.as_str()));
+            ui.set_cantos_selected_vid(cfg.cantos_selected_vid);
+        }
+    }
+    // refresh_multimedia();
+    //  refresh_videos();
+
+    // Función auxiliar para construir y guardar ConfigApp desde el estado actual
+    let build_and_save_config = {
+        let state_cfg   = Arc::clone(&state);
+        let mm_cfg      = Arc::clone(&multimedia_state);
+        let vs_cfg      = Arc::clone(&video_state);
+        let ui_cfg      = ui.as_weak();
+        let udd         = user_data_dir_cfg.clone();
+        move || {
+            let ui = match ui_cfg.upgrade() { Some(u) => u, None => return };
+            let st = state_cfg.lock().unwrap();
+            let mm = mm_cfg.read().unwrap();
+            let vs = vs_cfg.read().unwrap();
+            let fc_b = ui.get_biblias_font_color();
+            let fc_c = ui.get_cantos_font_color();
+            let cfg = ConfigApp {
+                biblias_image_paths:  st.biblias_image_paths.clone(),
+                cantos_image_paths:   st.cantos_image_paths.clone(),
+                biblias_video_paths:  st.biblias_video_paths.clone(),
+                cantos_video_paths:   st.cantos_video_paths.clone(),
+                biblias_selected_img: ui.get_biblias_selected_img(),
+                cantos_selected_img:  ui.get_cantos_selected_img(),
+                biblias_selected_vid: ui.get_biblias_selected_vid(),
+                cantos_selected_vid:  ui.get_cantos_selected_vid(),
+                biblias_video_path:   ui.get_biblias_video_path().to_string(),
+                cantos_video_path:    ui.get_cantos_video_path().to_string(),
+                biblias_bg_type:      ui.get_biblias_bg_type().to_string(),
+                cantos_bg_type:       ui.get_cantos_bg_type().to_string(),
+                biblias_font_color:   [fc_b.red(), fc_b.green(), fc_b.blue()],
+                cantos_font_color:    [fc_c.red(), fc_c.green(), fc_c.blue()],
+                biblias_fondo_opacity: ui.get_biblias_fondo_opacity(),
+                cantos_fondo_opacity:  ui.get_cantos_fondo_opacity(),
+                biblias_font_scale:   ui.get_biblias_font_scale(),
+                cantos_font_scale:    ui.get_cantos_font_scale(),
+                multimedia_paths:   mm.iter().map(|m| m.path.clone()).collect(),
+                multimedia_names:   mm.iter().map(|m| m.name.clone()).collect(),
+                multimedia_aspectos: mm.iter().map(|m| m.aspecto.clone()).collect(),
+                video_paths: vs.iter().map(|v| v.path.clone()).collect(),
+                video_names: vs.iter().map(|v| v.name.clone()).collect(),
+                video_loops: vs.iter().map(|v| v.is_loop).collect(),
+                margen_izquierdo: ui.get_margen_izquierdo(),
+                margen_derecho:   ui.get_margen_derecho(),
+                margen_superior:  ui.get_margen_superior(),
+                margen_inferior:  ui.get_margen_inferior(),
+            };
+            guardar_config(&udd, &cfg);
+        }
+    };
+
+    // Ahora sí se puede usar build_and_save_config en márgenes
+    {
+        let p_weak2 = proyector.as_weak();
+        let bsc_margenes = build_and_save_config.clone();
+        ui.on_actualizar_margenes(move |izq, der, sup, inf| {
+            if let Some(p) = p_weak2.upgrade() {
+                p.set_margen_izquierdo(izq);
+                p.set_margen_derecho(der);
+                p.set_margen_superior(sup);
+                p.set_margen_inferior(inf);
+            }
+            bsc_margenes();
+        });
+    }
+
+    // refresh_multimedia();
+    // refresh_videos();
     // ── Inicialización de versiones y libros ─────────────────────────────────
     {
         let st = state.lock().unwrap();
@@ -1309,10 +1540,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let vp      = Arc::clone(&video_player);
         let sp      = Arc::clone(&segunda_pantalla);
         let bloqueo = Arc::clone(&bloqueo_estilos);
+        let bsc_estilos = build_and_save_config.clone();
         ui.on_sync_estilos(move || {
             let ui = ui_h.unwrap();
             let p  = p_h.unwrap();
-            // OPT-3: load con Acquire — par semántico con Release en proyectar_estrofa
             if bloqueo.load(Ordering::Acquire) { return; }
             let modo = ui.get_modal_tab();
             aplicar_estilos(&ui, &p, &vp, modo.as_str(), true);
@@ -1337,6 +1568,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
             }
+            bsc_estilos();
         });
     }
 
@@ -1345,6 +1577,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let ui_h = ui.as_weak();
         let p_h  = proyector.as_weak();
         let sp   = Arc::clone(&segunda_pantalla);
+        let bsc_font = build_and_save_config.clone();
         ui.on_sync_font_scale(move || {
             let ui         = ui_h.unwrap();
             let p          = p_h.unwrap();
@@ -1361,13 +1594,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let (sw, sh)   = if let Some((_, _, w, h)) = info { (w as f32, h as f32) } else { (1280.0, 720.0) };
                 let modo       = ui.get_modal_tab();
                 let scale      = if modo == "biblias" { ui.get_biblias_font_scale() } else { ui.get_cantos_font_scale() };
-                let base_size = if tiene_ref {
+                let base_size  = if tiene_ref {
                     calcular_font_size_versiculo(&texto, sw, sh)
                 } else {
                     calcular_font_size_canto(&texto, sw, sh)
                 };
                 p.set_tamano_letra(base_size * scale);
             }
+            bsc_font();
         });
     }
 
@@ -1376,6 +1610,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let ui_h        = ui.as_weak();
         let state_gal   = Arc::clone(&state);
         let img_cache   = Arc::clone(&image_cache);
+        let bsc_galeria = build_and_save_config.clone();
         ui.on_agregar_a_galeria(move |tipo| {
             let ui       = ui_h.unwrap();
             let tipo_str = tipo.to_string();
@@ -1403,6 +1638,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         ui.set_biblias_has_image(true);
                         ui.set_biblias_bg_type(SharedString::from("imagen"));
                         ui.invoke_sync_estilos();
+                        bsc_galeria();
                     }
                 } else if tipo_str == "cantos-img" {
                     if let Some(img) = load_image_cached(&img_cache, &path_str) {
@@ -1419,6 +1655,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         ui.set_cantos_has_image(true);
                         ui.set_cantos_bg_type(SharedString::from("imagen"));
                         ui.invoke_sync_estilos();
+                        bsc_galeria();
                     }
                 } else if tipo_str == "biblias-vid" {
                     estado.biblias_video_paths.push(path_str.clone());
@@ -1432,6 +1669,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     ui.set_biblias_video_path(SharedString::from(&path_str));
                     ui.set_biblias_bg_type(SharedString::from("video"));
                     ui.invoke_sync_estilos();
+                    bsc_galeria();
                 } else if tipo_str == "cantos-vid" {
                     estado.cantos_video_paths.push(path_str.clone());
                     let names: Vec<SharedString> = estado.cantos_video_paths.iter()
@@ -1444,6 +1682,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     ui.set_cantos_video_path(SharedString::from(&path_str));
                     ui.set_cantos_bg_type(SharedString::from("video"));
                     ui.invoke_sync_estilos();
+                    bsc_galeria();
                 }
             }
         });
@@ -1489,9 +1728,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     {
-        let ui_h      = ui.as_weak();
-        let state_del = Arc::clone(&state);
-        let img_cache = Arc::clone(&image_cache);
+        let ui_h        = ui.as_weak();
+        let state_del   = Arc::clone(&state);
+        let img_cache   = Arc::clone(&image_cache);
+        let bsc_del_gal = build_and_save_config.clone();
         ui.on_eliminar_galeria_item(move |tipo, idx| {
             let ui       = ui_h.unwrap();
             let mut estado = state_del.lock().unwrap();
@@ -1506,6 +1746,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     ui.set_biblias_image_data(ModelRc::from(Rc::new(VecModel::<slint::Image>::from(vec![]))));
                     ui.set_biblias_has_image(false); ui.set_biblias_bg_type(SharedString::from("negro"));
                     ui.invoke_sync_estilos();
+                    bsc_del_gal();
                 } else {
                     let paths: Vec<slint::Image> = estado.biblias_image_paths.iter()
                         .filter_map(|p| load_image_cached(&img_cache, p))
@@ -1514,6 +1755,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     ui.set_biblias_image_data(ModelRc::from(Rc::new(VecModel::from(paths))));
                     ui.set_biblias_selected_img(0);
                     ui.invoke_seleccionar_galeria_item(SharedString::from("biblias-img"), 0);
+                    bsc_del_gal();
                 }
             } else if tipo_str == "cantos-img" && idx_u < estado.cantos_image_paths.len() {
                 let removed = estado.cantos_image_paths.remove(idx_u);
@@ -1523,6 +1765,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     ui.set_cantos_image_data(ModelRc::from(Rc::new(VecModel::<slint::Image>::from(vec![]))));
                     ui.set_cantos_has_image(false); ui.set_cantos_bg_type(SharedString::from("negro"));
                     ui.invoke_sync_estilos();
+                    bsc_del_gal();
                 } else {
                     let paths: Vec<slint::Image> = estado.cantos_image_paths.iter()
                         .filter_map(|p| load_image_cached(&img_cache, p))
@@ -1531,6 +1774,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     ui.set_cantos_image_data(ModelRc::from(Rc::new(VecModel::from(paths))));
                     ui.set_cantos_selected_img(0);
                     ui.invoke_seleccionar_galeria_item(SharedString::from("cantos-img"), 0);
+                    bsc_del_gal();
                 }
             } else if tipo_str == "biblias-vid" && idx_u < estado.biblias_video_paths.len() {
                 estado.biblias_video_paths.remove(idx_u);
@@ -1541,6 +1785,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 drop(estado);
                 ui.set_biblias_video_names(ModelRc::from(Rc::new(VecModel::from(names))));
                 if is_empty { ui.set_biblias_bg_type(SharedString::from("negro")); ui.invoke_sync_estilos(); }
+                bsc_del_gal();
             } else if tipo_str == "cantos-vid" && idx_u < estado.cantos_video_paths.len() {
                 estado.cantos_video_paths.remove(idx_u);
                 let names: Vec<SharedString> = estado.cantos_video_paths.iter()
@@ -1550,6 +1795,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 drop(estado);
                 ui.set_cantos_video_names(ModelRc::from(Rc::new(VecModel::from(names))));
                 if is_empty { ui.set_cantos_bg_type(SharedString::from("negro")); ui.invoke_sync_estilos(); }
+                bsc_del_gal();
             }
         });
     }
@@ -1581,6 +1827,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         let multi_state   = Arc::clone(&multimedia_state);
         let refresh_clone = refresh_multimedia.clone();
+        let bsc_add_multi = build_and_save_config.clone();
         ui.on_agregar_multimedia(move || {
             if let Some(path) = rfd::FileDialog::new()
                 .add_filter("Imágenes", &["png","jpg","jpeg","webp"]).pick_file()
@@ -1589,6 +1836,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let path_str  = path.to_string_lossy().to_string();
                 multi_state.write().unwrap().push(MediaData { path: path_str, name: file_name, aspecto: "centro".to_string(), is_loop: false });
                 refresh_clone();
+                bsc_add_multi();
             }
         });
     }
@@ -1719,10 +1967,13 @@ let bind = pdfium_paths.iter()
     {
         let multi_state   = Arc::clone(&multimedia_state);
         let refresh_clone = refresh_multimedia.clone();
+        let bsc_aspecto   = build_and_save_config.clone();
         ui.on_cambiar_aspecto_multimedia(move |idx, aspecto| {
             let mut state = multi_state.write().unwrap();
             if let Some(item) = state.get_mut(idx as usize) { item.aspecto = aspecto.to_string(); }
-            drop(state); refresh_clone();
+            drop(state);
+            refresh_clone();
+            bsc_aspecto();
         });
     }
 
@@ -1730,6 +1981,7 @@ let bind = pdfium_paths.iter()
         let multi_state   = Arc::clone(&multimedia_state);
         let refresh_clone = refresh_multimedia.clone();
         let ui_handle     = ui.as_weak();
+        let bsc_del_multi = build_and_save_config.clone();
         ui.on_eliminar_multimedia(move |idx| {
             let mut state = multi_state.write().unwrap();
             if (idx as usize) < state.len() { state.remove(idx as usize); }
@@ -1737,6 +1989,7 @@ let bind = pdfium_paths.iter()
             let ui = ui_handle.unwrap();
             ui.set_selected_media_idx(-1);
             refresh_clone();
+            bsc_del_multi();
         });
     }
 
@@ -1789,10 +2042,13 @@ let bind = pdfium_paths.iter()
             ui.set_video_items(ModelRc::from(Rc::new(VecModel::from(slint_items))));
         }
     };
-
+    refresh_multimedia();
+    refresh_videos();
     {
+        
         let vid_state       = Arc::clone(&video_state);
         let refresh_clone   = refresh_videos.clone();
+        let bsc_add_vid     = build_and_save_config.clone();
         ui.on_agregar_video(move || {
             if let Some(path) = rfd::FileDialog::new()
                 .add_filter("Videos", &["mp4","mkv","avi","mov"]).pick_file()
@@ -1805,6 +2061,7 @@ let bind = pdfium_paths.iter()
                     is_loop: false,
                 });
                 refresh_clone();
+                bsc_add_vid();
             }
         });
     }
@@ -1814,6 +2071,7 @@ let bind = pdfium_paths.iter()
         let refresh_clone   = refresh_videos.clone();
         let ui_handle       = ui.as_weak();
         let prev_del        = Arc::clone(&preview_player);
+        let bsc_del_vid     = build_and_save_config.clone();
         ui.on_eliminar_video(move |idx| {
             let mut state = vid_state.write().unwrap();
             if (idx as usize) < state.len() { state.remove(idx as usize); }
@@ -1822,6 +2080,7 @@ let bind = pdfium_paths.iter()
             ui.set_selected_video_idx(-1);
             prev_del.lock().unwrap().detener();
             refresh_clone();
+            bsc_del_vid();
         });
     }
 
@@ -1935,10 +2194,13 @@ let bind = pdfium_paths.iter()
     {
         let vid_state_mode = Arc::clone(&video_state);
         let refresh_clone  = refresh_videos.clone();
+        let bsc_modo       = build_and_save_config.clone();
         ui.on_cambiar_modo_reproduccion(move |idx, modo| {
             let mut state = vid_state_mode.write().unwrap();
             if let Some(item) = state.get_mut(idx as usize) { item.is_loop = modo == "bucle"; }
-            drop(state); refresh_clone();
+            drop(state);
+            refresh_clone();
+            bsc_modo();
         });
     }
 

@@ -1,0 +1,38 @@
+{
+  "biblias_image_paths": [],
+  "cantos_image_paths": [],
+  "biblias_video_paths": [],
+  "cantos_video_paths": [],
+  "biblias_selected_img": -1,
+  "cantos_selected_img": -1,
+  "biblias_selected_vid": -1,
+  "cantos_selected_vid": -1,
+  "biblias_video_path": "",
+  "cantos_video_path": "",
+  "biblias_bg_type": "negro",
+  "cantos_bg_type": "negro",
+  "biblias_font_color": [
+    255,
+    255,
+    255
+  ],
+  "cantos_font_color": [
+    255,
+    255,
+    255
+  ],
+  "biblias_fondo_opacity": 0.0,
+  "cantos_fondo_opacity": 0.0,
+  "biblias_font_scale": 1.0,
+  "cantos_font_scale": 1.0,
+  "multimedia_paths": [],
+  "multimedia_names": [],
+  "multimedia_aspectos": [],
+  "video_paths": [],
+  "video_names": [],
+  "video_loops": [],
+  "margen_izquierdo": 0.0,
+  "margen_derecho": 0.0,
+  "margen_superior": 0.0,
+  "margen_inferior": 0.0
+}

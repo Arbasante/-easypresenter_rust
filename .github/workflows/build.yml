@@ -143,16 +143,34 @@ jobs:
         shell: pwsh
         run: |
           $GstPath = $env:GSTREAMER_ROOT
-          choco install pkgconfiglite -y --no-progress
-          
-          # EL TRUCO: Convertimos C:\ruta a /c/ruta y cambiamos \ por /
-          # Así pkg-config (que es de Linux) no se confunde con los dos puntos
-          $UnixPath = $GstPath -replace '\\', '/' -replace '^C:', '/c'
-          
-          echo "PKG_CONFIG_PATH=$UnixPath/lib/pkgconfig" >> $env:GITHUB_ENV
-          echo "GSTREAMER_1_0_ROOT_X86_64=$GstPath"      >> $env:GITHUB_ENV
-          echo "$GstPath\bin"                            >> $env:GITHUB_PATH
-          
+
+          # Instalamos pkg-config nativo para Windows (entiende rutas C:\...)
+          # pkgconfiglite NO funciona con rutas Windows — usamos el de MSYS2
+          choco install msys2 -y --no-progress
+          $msys2Bin = "C:\tools\msys64\usr\bin"
+          echo "$msys2Bin" >> $env:GITHUB_PATH
+
+          # PKG_CONFIG_PATH debe usar barras normales de Windows
+          $PkgConfigPath = "$GstPath\lib\pkgconfig"
+          echo "PKG_CONFIG_PATH=$PkgConfigPath"         >> $env:GITHUB_ENV
+          echo "GSTREAMER_1_0_ROOT_X86_64=$GstPath"     >> $env:GITHUB_ENV
+          echo "$GstPath\bin"                           >> $env:GITHUB_PATH
+
+          # Verificar que los .pc existen
+          Write-Host "Archivos .pc encontrados:"
+          Get-ChildItem "$PkgConfigPath\glib*.pc" -ErrorAction SilentlyContinue
+
+      - name: Forzar linking directo sin pkg-config
+        shell: pwsh
+        run: |
+          $GstPath = $env:GSTREAMER_ROOT
+          $Lib = "$GstPath\lib"
+          # Estas variables hacen que glib-sys encuentre las libs directamente
+          echo "GLIB_2.0_NO_PKG_CONFIG=1"              >> $env:GITHUB_ENV
+          echo "GSTREAMER_1_0_NO_PKG_CONFIG=1"          >> $env:GITHUB_ENV
+          echo "LIBRARY_PATH=$Lib"                      >> $env:GITHUB_ENV
+          echo "RUSTFLAGS=-L $Lib"                      >> $env:GITHUB_ENV
+
       - name: Compilar (Release)
         run: cargo build --release
 

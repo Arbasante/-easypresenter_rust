@@ -144,10 +144,15 @@ jobs:
         run: |
           $GstPath = $env:GSTREAMER_ROOT
           choco install pkgconfiglite -y --no-progress
-          echo "PKG_CONFIG_PATH=$GstPath\lib\pkgconfig"  >> $env:GITHUB_ENV
+          
+          # EL TRUCO: Convertimos C:\ruta a /c/ruta y cambiamos \ por /
+          # Así pkg-config (que es de Linux) no se confunde con los dos puntos
+          $UnixPath = $GstPath -replace '\\', '/' -replace '^C:', '/c'
+          
+          echo "PKG_CONFIG_PATH=$UnixPath/lib/pkgconfig" >> $env:GITHUB_ENV
           echo "GSTREAMER_1_0_ROOT_X86_64=$GstPath"      >> $env:GITHUB_ENV
-          echo "$GstPath\bin"                             >> $env:GITHUB_PATH
-
+          echo "$GstPath\bin"                            >> $env:GITHUB_PATH
+          
       - name: Compilar (Release)
         run: cargo build --release
 

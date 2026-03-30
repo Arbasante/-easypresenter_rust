@@ -66,7 +66,14 @@ jobs:
 
       - name: Generar .deb
         run: |
-          cargo deb --deb-version "${{ github.ref_name }}"
+          # Guardamos el tag (ej: v1.1.4) en una variable
+          TAG_NAME="${{ github.ref_name }}"
+          
+          # Le recortamos la "v" del principio (queda: 1.1.4)
+          CLEAN_VERSION="${TAG_NAME#v}"
+          
+          # Pasamos la versión limpia a cargo deb
+          cargo deb --deb-version "$CLEAN_VERSION"
           cp target/debian/*.deb EasyPresenter-Linux.deb
 
       - name: Subir .deb como artefacto
@@ -99,28 +106,37 @@ jobs:
         with:
           toolchain: stable
 
-      - name: Instalar GStreamer (Directo sin Chocolatey)
+      - name: Instalar GStreamer (Directo y a prueba de fallos)
         shell: pwsh
         run: |
-          # Usamos una versión estable y conocida de GStreamer
-          $Version = "1.24.2" 
+          $Version = "1.24.2"
           $UrlGst = "https://gstreamer.freedesktop.org/data/pkg/windows/$Version/msvc/gstreamer-1.0-msvc-x86_64-$Version.msi"
           $UrlDev = "https://gstreamer.freedesktop.org/data/pkg/windows/$Version/msvc/gstreamer-1.0-devel-msvc-x86_64-$Version.msi"
 
-          Write-Host "Descargando GStreamer $Version engañando al firewall..."
-          # El User-Agent falso es la clave para evitar el error 418
-          Invoke-WebRequest -Uri $UrlGst -OutFile "gst.msi" -UserAgent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-          Invoke-WebRequest -Uri $UrlDev -OutFile "gst-dev.msi" -UserAgent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+          Write-Host "1. Descargando GStreamer usando curl nativo..."
+          # Usamos curl puro. Sin fingir ser Chrome, el firewall no nos pedirá resolver JavaScript.
+          curl.exe -s -L -o gst.msi $UrlGst
 
-          Write-Host "Instalando paquetes MSI en silencio..."
+          # Comprobamos el tamaño del archivo para asegurar que bajó el MSI real y no una página de bloqueo HTML
+          $Size = (Get-Item "gst.msi").Length
+          if ($Size -lt 1000000) {
+              Write-Host "El servidor principal nos bloqueó. Usando servidor de respaldo (Web Archive)..."
+              $BackupUrlGst = "https://web.archive.org/web/0/if_/$UrlGst"
+              $BackupUrlDev = "https://web.archive.org/web/0/if_/$UrlDev"
+              
+              curl.exe -s -L -o gst.msi $BackupUrlGst
+              curl.exe -s -L -o gst-dev.msi $BackupUrlDev
+          } else {
+              Write-Host "Descarga principal exitosa. Bajando paquete de desarrollo..."
+              curl.exe -s -L -o gst-dev.msi $UrlDev
+          }
+
+          Write-Host "2. Instalando paquetes MSI en silencio..."
           Start-Process -Wait -FilePath msiexec -ArgumentList "/i gst.msi /quiet /norestart"
           Start-Process -Wait -FilePath msiexec -ArgumentList "/i gst-dev.msi /quiet /norestart"
 
-          # La ruta oficial donde se instalan los MSI de GStreamer
           $GstPath = "C:\gstreamer\1.0\msvc_x86_64"
-          Write-Host "GStreamer instalado en: $GstPath"
-          
-          # Guardamos la variable de entorno para los siguientes pasos
+          Write-Host "3. GStreamer instalado exitosamente en: $GstPath"
           echo "GSTREAMER_ROOT=$GstPath" >> $env:GITHUB_ENV
 
       - name: Configurar PKG_CONFIG para GStreamer

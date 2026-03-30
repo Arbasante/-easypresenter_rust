@@ -899,6 +899,77 @@ fn aplicar_estilos(
     }
 }
 
+fn configurar_ventana_proyector_linux(wid_store: Arc<Mutex<Option<String>>>) {
+    #[cfg(target_os = "linux")]
+    {
+        let pid = std::process::id().to_string();
+        thread::spawn(move || {
+            for delay_ms in [600u64, 1200u64, 2500u64, 4000u64] {
+                thread::sleep(std::time::Duration::from_millis(delay_ms));
+
+                let Ok(out) = std::process::Command::new("xdotool")
+                    .args(["search", "--pid", &pid])
+                    .output()
+                else { continue };
+
+                let wids_raw = String::from_utf8_lossy(&out.stdout);
+                let wids: Vec<&str> = wids_raw.split_whitespace().collect();
+                if wids.is_empty() { continue; }
+
+                // ── CLAVE: buscar la ventana SIN título (el proyector tiene title: "")
+                let mut proyector_wid: Option<String> = None;
+                for wid in &wids {
+                    let nombre_out = std::process::Command::new("xdotool")
+                        .args(["getwindowname", wid])
+                        .output();
+                    let nombre = match nombre_out {
+                        Ok(o) => String::from_utf8_lossy(&o.stdout).trim().to_string(),
+                        Err(_) => continue,
+                    };
+                    // El proyector tiene title vacío en el .slint
+                    if nombre.is_empty() || nombre == "Slint Window" && wids.len() == 1 {
+                        proyector_wid = Some(wid.to_string());
+                        break;
+                    }
+                }
+
+                let wid = match proyector_wid {
+                    Some(w) => w,
+                    None => continue,
+                };
+
+                println!("✅ Proyector encontrado: wid={}", wid);
+                *wid_store.lock().unwrap() = Some(wid.clone());
+
+                // Quitar acción minimizar
+                let _ = std::process::Command::new("xprop")
+                    .args([
+                        "-id", &wid,
+                        "-f", "_NET_WM_ALLOWED_ACTIONS", "32a",
+                        "-set", "_NET_WM_ALLOWED_ACTIONS",
+                        "_NET_WM_ACTION_MOVE,_NET_WM_ACTION_RESIZE,\
+                         _NET_WM_ACTION_MAXIMIZE_HORZ,_NET_WM_ACTION_MAXIMIZE_VERT,\
+                         _NET_WM_ACTION_FULLSCREEN,_NET_WM_ACTION_CHANGE_DESKTOP,\
+                         _NET_WM_ACTION_CLOSE",
+                    ])
+                    .output();
+
+                // Ocultar del taskbar
+                let _ = std::process::Command::new("xprop")
+                    .args([
+                        "-id", &wid,
+                        "-f", "_NET_WM_STATE", "32a",
+                        "-set", "_NET_WM_STATE",
+                        "_NET_WM_STATE_SKIP_TASKBAR,_NET_WM_STATE_SKIP_PAGER",
+                    ])
+                    .output();
+
+                break;
+            }
+        });
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Estructuras auxiliares para multimedia/PDF
 // ---------------------------------------------------------------------------
@@ -946,6 +1017,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // OPT-3: AtomicBool — lecturas/escrituras sin lock del SO
     let bloqueo_estilos = Arc::new(AtomicBool::new(false));
+
+    let proyector_abierto = Arc::new(AtomicBool::new(false));
+
+    let proyector_wid: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
 
     // ── Márgenes del proyector ───────────────────────────────────────────────
     // {
@@ -1309,26 +1384,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // ── Abrir proyector ──────────────────────────────────────────────────────
     {
-        let p_handle    = proyector.as_weak();
-        let sp_clone    = Arc::clone(&segunda_pantalla);
-        ui.on_abrir_proyector(move || {
-            let p    = p_handle.unwrap();
-            let info = *sp_clone.lock().unwrap();
-            if let Some((x, y, width, height)) = info {
-                p.show().unwrap();
-                mover_proyector_a_pantalla(p.as_weak(), x, y, width, height);
-            } else {
-                p.show().unwrap();
-                let p_weak = p.as_weak();
-                thread::spawn(move || {
-                    thread::sleep(std::time::Duration::from_millis(100));
-                    let _ = slint::invoke_from_event_loop(move || {
-                        if let Some(p) = p_weak.upgrade() { p.window().set_maximized(true); }
-                    });
+    let p_handle    = proyector.as_weak();
+    let sp_clone    = Arc::clone(&segunda_pantalla);
+    let pa          = Arc::clone(&proyector_abierto); // ← agregar
+    let wid_clone   = Arc::clone(&proyector_wid);
+    ui.on_abrir_proyector(move || {
+        let p    = p_handle.unwrap();
+        let info = *sp_clone.lock().unwrap();
+        pa.store(true, Ordering::Release); // ← agregar
+        if let Some((x, y, width, height)) = info {
+            p.show().unwrap();
+            configurar_ventana_proyector_linux(Arc::clone(&wid_clone));
+            mover_proyector_a_pantalla(p.as_weak(), x, y, width, height);
+        } else {
+            p.show().unwrap();
+            configurar_ventana_proyector_linux(Arc::clone(&wid_clone));
+            let p_weak = p.as_weak();
+            thread::spawn(move || {
+                thread::sleep(std::time::Duration::from_millis(100));
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(p) = p_weak.upgrade() { p.window().set_maximized(true); }
                 });
-            }
-        });
-    }
+            });
+        }
+    });
+}
 
     // ── Proyectar estrofa ────────────────────────────────────────────────────
     {
@@ -2172,6 +2252,24 @@ let bind = pdfium_paths.iter()
         ui.on_seek_proyector_video(move |percent| { vp_seek.lock().unwrap().seek_percentage(percent); });
     }
 
+    // Evitar que el proyector sea minimizado (Win+D, Super+H, etc.)
+// Impedir que el proyector sea minimizado por atajos de teclado (Super+H, Win+D, etc.)
+// Anti-minimize: 100ms es lo suficientemente rápido para ser imperceptible
+let p_restore = proyector.as_weak();
+let pa_timer  = Arc::clone(&proyector_abierto);
+let _restore_timer = slint::Timer::default();
+_restore_timer.start(
+    slint::TimerMode::Repeated,
+    std::time::Duration::from_millis(100),
+    move || {
+        if pa_timer.load(Ordering::Acquire) {
+            if let Some(p) = p_restore.upgrade() {
+                p.window().set_minimized(false);
+            }
+        }
+    },
+);
+
     // OPT-8: Timer declarado como variable local — vive hasta el final de main().
     //        El Box::leak original era un memory leak innecesario.
     let vp_timer       = Arc::clone(&video_player);
@@ -2318,6 +2416,16 @@ let bind = pdfium_paths.iter()
                     }
                 }
             }
+        });
+    }
+
+      {
+        let p_close = proyector.as_weak();
+        ui.window().on_close_requested(move || {
+            if let Some(p) = p_close.upgrade() {
+                p.hide().unwrap();
+            }
+            slint::CloseRequestResponse::HideWindow
         });
     }
 

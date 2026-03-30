@@ -25,12 +25,24 @@
   "cantos_fondo_opacity": 0.0,
   "biblias_font_scale": 1.0,
   "cantos_font_scale": 1.0,
-  "multimedia_paths": [],
-  "multimedia_names": [],
-  "multimedia_aspectos": [],
-  "video_paths": [],
-  "video_names": [],
-  "video_loops": [],
+  "multimedia_paths": [
+    "/home/basanteriano/Descargas/LOGO SANTUARIO-01.jpg"
+  ],
+  "multimedia_names": [
+    "LOGO SANTUARIO-01.jpg"
+  ],
+  "multimedia_aspectos": [
+    "centro"
+  ],
+  "video_paths": [
+    "/home/basanteriano/Descargas/BIENVENIDOS A LA CASA DE DIOS _ LOOPS _.mp4"
+  ],
+  "video_names": [
+    "BIENVENIDOS A LA CASA DE DIOS _ LOOPS _.mp4"
+  ],
+  "video_loops": [
+    true
+  ],
   "margen_izquierdo": 0.0,
   "margen_derecho": 0.0,
   "margen_superior": 0.0,

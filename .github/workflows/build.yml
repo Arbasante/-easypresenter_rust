@@ -48,11 +48,13 @@ jobs:
           mkdir -p assets
           # Si no tienes icono propio, genera uno placeholder
           if [ ! -f assets/icon.png ]; then
-            sudo apt-get install -y imagemagick
-            convert -size 256x256 xc:#0ea5e9 -fill white -pointsize 48 \
+            # Instalamos las fuentes dejavu para que ImageMagick tenga con qué escribir
+            sudo apt-get install -y imagemagick fonts-dejavu-core
+            
+            # Forzamos el uso de DejaVu-Sans
+            convert -size 256x256 "xc:#0ea5e9" -font DejaVu-Sans -fill white -pointsize 48 \
               -gravity center -annotate 0 "EP" assets/icon.png
           fi
-
       - name: Compilar (Release)
         run: cargo build --release
 
@@ -97,23 +99,28 @@ jobs:
         with:
           toolchain: stable
 
-      - name: Instalar GStreamer via Chocolatey
+      - name: Instalar GStreamer (Directo sin Chocolatey)
         shell: pwsh
         run: |
-          choco install gstreamer-devel -y --no-progress
-          $searchRoots = @("C:\Program Files\gstreamer", "C:\gstreamer", "C:\ProgramData\gstreamer")
-          $gstBin = $null
-          foreach ($root in $searchRoots) {
-            $exe = Get-ChildItem $root -Recurse -Filter "gst-launch-1.0.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
-            if ($exe) { $gstBin = $exe.DirectoryName; break }
-          }
-          if (-not $gstBin) {
-            $exe = Get-ChildItem "C:\" -Recurse -Filter "gst-launch-1.0.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
-            if ($exe) { $gstBin = $exe.DirectoryName }
-          }
-          if (-not $gstBin) { Write-Error "GStreamer no encontrado"; exit 1 }
-          $GstPath = Split-Path $gstBin -Parent
-          Write-Host "GStreamer en: $GstPath"
+          # Usamos una versión estable y conocida de GStreamer
+          $Version = "1.24.2" 
+          $UrlGst = "https://gstreamer.freedesktop.org/data/pkg/windows/$Version/msvc/gstreamer-1.0-msvc-x86_64-$Version.msi"
+          $UrlDev = "https://gstreamer.freedesktop.org/data/pkg/windows/$Version/msvc/gstreamer-1.0-devel-msvc-x86_64-$Version.msi"
+
+          Write-Host "Descargando GStreamer $Version engañando al firewall..."
+          # El User-Agent falso es la clave para evitar el error 418
+          Invoke-WebRequest -Uri $UrlGst -OutFile "gst.msi" -UserAgent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+          Invoke-WebRequest -Uri $UrlDev -OutFile "gst-dev.msi" -UserAgent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+
+          Write-Host "Instalando paquetes MSI en silencio..."
+          Start-Process -Wait -FilePath msiexec -ArgumentList "/i gst.msi /quiet /norestart"
+          Start-Process -Wait -FilePath msiexec -ArgumentList "/i gst-dev.msi /quiet /norestart"
+
+          # La ruta oficial donde se instalan los MSI de GStreamer
+          $GstPath = "C:\gstreamer\1.0\msvc_x86_64"
+          Write-Host "GStreamer instalado en: $GstPath"
+          
+          # Guardamos la variable de entorno para los siguientes pasos
           echo "GSTREAMER_ROOT=$GstPath" >> $env:GITHUB_ENV
 
       - name: Configurar PKG_CONFIG para GStreamer

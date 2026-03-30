@@ -52,6 +52,10 @@ struct ConfigApp {
     margen_derecho:   f32,
     margen_superior:  f32,
     margen_inferior:  f32,
+
+    // Fondo predeterminado
+    default_bg_type: String,
+    default_bg_idx:  i32,
 }
 
 fn config_path(user_data_dir: &std::path::Path) -> std::path::PathBuf {
@@ -1107,6 +1111,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ui.set_margen_derecho(cfg.margen_derecho);
     ui.set_margen_superior(cfg.margen_superior);
     ui.set_margen_inferior(cfg.margen_inferior);
+    ui.set_default_bg_type(SharedString::from(&cfg.default_bg_type));
+    ui.set_default_bg_idx(cfg.default_bg_idx);
 
     // Restaurar galería de imágenes en la UI
     {
@@ -1197,6 +1203,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 margen_derecho:   ui.get_margen_derecho(),
                 margen_superior:  ui.get_margen_superior(),
                 margen_inferior:  ui.get_margen_inferior(),
+                default_bg_type:  ui.get_default_bg_type().to_string(),
+                default_bg_idx:   ui.get_default_bg_idx(),
             };
             guardar_config(&udd, &cfg);
         }

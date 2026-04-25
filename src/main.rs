@@ -1944,90 +1944,169 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
+    
     // ── PDF ──────────────────────────────────────────────────────────────────
-    {
-        let ui_pdf   = ui.as_weak();
-        let state_pdf = Arc::clone(&pdf_state);
-        ui.on_agregar_pdf(move || {
-            let ui = ui_pdf.unwrap();
-            if let Some(path) = rfd::FileDialog::new().add_filter("PDF", &["pdf"]).pick_file() {
-                let file_name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
-                ui.set_is_importing_pdf(true);
-                ui.set_pdf_import_progress(0.0);
-                ui.set_pdf_import_filename(SharedString::from(&file_name));
-                let ui_t      = ui_pdf.clone();
-                let state_t   = Arc::clone(&state_pdf);
-                let path_clone = path.clone();
-                thread::spawn(move || {
-                    let pdfium_paths = [
-    "./",
-    "/usr/share/easy-presenter/",
-    "/usr/share/easy-presenter-slint/",
-];
-let bind = pdfium_paths.iter()
-    .find_map(|p| Pdfium::bind_to_library(
-        Pdfium::pdfium_platform_library_name_at_path(p)
-    ).ok())
-    .expect("No se encontró libpdfium.so en ninguna ruta conocida");
-                    let pdfium  = Pdfium::new(bind);
-                    if let Ok(document) = pdfium.load_pdf_from_file(&path_clone, None) {
-                        let total_pages = document.pages().len();
-                        let safe_name   = file_name.replace(' ', "_").replace(".pdf", "");
-                        let out_dir     = PathBuf::from(format!("data/pdfs/{}", safe_name));
-                        let _ = fs::create_dir_all(&out_dir);
-                        let mut saved_pages_paths = Vec::new();
-                        let mut thumb_path_str    = String::new();
-                        for (i, page) in document.pages().iter().enumerate() {
-                            let config = PdfRenderConfig::new().set_target_width(1920);
-                            if let Ok(bitmap) = page.render_with_config(&config) {
-                                let img       = bitmap.as_image();
-                                let page_path = out_dir.join(format!("page_{}.jpg", i));
-                                let _ = img.save(&page_path);
-                                saved_pages_paths.push(page_path.to_string_lossy().to_string());
-                                if i == 0 {
-                                    let t_path = out_dir.join("thumb.jpg");
-                                    let _ = page.render_with_config(&PdfRenderConfig::new().thumbnail(200))
-                                        .unwrap()
-                                        .as_image()
-                                        .save(&t_path);
+{
+    let ui_pdf    = ui.as_weak();
+    let state_pdf = Arc::clone(&pdf_state);
+    let udd_pdf   = user_data_dir_cfg.clone();
+
+    ui.on_agregar_pdf(move || {
+        let ui = ui_pdf.unwrap();
+        if let Some(path) = rfd::FileDialog::new().add_filter("PDF", &["pdf"]).pick_file() {
+            let file_name  = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+            ui.set_is_importing_pdf(true);
+            ui.set_pdf_import_progress(0.0);
+            ui.set_pdf_import_filename(SharedString::from(&file_name));
+
+            let ui_t       = ui_pdf.clone();
+            let state_t    = Arc::clone(&state_pdf);
+            let path_clone = path.clone();
+            let udd_clone  = udd_pdf.clone();
+
+            thread::spawn(move || {
+                // Buscar libpdfium en múltiples rutas sin panic
+                let exe_dir = std::env::current_exe()
+                    .unwrap_or_default()
+                    .parent()
+                    .unwrap_or(std::path::Path::new("."))
+                    .to_path_buf();
+
+                let pdfium_paths = [
+                    exe_dir,
+                    std::path::PathBuf::from("/usr/share/easy-presenter"),
+                    std::path::PathBuf::from("/usr/share/easy-presenter-slint"),
+                    std::path::PathBuf::from("/usr/lib"),
+                    std::path::PathBuf::from("."),
+                ];
+
+                let bind = pdfium_paths.iter().find_map(|p| {
+                    Pdfium::bind_to_library(
+                        Pdfium::pdfium_platform_library_name_at_path(p)
+                    ).ok()
+                });
+
+                let bind = match bind {
+                    Some(b) => b,
+                    None => {
+                        eprintln!("ERROR: No se encontró libpdfium en ninguna ruta");
+                        let ui_err = ui_t.clone();
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = ui_err.upgrade() {
+                                ui.set_is_importing_pdf(false);
+                            }
+                        });
+                        return;
+                    }
+                };
+
+                let pdfium = Pdfium::new(bind);
+
+                let document = match pdfium.load_pdf_from_file(&path_clone, None) {
+                    Ok(d) => d,
+                    Err(e) => {
+                        eprintln!("ERROR al abrir PDF: {}", e);
+                        let ui_err = ui_t.clone();
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = ui_err.upgrade() {
+                                ui.set_is_importing_pdf(false);
+                            }
+                        });
+                        return;
+                    }
+                };
+
+                let total_pages = document.pages().len();
+                let safe_name   = file_name.replace(' ', "_").replace(".pdf", "");
+
+                // Guardar en user_data_dir/pdfs/ — funciona tanto en dev como en .deb
+                let out_dir = udd_clone.join("pdfs").join(&safe_name);
+                if let Err(e) = fs::create_dir_all(&out_dir) {
+                    eprintln!("ERROR creando directorio {:?}: {}", out_dir, e);
+                    let ui_err = ui_t.clone();
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = ui_err.upgrade() {
+                            ui.set_is_importing_pdf(false);
+                        }
+                    });
+                    return;
+                }
+
+                let mut saved_pages_paths = Vec::new();
+                let mut thumb_path_str    = String::new();
+
+                for (i, page) in document.pages().iter().enumerate() {
+                    // 1280px es suficiente para proyección y ~2x más rápido que 1920px
+                    let config = PdfRenderConfig::new().set_target_width(1280);
+
+                    match page.render_with_config(&config) {
+                        Ok(bitmap) => {
+                            let img       = bitmap.as_image();
+                            let page_path = out_dir.join(format!("page_{}.jpg", i));
+
+                            if let Err(e) = img.save(&page_path) {
+                                eprintln!("ERROR guardando página {}: {}", i, e);
+                                continue;
+                            }
+
+                            saved_pages_paths.push(page_path.to_string_lossy().to_string());
+
+                            if i == 0 {
+                                let t_path = out_dir.join("thumb.jpg");
+                                if let Ok(thumb_bmp) = page.render_with_config(
+                                    &PdfRenderConfig::new().set_target_width(200)
+                                ) {
+                                    let _ = thumb_bmp.as_image().save(&t_path);
                                     thumb_path_str = t_path.to_string_lossy().to_string();
                                 }
                             }
-                            let progress = (i as f32 + 1.0) / total_pages as f32;
-                            let ui_prog = ui_t.clone();
-                            let _ = slint::invoke_from_event_loop(move || {
-                                if let Some(ui) = ui_prog.upgrade() { ui.set_pdf_import_progress(progress); }
-                            });
-                            thread::sleep(std::time::Duration::from_millis(10));
                         }
-                        state_t.write().unwrap().push(PdfData {
-                            name: file_name, thumb_path: thumb_path_str, pages: saved_pages_paths,
-                        });
+                        Err(e) => {
+                            eprintln!("ERROR renderizando página {}: {}", i, e);
+                            continue;
+                        }
                     }
-                    let ui_fin  = ui_t.clone();
-                    let state_fin = Arc::clone(&state_t);
+
+                    // Actualizar barra de progreso
+                    let progress = (i as f32 + 1.0) / total_pages as f32;
+                    let ui_prog  = ui_t.clone();
                     let _ = slint::invoke_from_event_loop(move || {
-                        if let Some(ui) = ui_fin.upgrade() {
-                            ui.set_is_importing_pdf(false);
-                            let items = state_fin.read().unwrap();
-                            let slint_items: Vec<PdfItem> = items.iter().enumerate().map(|(i, item)| {
-                                let img = slint::Image::load_from_path(std::path::Path::new(&item.thumb_path))
-                                    .unwrap_or_default();
-                                PdfItem {
-                                    id: i as i32,
-                                    nombre: SharedString::from(&item.name),
-                                    miniatura: img,
-                                    total_paginas: item.pages.len() as i32,
-                                }
-                            }).collect();
-                            ui.set_pdf_items(ModelRc::from(Rc::new(VecModel::from(slint_items))));
+                        if let Some(ui) = ui_prog.upgrade() {
+                            ui.set_pdf_import_progress(progress);
                         }
                     });
-                });
-            }
-        });
-    }
+                }
 
+                state_t.write().unwrap().push(PdfData {
+                    name:       file_name,
+                    thumb_path: thumb_path_str,
+                    pages:      saved_pages_paths,
+                });
+
+                let ui_fin    = ui_t.clone();
+                let state_fin = Arc::clone(&state_t);
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = ui_fin.upgrade() {
+                        ui.set_is_importing_pdf(false);
+                        let items = state_fin.read().unwrap();
+                        let slint_items: Vec<PdfItem> = items.iter().enumerate().map(|(i, item)| {
+                            let img = slint::Image::load_from_path(
+                                std::path::Path::new(&item.thumb_path)
+                            ).unwrap_or_default();
+                            PdfItem {
+                                id:            i as i32,
+                                nombre:        SharedString::from(&item.name),
+                                miniatura:     img,
+                                total_paginas: item.pages.len() as i32,
+                            }
+                        }).collect();
+                        ui.set_pdf_items(ModelRc::from(Rc::new(VecModel::from(slint_items))));
+                    }
+                });
+            });
+        }
+    });
+}
     {
         let ui_pdf_sel  = ui.as_weak();
         let state_pdf_s = Arc::clone(&pdf_state);

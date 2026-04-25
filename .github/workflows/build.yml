@@ -58,8 +58,10 @@ jobs:
       - name: Compilar (Release)
         run: cargo build --release
 
-      - name: Copiar libpdfium.so al output
-        run: cp libpdfium.so target/release/
+      - name: Verificar libpdfium.so disponible para el .deb
+        run: |
+            ls -la libpdfium.so  # confirma que existe en el repo
+            cp libpdfium.so target/release/  # copia al lado del binario también (fallback dev)
 
       - name: Instalar cargo-deb
         run: cargo install cargo-deb

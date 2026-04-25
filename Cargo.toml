@@ -40,5 +40,6 @@ assets = [
     ["target/release/easy-presenter-slint", "usr/bin/easy-presenter", "755"],
     ["data/*.db", "usr/share/easy-presenter/data/", "644"],
     ["assets/easy-presenter.desktop", "usr/share/applications/", "644"],
-    ["assets/icon.png", "usr/share/icons/hicolor/256x256/apps/easy-presenter.png", "644"]
+    ["assets/icon.png", "usr/share/icons/hicolor/256x256/apps/easy-presenter.png", "644"],
+    ["libpdfium.so", "usr/share/easy-presenter/", "755"]
 ]

@@ -594,8 +594,8 @@ fn mover_proyector_a_pantalla(p_weak: slint::Weak<ProjectorWindow>, x: i32, y: i
 // Constantes que deben coincidir exactamente con los valores del .slint
 const PROJ_PADDING: f32 = 30.0;  // padding-* del VerticalLayout en ProjectorWindow
 const REF_ZONE_H:   f32 = 70.0;  // height del bloque "if referencia != """
-const CHAR_W:       f32 = 0.65;  // calibrado para font-weight 900 + Google Sans
-const LINE_H:       f32 = 1.28;  // line-height efectivo del Text de Slint
+const CHAR_W:       f32 = 0.58;  // calibrado para font-weight 900 + Google Sans
+const LINE_H:       f32 = 1.38;  // line-height efectivo del Text de Slint
 
 // Para cantos: usa TODO el alto disponible (sin zona de cita)
 fn calcular_font_size_canto(texto: &str, screen_w: f32, screen_h: f32) -> f32 {
@@ -604,23 +604,30 @@ fn calcular_font_size_canto(texto: &str, screen_w: f32, screen_h: f32) -> f32 {
     _busqueda_binaria(texto, ancho_util, alto_util)
 }
 
-// Para versículos: reserva la zona fija de la cita y maximiza el verso
 fn calcular_font_size_versiculo(texto: &str, screen_w: f32, screen_h: f32) -> f32 {
     let ancho_util = screen_w - PROJ_PADDING * 2.0;
     let alto_util  = screen_h - PROJ_PADDING * 2.0 - REF_ZONE_H - 8.0;
     let size = _busqueda_binaria(texto, ancho_util, alto_util);
 
-    // Techo de confort: evita que versículos muy cortos llenen toda la pantalla.
-    // Solo aplica a Biblia — cantos no tienen este techo.
     let chars = texto.chars().count() as f32;
-    let techo = if chars < 15.0 {
-        screen_h * 0.26   // "Jesús lloró." → letra grande pero no enorme
-    } else if chars < 35.0 {
-        screen_h * 0.36   // versículos cortos de 1 línea
-    } else if chars < 80.0 {
-        screen_h * 0.52   // versículos medianos
+
+    // El techo ya no usa porcentajes del alto de pantalla.
+    // Usa píxeles absolutos calibrados para 1080p, que escalan
+    // proporcionalmente con el alto real de la pantalla.
+    let factor = screen_h / 1080.0;  // escala a la resolución real
+
+    let techo = if chars < 12.0 {
+        // "Jesús lloró." — máximo ~200px en 1080p, no más
+        180.0 * factor
+    } else if chars < 30.0 {
+        // versículos de 1 línea corta
+        140.0 * factor
+    } else if chars < 70.0 {
+        // versículos medianos de 2 líneas
+        110.0 * factor
     } else {
-        f32::MAX           // versículos largos: sin techo, aprovecha todo
+        // versículos largos: sin techo, que llene la pantalla
+        f32::MAX
     };
 
     size.min(techo)
@@ -640,15 +647,19 @@ fn _busqueda_binaria(texto: &str, ancho_util: f32, alto_util: f32) -> f32 {
         let mut total = 0.0f32;
         for linea in texto.lines() {
             let chars = linea.chars().count() as f32;
-            if chars == 0.0 { total += 0.4; } else { total += (chars / chars_por_linea).ceil(); }
+            if chars == 0.0 {
+                total += 0.4;
+            } else {
+                total += (chars / chars_por_linea).ceil();
+            }
         }
         total.max(1.0)
     };
 
-    let mut min_size: f32 = 20.0;
-    let mut max_size: f32 = alto_util * 0.85;
+    let mut min_size: f32 = 24.0;
+    let mut max_size: f32 = alto_util * 0.90; // antes 0.85 — permite explorar más alto
 
-    for _ in 0..40 {
+    for _ in 0..48 { // más iteraciones = más precisión
         let mid           = (min_size + max_size) / 2.0;
         let alto_ocupado  = estimar_lineas(mid) * mid * LINE_H;
         let ancho_palabra = max_word_chars * mid * CHAR_W;
@@ -659,7 +670,8 @@ fn _busqueda_binaria(texto: &str, ancho_util: f32, alto_util: f32) -> f32 {
         }
     }
 
-    (min_size * 0.98).clamp(24.0, alto_util * 0.82)
+    // 0.96 en lugar de 0.98 — peso 900 ocupa más que la estimación
+    (min_size * 0.96).clamp(24.0, alto_util * 0.88)
 }
 
 // ---------------------------------------------------------------------------

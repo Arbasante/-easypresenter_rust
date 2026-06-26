@@ -1599,6 +1599,55 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
+    // ── Previsualización bíblica (Shift+Enter) ───────────────────────────────
+    {
+        let ui_h        = ui.as_weak();
+        let state_clone = Arc::clone(&state);
+        let cb_lib      = Arc::clone(&current_biblia_libro);
+        let cb_cap      = Arc::clone(&current_biblia_capitulo);
+        ui.on_bible_search_preview(move |query| {
+            let ui = ui_h.unwrap();
+            let q  = query.to_string();
+            if let Some(caps) = RE_BUSQUEDA.captures(&q) {
+                let book_query         = &caps[1];
+                let capitulo: i32      = caps[2].parse().unwrap_or(1);
+                let versiculo_obj: i32 = caps.get(3).map_or(1, |m| m.as_str().parse().unwrap_or(1));
+                if let Some((libro_id, nombre_real)) = buscar_libro_inteligente(book_query) {
+                    *cb_lib.lock().unwrap() = libro_id;
+                    *cb_cap.lock().unwrap() = capitulo;
+                    let titulo = format!("{} {}", nombre_real, capitulo);
+                    ui.set_elemento_seleccionado(SharedString::from(&titulo));
+                    let state_t = Arc::clone(&state_clone);
+                    let ui_t    = ui.as_weak();
+                    thread::spawn(move || {
+                        let (versiculos, fav_refs) = {
+                            let mut estado = state_t.lock().unwrap();
+                            (estado.get_capitulo(libro_id, capitulo),
+                             estado.get_favoritos_refs_versiculos())
+                        };
+                        let _ = slint::invoke_from_event_loop(move || {
+                            let ui = ui_t.unwrap();
+                            let mut target_index = 0i32;
+                            let diapos: Vec<DiapositivaUI> = versiculos.iter().enumerate()
+                                .map(|(i, v)| {
+                                    if v.versiculo == versiculo_obj { target_index = i as i32; }
+                                    versiculo_a_ui_fav(v, &fav_refs, &titulo)
+                                })
+                                .collect();
+                            ui.set_estrofas_actuales(ModelRc::from(Rc::new(VecModel::from(diapos))));
+                            ui.set_active_estrofa_index(target_index);
+                            let offset = target_index as f32 * 115.0;
+                            ui.set_scroll_to_y(if offset > 150.0 { -(offset - 150.0) } else { 0.0 });
+                            // ⚠️ SIN invoke_proyectar_estrofa → segunda pantalla intacta
+                            ui.invoke_focus_panel();
+                        });
+                    });
+                    ui.set_bible_search_suggestion(SharedString::from(""));
+                }
+            }
+        });
+    }
+
     // ── Cambio de versión bíblica ────────────────────────────────────────────
     {
         let ui_h        = ui.as_weak();

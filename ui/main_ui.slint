@@ -264,6 +264,7 @@ in-out property <float> margen_inferior: 0;
     callback bible-version-changed(string);
     callback bible-search-changed(string);
     callback bible-search-accepted(string);
+    callback bible-search-preview(string);
     callback bible-book-selected(BookInfo);
     callback bible-chapter-selected(int);
 
@@ -440,7 +441,20 @@ in-out property <float> margen_inferior: 0;
                                         Rectangle {
                                             width: 100%; height: 100%;
                                             Text { text: root.bible-search-suggestion; color: #4b5563; font-size: 10px; vertical-alignment: center; horizontal-alignment: left; width: 100%; }
-                                            search_input := TextInput { width: 100%; height: 100%; text <=> root.bible-search-text; color: #f3f4f6; font-size: 10px; vertical-alignment: center; edited => { root.bible-search-changed(self.text); } accepted => { root.bible-search-accepted(self.text); } }
+                                            search_input := TextInput {
+                                                width: 100%; height: 100%;
+                                                text <=> root.bible-search-text;
+                                                color: #f3f4f6; font-size: 10px; vertical-alignment: center;
+                                                edited => { root.bible-search-changed(self.text); }
+                                                key-pressed(event) => {
+                                                    if (event.text == Key.Return && event.modifiers.shift) {
+                                                        root.bible-search-preview(self.text);
+                                                        return accept;
+                                                    }
+                                                    return reject;
+                                                }
+                                                accepted => { root.bible-search-accepted(self.text); }
+                                            }
                                         }
                                     }
                                 }

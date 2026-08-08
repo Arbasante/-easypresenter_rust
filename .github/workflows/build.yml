@@ -10,6 +10,7 @@ permissions:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  CARGO_TERM_COLOR: always
 
 jobs:
   # ══════════════════════════════════════════════════════════════════════════
@@ -96,123 +97,90 @@ jobs:
   # JOB 2: WINDOWS → instalador .exe con Inno Setup
   # ══════════════════════════════════════════════════════════════════════════
   build-windows:
-    name: Windows (.exe installer)
     runs-on: windows-latest
-
     steps:
-      - name: Descargar código fuente
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Configurar Rust (stable)
-        uses: dtolnay/rust-toolchain@master
+      - name: Instalar Rust (MSVC)
+        uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
+          targets: x86_64-pc-windows-msvc
 
-      - name: Instalar GStreamer (Directo y a prueba de fallos)
+      - name: Instalar pkg-config
+        run: choco install pkgconfiglite -y
+
+      - name: Instalar GStreamer (runtime + devel)
         shell: pwsh
         run: |
-          $Version = "1.24.2"
-          $UrlGst = "https://gstreamer.freedesktop.org/data/pkg/windows/$Version/msvc/gstreamer-1.0-msvc-x86_64-$Version.msi"
-          $UrlDev = "https://gstreamer.freedesktop.org/data/pkg/windows/$Version/msvc/gstreamer-1.0-devel-msvc-x86_64-$Version.msi"
+          $ver = "1.24.10"
+          $base = "https://gstreamer.freedesktop.org/data/pkg/windows/$ver/msvc"
 
-          Write-Host "1. Descargando GStreamer usando curl nativo..."
-          # Usamos curl puro. Sin fingir ser Chrome, el firewall no nos pedirá resolver JavaScript.
-          curl.exe -s -L -o gst.msi $UrlGst
+          Invoke-WebRequest "$base/gstreamer-1.0-msvc-x86_64-$ver.msi" -OutFile runtime.msi
+          Invoke-WebRequest "$base/gstreamer-1.0-devel-msvc-x86_64-$ver.msi" -OutFile devel.msi
 
-          # Comprobamos el tamaño del archivo para asegurar que bajó el MSI real y no una página de bloqueo HTML
-          $Size = (Get-Item "gst.msi").Length
-          if ($Size -lt 1000000) {
-              Write-Host "El servidor principal nos bloqueó. Usando servidor de respaldo (Web Archive)..."
-              $BackupUrlGst = "https://web.archive.org/web/0/if_/$UrlGst"
-              $BackupUrlDev = "https://web.archive.org/web/0/if_/$UrlDev"
-              
-              curl.exe -s -L -o gst.msi $BackupUrlGst
-              curl.exe -s -L -o gst-dev.msi $BackupUrlDev
-          } else {
-              Write-Host "Descarga principal exitosa. Bajando paquete de desarrollo..."
-              curl.exe -s -L -o gst-dev.msi $UrlDev
+          Start-Process msiexec.exe -ArgumentList "/i runtime.msi /quiet /norestart INSTALLLEVEL=1000" -Wait
+          Start-Process msiexec.exe -ArgumentList "/i devel.msi /quiet /norestart INSTALLLEVEL=1000" -Wait
+
+      - name: Configurar variables de entorno GStreamer
+        shell: pwsh
+        run: |
+          $gstRoot = "C:\gstreamer\1.0\msvc_x86_64"
+          echo "$gstRoot\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          echo "PKG_CONFIG_PATH=$gstRoot\lib\pkgconfig" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          echo "GSTREAMER_1_0_ROOT_MSVC_X86_64=$gstRoot\" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Build release
+        run: cargo build --release --target x86_64-pc-windows-msvc
+
+      - name: Copiar DLLs necesarias junto al .exe
+        shell: pwsh
+        run: |
+          $out = "target\x86_64-pc-windows-msvc\release"
+          Copy-Item pdfium.dll -Destination $out -Force
+
+          $gstBin = "C:\gstreamer\1.0\msvc_x86_64\bin"
+          $needed = @(
+            "gstreamer-1.0-0.dll","gobject-2.0-0.dll","glib-2.0-0.dll",
+            "gstapp-1.0-0.dll","gstvideo-1.0-0.dll","gstbase-1.0-0.dll",
+            "gstaudio-1.0-0.dll","intl-8.dll","ffi-7.dll"
+          )
+          foreach ($dll in $needed) {
+            $path = Join-Path $gstBin $dll
+            if (Test-Path $path) { Copy-Item $path -Destination $out -Force }
           }
 
-          Write-Host "2. Instalando paquetes MSI en silencio..."
-          Start-Process -Wait -FilePath msiexec -ArgumentList "/i gst.msi /quiet /norestart"
-          Start-Process -Wait -FilePath msiexec -ArgumentList "/i gst-dev.msi /quiet /norestart"
+          New-Item -ItemType Directory -Force -Path "$out\lib\gstreamer-1.0" | Out-Null
+          Copy-Item "C:\gstreamer\1.0\msvc_x86_64\lib\gstreamer-1.0\*" -Destination "$out\lib\gstreamer-1.0" -Recurse -Force
 
-          $GstPath = "C:\gstreamer\1.0\msvc_x86_64"
-          Write-Host "3. GStreamer instalado exitosamente en: $GstPath"
-          echo "GSTREAMER_ROOT=$GstPath" >> $env:GITHUB_ENV
+      - name: Instalar Inno Setup
+        run: choco install innosetup -y
 
-      - name: Configurar PKG_CONFIG para GStreamer
-        shell: pwsh
-        run: |
-          $GstPath = $env:GSTREAMER_ROOT
-
-          # Instalamos pkg-config nativo para Windows (entiende rutas C:\...)
-          # pkgconfiglite NO funciona con rutas Windows — usamos el de MSYS2
-          choco install msys2 -y --no-progress
-          $msys2Bin = "C:\tools\msys64\usr\bin"
-          echo "$msys2Bin" >> $env:GITHUB_PATH
-
-          # PKG_CONFIG_PATH debe usar barras normales de Windows
-          $PkgConfigPath = "$GstPath\lib\pkgconfig"
-          echo "PKG_CONFIG_PATH=$PkgConfigPath"         >> $env:GITHUB_ENV
-          echo "GSTREAMER_1_0_ROOT_X86_64=$GstPath"     >> $env:GITHUB_ENV
-          echo "$GstPath\bin"                           >> $env:GITHUB_PATH
-
-          # Verificar que los .pc existen
-          Write-Host "Archivos .pc encontrados:"
-          Get-ChildItem "$PkgConfigPath\glib*.pc" -ErrorAction SilentlyContinue
-
-      - name: Forzar linking directo sin pkg-config
-        shell: pwsh
-        run: |
-          $GstPath = $env:GSTREAMER_ROOT
-          $Lib = "$GstPath\lib"
-          # Estas variables hacen que glib-sys encuentre las libs directamente
-          echo "GLIB_2.0_NO_PKG_CONFIG=1"              >> $env:GITHUB_ENV
-          echo "GSTREAMER_1_0_NO_PKG_CONFIG=1"          >> $env:GITHUB_ENV
-          echo "LIBRARY_PATH=$Lib"                      >> $env:GITHUB_ENV
-          echo "RUSTFLAGS=-L $Lib"                      >> $env:GITHUB_ENV
-
-      - name: Compilar (Release)
-        run: cargo build --release
-
-      - name: Copiar DLLs de GStreamer
-        shell: pwsh
-        run: |
-          Copy-Item "$env:GSTREAMER_ROOT\bin\*.dll" -Destination "target\release\" -Force
-          Remove-Item "target\release\*python*.dll" -ErrorAction SilentlyContinue
-          New-Item -ItemType Directory -Force -Path "target\release\lib\gstreamer-1.0"
-          Copy-Item "$env:GSTREAMER_ROOT\lib\gstreamer-1.0\*.dll" "target\release\lib\gstreamer-1.0\" -Force
-          Remove-Item "target\release\lib\gstreamer-1.0\*python*.dll" -ErrorAction SilentlyContinue
-
-      - name: Copiar pdfium.dll
-        shell: pwsh
-        run: Copy-Item "pdfium.dll" -Destination "target\release\" -Force
-
-      - name: Generar instalador con Inno Setup
+      - name: Compilar instalador con Inno Setup
         shell: pwsh
         run: |
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
 
-      - name: Mover instalador al raiz
-        shell: pwsh
-        run: |
-          $exe = Get-ChildItem "Output" -Filter "*.exe" | Select-Object -First 1
-          if ($exe) {
-            Move-Item $exe.FullName "EasyPresenter-Win10-11.exe"
-          } else {
-            Write-Error "No se encontro el .exe de Inno Setup"; exit 1
-          }
-
-      - name: Subir artefacto
+      - name: Subir artefacto instalador
         uses: actions/upload-artifact@v4
         with:
-          name: EasyPresenter-Win10-11.exe
-          path: EasyPresenter-Win10-11.exe
+          name: easy-presenter-windows-installer
+          path: Output\*.exe
 
-      - name: Publicar en GitHub Releases
+  release:
+    needs: [build-linux, build-windows]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Descargar artefactos
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Crear Release en GitHub
         uses: softprops/action-gh-release@v2
         with:
-          files: EasyPresenter-Win10-11.exe
+          files: |
+            artifacts/easy-presenter-linux-deb/*.deb
+            artifacts/easy-presenter-windows-installer/*.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

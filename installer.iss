@@ -1,29 +1,62 @@
+; ============================================================
+;  Instalador de EasyPresenter para Windows (Inno Setup)
+; ============================================================
+
+#define MyAppName "EasyPresenter"
+#define MyAppVersion "1.0.0"
+#define MyAppPublisher "Arbasante"
+#define MyAppExeName "easy-presenter-slint.exe"
+#define BuildDir "target\x86_64-pc-windows-msvc\release"
+
 [Setup]
-AppName=EasyPresenter
-AppVersion=1.0.0
-DefaultDirName={localappdata}\EasyPresenter
-DefaultGroupName=EasyPresenter
-UninstallDisplayIcon={app}\easy-presenter-slint.exe
+AppId={{B4B6A5B0-6E2F-4F2C-9A9D-EASYPRESENTER1}}
+AppName={#MyAppName}
+AppVersion={#MyAppVersion}
+AppPublisher={#MyAppPublisher}
+DefaultDirName={autopf}\{#MyAppName}
+DefaultGroupName={#MyAppName}
+DisableProgramGroupPage=yes
+OutputDir=Output
+OutputBaseFilename=EasyPresenter-Setup-{#MyAppVersion}
 Compression=lzma2
 SolidCompression=yes
-OutputDir=Output
-OutputBaseFilename=Instalar_EasyPresenter_v1.0
-PrivilegesRequired=lowest
+WizardStyle=modern
+ArchitecturesAllowed=x64
+ArchitecturesInstallIn64BitMode=x64
+; Descomenta si tienes un icono .ico en assets:
+; SetupIconFile=assets\icon.ico
+UninstallDisplayIcon={app}\{#MyAppExeName}
+
+[Languages]
+Name: "spanish"; MessagesFile: "compiler:Languages\Spanish.isl"
+
+[Tasks]
+Name: "desktopicon"; Description: "Crear un acceso directo en el escritorio"; GroupDescription: "Accesos directos:"
 
 [Files]
-Source: "target\release\easy-presenter-slint.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "data\*";                                  DestDir: "{app}\data"; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "target\release\*.dll";                    DestDir: "{app}"; Flags: ignoreversion
-Source: "target\release\lib\*";                    DestDir: "{app}\lib"; Flags: ignoreversion recursesubdirs createallsubdirs
+; Ejecutable principal
+Source: "{#BuildDir}\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 
-[Registry]
-; GStreamer necesita saber dónde están sus plugins (no usa el registro del sistema
-; porque es una instalación portable sin el MSI oficial de GStreamer)
-Root: HKCU; Subkey: "Environment"; ValueType: string; ValueName: "GST_PLUGIN_PATH"; ValueData: "{app}\lib\gstreamer-1.0"; Flags: uninsdeletevalue
+; Librerías necesarias (pdfium, gstreamer core dlls) copiadas junto al exe por el workflow
+Source: "{#BuildDir}\*.dll"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist recursesubdirs
+
+; Plugins de GStreamer
+Source: "{#BuildDir}\gstreamer-1.0\*"; DestDir: "{app}\gstreamer-1.0"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
+
+; Datos de la app (base de datos, etc.)
+Source: "data\*"; DestDir: "{app}\data"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
+
+; Assets (íconos, recursos)
+Source: "assets\*"; DestDir: "{app}\assets"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 
 [Icons]
-Name: "{autodesktop}\EasyPresenter"; Filename: "{app}\easy-presenter-slint.exe"; WorkingDir: "{app}"
-Name: "{group}\EasyPresenter";       Filename: "{app}\easy-presenter-slint.exe"; WorkingDir: "{app}"
+Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
+Name: "{group}\Desinstalar {#MyAppName}"; Filename: "{uninstallexe}"
+Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
+
+[Registry]
+; Variable de entorno para que GStreamer encuentre los plugins portables
+Root: HKCU; Subkey: "Environment"; ValueType: expandsz; ValueName: "GST_PLUGIN_PATH"; ValueData: "{app}\gstreamer-1.0"; Flags: preservestringtype
 
 [Run]
-Filename: "{app}\easy-presenter-slint.exe"; Description: "Lanzar EasyPresenter"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#MyAppExeName}"; Description: "Ejecutar {#MyAppName}"; Flags: nowait postinstall skipifsilent

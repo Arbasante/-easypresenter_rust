@@ -70,24 +70,38 @@ jobs:
           choco install gstreamer --version=1.26.9 -y --no-progress
           choco install gstreamer-devel --version=1.26.9 -y --no-progress
 
-      - name: Configurar variables de entorno GStreamer
+      - name: Localizar instalación real de GStreamer
         shell: pwsh
         run: |
-          $gstRoot = "C:\gstreamer\1.0\msvc_x86_64"
-          echo "$gstRoot\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          Write-Host "Buscando glib-2.0.pc en el sistema..."
+          $pcFile = Get-ChildItem -Path "C:\gstreamer","C:\Program Files","C:\ProgramData\chocolatey\lib" `
+            -Recurse -Filter "glib-2.0.pc" -ErrorAction SilentlyContinue | Select-Object -First 1
 
-          # pkgconfiglite es una build estilo MSYS/Unix: interpreta ':' como separador
-          # de rutas, así que "C:\gstreamer\..." se rompe en "C" + "\gstreamer\...".
-          # Hay que pasarle la ruta en formato Unix: /c/gstreamer/...
-          $pkgConfigPathUnix = "/c/gstreamer/1.0/msvc_x86_64/lib/pkgconfig"
-          echo "PKG_CONFIG_PATH=$pkgConfigPathUnix" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          echo "GSTREAMER_1_0_ROOT_MSVC_X86_64=$gstRoot\" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          if (-not $pcFile) {
+            Write-Host "No se encontró glib-2.0.pc. Listando lo que SÍ se instaló para depurar:"
+            Get-ChildItem "C:\gstreamer" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 100 FullName
+            Get-ChildItem "C:\ProgramData\chocolatey\lib" -ErrorAction SilentlyContinue | Select-Object Name
+            throw "No se pudo localizar glib-2.0.pc en ninguna ruta conocida"
+          }
+
+          $pkgConfigDirWin = $pcFile.DirectoryName
+          # DirectoryName típico: ...\lib\pkgconfig  ->  root = dos niveles arriba
+          $gstRootWin = Split-Path (Split-Path $pkgConfigDirWin -Parent) -Parent
+
+          # Convertir C:\algo\ruta a formato Unix /c/algo/ruta (pkgconfiglite lo requiere así)
+          $pkgConfigDirUnix = "/" + $pkgConfigDirWin.Substring(0,1).ToLower() + $pkgConfigDirWin.Substring(2).Replace('\','/')
+
+          Write-Host "Root de GStreamer detectado: $gstRootWin"
+          Write-Host "pkgconfig (Unix)          : $pkgConfigDirUnix"
+
+          echo "GST_ROOT_WIN=$gstRootWin" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          echo "PKG_CONFIG_PATH=$pkgConfigDirUnix" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          echo "$gstRootWin\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
       - name: Verificar que pkg-config encuentra glib-2.0
         shell: pwsh
         run: |
           Write-Host "PKG_CONFIG_PATH = $env:PKG_CONFIG_PATH"
-          Get-ChildItem "C:\gstreamer\1.0\msvc_x86_64\lib\pkgconfig" -Filter "glib-2.0.pc" -ErrorAction SilentlyContinue
           pkg-config --debug --exists glib-2.0
           pkg-config --modversion glib-2.0
 
@@ -100,7 +114,8 @@ jobs:
           $out = "target\x86_64-pc-windows-msvc\release"
           Copy-Item pdfium.dll -Destination $out -Force
 
-          $gstBin = "C:\gstreamer\1.0\msvc_x86_64\bin"
+          $gstBin = "$env:GST_ROOT_WIN\bin"
+          Write-Host "Copiando DLLs desde: $gstBin"
           $needed = @(
             "gstreamer-1.0-0.dll","gobject-2.0-0.dll","glib-2.0-0.dll",
             "gstapp-1.0-0.dll","gstvideo-1.0-0.dll","gstbase-1.0-0.dll",
@@ -108,11 +123,20 @@ jobs:
           )
           foreach ($dll in $needed) {
             $path = Join-Path $gstBin $dll
-            if (Test-Path $path) { Copy-Item $path -Destination $out -Force }
+            if (Test-Path $path) {
+              Copy-Item $path -Destination $out -Force
+            } else {
+              Write-Warning "No se encontró $dll en $gstBin (puede que la app no la necesite)"
+            }
           }
 
           New-Item -ItemType Directory -Force -Path "$out\lib\gstreamer-1.0" | Out-Null
-          Copy-Item "C:\gstreamer\1.0\msvc_x86_64\lib\gstreamer-1.0\*" -Destination "$out\lib\gstreamer-1.0" -Recurse -Force
+          $pluginsSrc = "$env:GST_ROOT_WIN\lib\gstreamer-1.0"
+          if (Test-Path $pluginsSrc) {
+            Copy-Item "$pluginsSrc\*" -Destination "$out\lib\gstreamer-1.0" -Recurse -Force
+          } else {
+            throw "No se encontraron los plugins de GStreamer en $pluginsSrc"
+          }
 
       - name: Instalar Inno Setup
         run: choco install innosetup -y

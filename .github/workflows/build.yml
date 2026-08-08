@@ -1,4 +1,4 @@
-name: Compilar EasyPresenter Release
+name: Build Installers
 
 on:
   push:
@@ -6,97 +6,44 @@ on:
       - 'v*'
   workflow_dispatch:
 
-permissions:
-  contents: write
-
 env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   CARGO_TERM_COLOR: always
 
 jobs:
-  # ══════════════════════════════════════════════════════════════════════════
-  # JOB 1: LINUX → solo .deb
-  # ══════════════════════════════════════════════════════════════════════════
   build-linux:
-    name: Linux (.deb)
-    runs-on: ubuntu-22.04
-
+    runs-on: ubuntu-latest
     steps:
-      - name: Descargar código fuente
-        uses: actions/checkout@v4
-
-      - name: Configurar Rust (stable)
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: stable
+      - uses: actions/checkout@v4
 
       - name: Instalar dependencias del sistema
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            libx11-dev libxkbcommon-dev libfontconfig1-dev \
-            libasound2-dev libsqlite3-dev libunwind-dev \
-            libssl-dev pkg-config \
-            libgtk-3-dev \
-            libdbus-1-dev \
-            libxrandr-dev \
+            build-essential pkg-config \
+            libglib2.0-dev libfontconfig1-dev \
             libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
-            gstreamer1.0-plugins-base gstreamer1.0-plugins-good \
-            gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly \
-            gstreamer1.0-libav
+            gstreamer1.0-tools gstreamer1.0-plugins-base \
+            gstreamer1.0-plugins-good \
+            libxkbcommon-x11-0 libx11-6 libx11-xcb1 libxcb1
 
-      - name: Preparar assets para el .deb
-        run: |
-          mkdir -p assets
-          # Si no tienes icono propio, genera uno placeholder
-          if [ ! -f assets/icon.png ]; then
-            # Instalamos las fuentes dejavu para que ImageMagick tenga con qué escribir
-            sudo apt-get install -y imagemagick fonts-dejavu-core
-            
-            # Forzamos el uso de DejaVu-Sans
-            convert -size 256x256 "xc:#0ea5e9" -font DejaVu-Sans -fill white -pointsize 48 \
-              -gravity center -annotate 0 "EP" assets/icon.png
-          fi
-      - name: Compilar (Release)
-        run: cargo build --release
-
-      - name: Verificar libpdfium.so disponible para el .deb
-        run: |
-            ls -la libpdfium.so  # confirma que existe en el repo
-            cp libpdfium.so target/release/  # copia al lado del binario también (fallback dev)
+      - name: Instalar Rust
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Instalar cargo-deb
         run: cargo install cargo-deb
 
-      - name: Generar .deb
-        run: |
-          # Guardamos el tag (ej: v1.1.4) en una variable
-          TAG_NAME="${{ github.ref_name }}"
-          
-          # Le recortamos la "v" del principio (queda: 1.1.4)
-          CLEAN_VERSION="${TAG_NAME#v}"
-          
-          # Pasamos la versión limpia a cargo deb
-          cargo deb --deb-version "$CLEAN_VERSION"
-          cp target/debian/*.deb EasyPresenter-Linux.deb
+      - name: Build release
+        run: cargo build --release
 
-      - name: Subir .deb como artefacto
+      - name: Generar .deb
+        run: cargo deb
+
+      - name: Subir artefacto .deb
         uses: actions/upload-artifact@v4
         with:
-          name: EasyPresenter-Linux.deb
-          path: EasyPresenter-Linux.deb
+          name: easy-presenter-linux-deb
+          path: target/debian/*.deb
 
-      - name: Publicar en GitHub Releases
-        uses: softprops/action-gh-release@v2
-        with:
-          files: EasyPresenter-Linux.deb
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-
-  # ══════════════════════════════════════════════════════════════════════════
-  # JOB 2: WINDOWS → instalador .exe con Inno Setup
-  # ══════════════════════════════════════════════════════════════════════════
   build-windows:
     runs-on: windows-latest
     steps:
@@ -110,17 +57,11 @@ jobs:
       - name: Instalar pkg-config
         run: choco install pkgconfiglite -y
 
-      - name: Instalar GStreamer (runtime + devel)
+      - name: Instalar GStreamer (runtime + devel) via Chocolatey
         shell: pwsh
         run: |
-          $ver = "1.24.10"
-          $base = "https://gstreamer.freedesktop.org/data/pkg/windows/$ver/msvc"
-
-          Invoke-WebRequest "$base/gstreamer-1.0-msvc-x86_64-$ver.msi" -OutFile runtime.msi
-          Invoke-WebRequest "$base/gstreamer-1.0-devel-msvc-x86_64-$ver.msi" -OutFile devel.msi
-
-          Start-Process msiexec.exe -ArgumentList "/i runtime.msi /quiet /norestart INSTALLLEVEL=1000" -Wait
-          Start-Process msiexec.exe -ArgumentList "/i devel.msi /quiet /norestart INSTALLLEVEL=1000" -Wait
+          choco install gstreamer --version=1.26.9 -y --no-progress
+          choco install gstreamer-devel --version=1.26.9 -y --no-progress
 
       - name: Configurar variables de entorno GStreamer
         shell: pwsh

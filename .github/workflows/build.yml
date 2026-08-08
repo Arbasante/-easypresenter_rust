@@ -115,20 +115,15 @@ jobs:
           Copy-Item pdfium.dll -Destination $out -Force
 
           $gstBin = "$env:GST_ROOT_WIN\bin"
-          Write-Host "Copiando DLLs desde: $gstBin"
-          $needed = @(
-            "gstreamer-1.0-0.dll","gobject-2.0-0.dll","glib-2.0-0.dll",
-            "gstapp-1.0-0.dll","gstvideo-1.0-0.dll","gstbase-1.0-0.dll",
-            "gstaudio-1.0-0.dll","intl-8.dll","ffi-7.dll"
-          )
-          foreach ($dll in $needed) {
-            $path = Join-Path $gstBin $dll
-            if (Test-Path $path) {
-              Copy-Item $path -Destination $out -Force
-            } else {
-              Write-Warning "No se encontró $dll en $gstBin (puede que la app no la necesite)"
-            }
-          }
+          Write-Host "Copiando TODAS las DLLs desde: $gstBin"
+
+          # En vez de mantener una lista manual (que siempre termina incompleta:
+          # gio, gmodule, orc, pcre2, etc.), copiamos absolutamente todas las
+          # DLLs de runtime de GStreamer. Es más pesado pero elimina por completo
+          # los errores de "DLL no encontrada" al ejecutar en una PC limpia.
+          $dllCount = (Get-ChildItem "$gstBin\*.dll").Count
+          Write-Host "Se encontraron $dllCount DLLs en $gstBin"
+          Copy-Item "$gstBin\*.dll" -Destination $out -Force
 
           New-Item -ItemType Directory -Force -Path "$out\lib\gstreamer-1.0" | Out-Null
           $pluginsSrc = "$env:GST_ROOT_WIN\lib\gstreamer-1.0"

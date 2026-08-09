@@ -69,10 +69,10 @@ export component ProjectorWindow inherits Window {
             width: 100%; height: 100%;
             spacing: 0px;
 
-            padding-left: 30px;
-            padding-right: 30px;
-            padding-top: 30px;
-            padding-bottom: 30px;
+            padding-left: 4px;
+            padding-right: 4px;
+            padding-top: 3px;
+            padding-bottom: 3px;
 
             Rectangle {
                 vertical-stretch: 1;
@@ -83,7 +83,7 @@ export component ProjectorWindow inherits Window {
                     font-size: root.tamano_letra * 1px;
                     font-weight: 900;
                     wrap: word-wrap;
-                    overflow: elide;
+                    //overflow: elide;
                     horizontal-alignment: center;
                     vertical-alignment: center;
                     width: parent.width;
@@ -92,7 +92,9 @@ export component ProjectorWindow inherits Window {
             }
 
             if (root.referencia != "") : Rectangle {
-                height: 70px;
+                height: 8%;
+                min-height: 55px;
+                max-height: 100px;
                 background: transparent;
                 Text {
                     text: root.referencia;

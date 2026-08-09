@@ -1361,10 +1361,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     } else if !diapos_slint.is_empty() {
                         ui.set_active_estrofa_index(0); 0
                     } else { return; };
-                    let p_size = p.window().size();
-                    let (screen_w, screen_h) = (p_size.width as f32, p_size.height as f32);
-                    //let info_screen = *sp_guardar.lock().unwrap();
-                    //let (screen_w, screen_h) = if let Some((_, _, w, h)) = info_screen { (w as f32, h as f32) } else { (1920.0, 1080.0) };
+                    //let p_size = p.window().size();
+                    //let (screen_w, screen_h) = (p_size.width as f32, p_size.height as f32);
+                    let info_screen = *sp_guardar.lock().unwrap();
+                    let (screen_w, screen_h) = if let Some((_, _, w, h)) = info_screen { (w as f32, h as f32) } else { (1920.0, 1080.0) };
                     let texto_nuevo = diapos_slint[idx].texto.clone();
 let scale       = ui.get_cantos_font_scale();
 let font_size   = calcular_font_size_canto(&texto_nuevo, screen_w, screen_h, scale);
@@ -1473,10 +1473,10 @@ p.set_tamano_letra(font_size);
             }
             p.set_referencia(SharedString::from(ref_str.clone()));
             let tiene_referencia = !ref_str.is_empty();
-            let p_size = p.window().size();
-            let (screen_w, screen_h) = (p_size.width as f32, p_size.height as f32);
-            //let info = *sp.lock().unwrap();
-            //let (screen_w, screen_h) = if let Some((_, _, w, h)) = info { (w as f32, h as f32) } else { (1280.0, 720.0) };
+            //let p_size = p.window().size();
+            //let (screen_w, screen_h) = (p_size.width as f32, p_size.height as f32);
+            let info = *sp.lock().unwrap();
+            let (screen_w, screen_h) = if let Some((_, _, w, h)) = info { (w as f32, h as f32) } else { (1280.0, 720.0) };
             let scale = if tiene_referencia { ui_local.get_biblias_font_scale() } else { ui_local.get_cantos_font_scale() };
             let font_size = if tiene_referencia {
                 calcular_font_size_versiculo(&texto, screen_w, screen_h, scale)
@@ -1733,10 +1733,10 @@ p.set_tamano_letra(font_size);
                         let texto      = d.texto.to_string();
                         let referencia = p.get_referencia().to_string();
                         let tiene_ref  = !referencia.is_empty();
-                        let p_size = p.window().size();
-                        let (sw, sh) = (p_size.width as f32, p_size.height as f32);
-                        //let info       = *sp.lock().unwrap();
-                        //let (sw, sh)   = if let Some((_, _, w, h)) = info { (w as f32, h as f32) } else { (1280.0, 720.0) };
+                        //let p_size = p.window().size();
+                        //let (sw, sh) = (p_size.width as f32, p_size.height as f32);
+                        let info       = *sp.lock().unwrap();
+                        let (sw, sh)   = if let Some((_, _, w, h)) = info { (w as f32, h as f32) } else { (1280.0, 720.0) };
                         let scale      = if modo == "biblias" { ui.get_biblias_font_scale() } else { ui.get_cantos_font_scale() };
                         let base_size  = if tiene_ref {
                             calcular_font_size_versiculo(&texto, sw, sh, scale)
@@ -1770,10 +1770,10 @@ p.set_tamano_letra(font_size);
                 let texto     = d.texto.to_string();
                 let referencia = p.get_referencia().to_string();
                 let tiene_ref  = !referencia.is_empty();
-                let p_size = p.window().size();
-                let (sw, sh) = (p_size.width as f32, p_size.height as f32);
-                //let info       = *sp.lock().unwrap();
-                //let (sw, sh)   = if let Some((_, _, w, h)) = info { (w as f32, h as f32) } else { (1280.0, 720.0) };
+                //let p_size = p.window().size();
+                //let (sw, sh) = (p_size.width as f32, p_size.height as f32);
+                let info       = *sp.lock().unwrap();
+                let (sw, sh)   = if let Some((_, _, w, h)) = info { (w as f32, h as f32) } else { (1280.0, 720.0) };
                 let modo       = ui.get_modal_tab();
                 let scale      = if modo == "biblias" { ui.get_biblias_font_scale() } else { ui.get_cantos_font_scale() };
 let base_size  = if tiene_ref {

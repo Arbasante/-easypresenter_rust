@@ -51,16 +51,16 @@ export global Theme {
     // ── Texto ────────────────────────────────────────────────
     // Modo claro: negro casi puro para texto principal, jerarquía marcada
     // pero siempre legible (nada de grises lavados).
-    out property <color> text_primary:   root.is_dark ? #f3f4f6 : #262626;
-    out property <color> text_secondary: root.is_dark ? #9ca3af : #555555;
-    out property <color> text_muted:     root.is_dark ? #4b5563 : #777777;
+    out property <color> text_primary:   root.is_dark ? #ffffff : #000000;
+    out property <color> text_secondary: root.is_dark ? #ffffff : #000000;
+    out property <color> text_muted:     root.is_dark ? #ffffff : #000000;
 
     out property <color> accent: root.is_dark ? #0ea5e9 : #3f6f73;
     out property <color> accent_hover: root.is_dark ? #0284c7 : #31585b;
     out property <color> accent_soft: root.is_dark ? rgba(14,165,233,0.14) : rgba(63,111,115,0.14);
     out property <color> menu_hover: root.is_dark ? rgba(255,255,255,0.05) : #e8e8e8;
-    out property <color> menu_text: root.is_dark ? #e5e7eb : #303030;
-    out property <color> menu_icon: root.is_dark ? #9ca3af : #666666;
+    out property <color> menu_text: root.is_dark ? #ffffff : #000000;
+    out property <color> menu_icon: root.is_dark ? #ffffff : #000000;
     out property <color> overlay: root.is_dark ? rgba(0,0,0,0.65) : rgba(0,0,0,0.35);
     out property <color> shadow: root.is_dark ? rgba(0,0,0,0.6) : rgba(0,0,0,0.22);
 }
@@ -94,6 +94,31 @@ component TabButton inherits Rectangle {
 // ─────────────────────────────────────────────────────────────
 //  COMPONENTES PERSONALIZADOS (sin cambios)
 // ─────────────────────────────────────────────────────────────
+component TopMenuItem inherits Rectangle {
+    in property <string> text;
+    callback clicked;
+
+    width: 118px;
+    height: 36px;
+    border-radius: 4px;
+    background: touch-top.has-hover ? Theme.bg_card_hover : transparent;
+
+    touch-top := TouchArea {
+        clicked => { root.clicked(); }
+    }
+
+    Text {
+        text: root.text;
+        color: touch-top.has-hover ? Theme.text_primary : Theme.text_secondary;
+        font-size: 11px;
+        font-weight: 700;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        width: 100%;
+        height: 100%;
+    }
+}
+
 component MenuItem inherits Rectangle {
     in property <string> text;
     in property <string> icon;
@@ -157,7 +182,8 @@ in-out property <float> margen_inferior: 0;
     callback sync_estilos();
     
 
-    // Variables para el nuevo menú de configuración
+    // Propiedades conservadas por compatibilidad con Rust.
+    // El menú de configuración ahora es una barra superior fija.
     in-out property <bool> mostrar_menu_config: false;
     in-out property <length> menu_config_x: 0px;
     in-out property <length> menu_config_y: 0px;
@@ -777,53 +803,108 @@ in-out property <float> margen_inferior: 0;
             Rectangle {
                 horizontal-stretch: 1; background: Theme.bg_main;
                 VerticalLayout {
-                    // ── BARRA SUPERIOR CON TÍTULO + BOTONES ────
-                    Rectangle {
-                        height: 48px; background: Theme.bg_main;
-                        HorizontalLayout {
-                            padding-left: 24px; padding-right: 16px; spacing: 10px;
-                            // Título del elemento seleccionado
-                            Text {
-                                text: root.elemento_seleccionado == "" ? "SELECCIONA UN ELEMENTO" : "📖 " + root.elemento_seleccionado;
-                                color: root.elemento_seleccionado == "" ? Theme.text_muted : Theme.accent;
-                                font-size: 12px; font-weight: 900; vertical-alignment: center; horizontal-stretch: 1;
-                            }
-                           
-                            // ── Botón PERSONALIZAR (ACTUALIZADO A MENÚ) ──
-                            Rectangle {
-                                width: 28px; height: 28px; border-radius: 8px;
-                                background: touch-pers-top.has-hover ? Theme.bg_card_hover : Theme.bg_card;
-                                border-width: 1px; border-color: Theme.border_subtle;
-                                touch-pers-top := TouchArea { 
-                                    clicked => { 
-                                        // Calculamos la posición justo debajo del botón
-                                        root.menu_config_x = min(self.absolute-position.x - 170px, root.width - 200px); 
-                                        root.menu_config_y = self.absolute-position.y + self.height + 4px;
-                                        root.mostrar_menu_config = !root.mostrar_menu_config;
-                                    } 
+                    // ── MENÚ SUPERIOR + BARRA DE TÍTULO ─────────────────
+                    VerticalLayout {
+                        height: 84px;
+                        spacing: 0px;
+
+                        // Menú superior: reemplaza el botón de engranaje.
+                        Rectangle {
+                            height: 36px;
+                            background: Theme.bg_topbar;
+                            border-width: 1px;
+                            border-color: Theme.border_subtle;
+
+                            HorizontalLayout {
+                                padding-left: 8px;
+                                padding-right: 8px;
+                                spacing: 2px;
+
+                                TopMenuItem {
+                                    text: "Fondos";
+                                    clicked => { root.mostrar_personalizar = true; }
                                 }
-                                Text { text: "⚙"; font-size: 12px; color: touch-pers-top.has-hover ? Theme.text_primary : Theme.text_muted; horizontal-alignment: center; vertical-alignment: center; }
-                            }
-                            
-                            // ── Botón LIVE ──
-                            Rectangle {
-                                width: 52px; height: 28px; border-radius: 8px;
-                                background: touch-live.has-hover ? #b91c1c : #dc2626;
-                                drop-shadow-color: rgba(220, 38, 38, 0.35); drop-shadow-blur: 8px; drop-shadow-offset-y: 2px;
-                                touch-live := TouchArea { 
-                                    clicked => { 
-                                        root.abrir_proyector(); 
-                                        if (root.default_bg_type == "imagen" && root.default_bg_idx >= 0 && root.default_bg_idx < root.multimedia_items.length) {
-                                            root.proyectar_multimedia(root.default_bg_idx);
-                                        } else if (root.default_bg_type == "video" && root.default_bg_idx >= 0 && root.default_bg_idx < root.video_items.length) {
-                                            root.proyectar_video(root.default_bg_idx);
+
+                                TopMenuItem {
+                                    text: "Proyector";
+                                    clicked => { root.mostrar_modal_margenes = true; }
+                                }
+
+                                TopMenuItem {
+                                    text: "Tema";
+                                    clicked => {
+                                        Theme.is_dark = !Theme.is_dark;
+                                        root.notificar_cambio_tema(Theme.is_dark);
+                                    }
+                                }
+
+                                TopMenuItem {
+                                    text: "Importar/Exportar";
+                                    clicked => {
+                                        // Opción preparada para la futura lógica
+                                        // de importación/exportación.
+                                    }
+                                }
+
+                                Rectangle { horizontal-stretch: 1; }
+
+                                Rectangle {
+                                    width: 52px;
+                                    height: 28px;
+                                    border-radius: 8px;
+                                    background: touch-live.has-hover ? #b91c1c : #dc2626;
+                                    drop-shadow-color: rgba(220, 38, 38, 0.35);
+                                    drop-shadow-blur: 8px;
+                                    drop-shadow-offset-y: 2px;
+
+                                    touch-live := TouchArea {
+                                        clicked => {
+                                            root.abrir_proyector();
+                                            if (root.default_bg_type == "imagen" && root.default_bg_idx >= 0 && root.default_bg_idx < root.multimedia_items.length) {
+                                                root.proyectar_multimedia(root.default_bg_idx);
+                                            } else if (root.default_bg_type == "video" && root.default_bg_idx >= 0 && root.default_bg_idx < root.video_items.length) {
+                                                root.proyectar_video(root.default_bg_idx);
+                                            }
                                         }
-                                    } 
+                                    }
+
+                                    Text {
+                                        text: "LIVE";
+                                        font-size: 9px;
+                                        font-weight: 900;
+                                        letter-spacing: 0.8px;
+                                        color: white;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                    }
                                 }
-                                Text { text: "LIVE"; font-size: 9px; font-weight: 900; letter-spacing: 0.8px; color: white; horizontal-alignment: center; vertical-alignment: center; }
                             }
                         }
-                        Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border_subtle; }
+
+                        Rectangle {
+                            height: 48px;
+                            background: Theme.bg_main;
+
+                            HorizontalLayout {
+                                padding-left: 24px;
+                                padding-right: 16px;
+
+                                Text {
+                                    text: root.elemento_seleccionado == "" ? "SELECCIONA UN ELEMENTO" : "📖 " + root.elemento_seleccionado;
+                                    color: root.elemento_seleccionado == "" ? Theme.text_muted : Theme.accent;
+                                    font-size: 12px;
+                                    font-weight: 900;
+                                    vertical-alignment: center;
+                                    horizontal-stretch: 1;
+                                }
+                            }
+
+                            Rectangle {
+                                y: parent.height - 1px;
+                                height: 1px;
+                                background: Theme.border_subtle;
+                            }
+                        }
                     }
 
                     panel-focus := FocusScope {
@@ -1554,71 +1635,6 @@ in-out property <float> margen_inferior: 0;
                             Rectangle { width: 110px; height: 38px; border-radius: 6px; background: touch-save.has-hover ? Theme.accent_hover : Theme.accent; touch-save := TouchArea { clicked => { root.guardar_canto(root.form_id, root.form_titulo, root.form_letra); root.mostrar_formulario = false; } } Text { text: "Guardar"; color: white; font-size: 11px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; } }
                         }
                     }
-                }
-            }
-        }
-    }
-
-    // ══════════════════════════════════════════════════════════════
-    //  MENÚ DESPLEGABLE DE CONFIGURACIÓN PRINCIPAL
-    // ══════════════════════════════════════════════════════════════
-    if (root.mostrar_menu_config) : Rectangle {
-        width: 100%; height: 100%; background: transparent;
-        TouchArea { clicked => { root.mostrar_menu_config = false; } } // Cierra el menú al hacer clic fuera
-
-        Rectangle {
-            x: root.menu_config_x; y: root.menu_config_y;
-            width: 200px; height: 148px;
-            background: Theme.bg_popup; border-radius: 8px; border-width: 1px; border-color: Theme.border_strong;
-            drop-shadow-color: Theme.shadow; drop-shadow-blur: 16px;
-            TouchArea {} // Evita que los clics pasen al fondo
-
-            VerticalLayout {
-                padding: 4px; spacing: 2px;
-                
-                // Opción 1: Mantiene la lógica original de los fondos
-                MenuItem { 
-                    text: "Fondos"; 
-                    clicked => { 
-                        root.mostrar_menu_config = false; 
-                        root.mostrar_personalizar = true; 
-                    } 
-                }
-                
-                HorizontalLayout { padding-left: 6px; padding-right: 6px; padding-top: 2px; padding-bottom: 2px; Rectangle { height: 1px; background: Theme.separator; } }
-                
-                // Opción 2: Configuración de la segunda pantalla
-                MenuItem { 
-                    text: "Opciones Proyector"; 
-                    clicked => { 
-        root.mostrar_menu_config = false; // Cierra el menú desplegable
-        root.mostrar_modal_margenes = true; // ABRE EL MODAL DE MÁRGENES
-    }
-                }
-                
-                HorizontalLayout { padding-left: 6px; padding-right: 6px; padding-top: 2px; padding-bottom: 2px; Rectangle { height: 1px; background: Theme.separator; } }
-
-                // Opción 3 (NUEVA): Cambiar tema claro / oscuro
-                MenuItem {
-                    text: Theme.is_dark ? "🌙 Tema Oscuro" : "☀️ Tema Claro";
-                    clicked => {
-                        Theme.is_dark = !Theme.is_dark;
-                        root.mostrar_menu_config = false;
-                        root.notificar_cambio_tema(Theme.is_dark);
-                    }
-                }
-
-                HorizontalLayout { padding-left: 6px; padding-right: 6px; padding-top: 2px; padding-bottom: 2px; Rectangle { height: 1px; background: Theme.separator; } }
-                
-                // Opción 4: Importar/Exportar
-                MenuItem { 
-                    text: "Importar/Exportar"; 
-                    
-                    clicked => { 
-                        root.mostrar_menu_config = false; 
-                        // Aquí puedes añadir tu callback o lógica futura:
-                        // root.abrir_importar_exportar();
-                    } 
                 }
             }
         }

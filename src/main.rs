@@ -1034,6 +1034,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // OPT-3: AtomicBool — lecturas/escrituras sin lock del SO
     let bloqueo_estilos = Arc::new(AtomicBool::new(false));
+    let modo_en_vivo: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
 
     let proyector_abierto = Arc::new(AtomicBool::new(false));
 
@@ -1451,7 +1452,8 @@ p.set_tamano_letra(font_size);
         let state_clone = Arc::clone(&state);
         let ui_h        = ui.as_weak();
         let vp          = Arc::clone(&video_player);
-        let last_modo   = Arc::new(Mutex::new(String::new()));
+
+        let last_modo   = Arc::clone(&modo_en_vivo); 
         let sp          = Arc::clone(&segunda_pantalla);
         let bloqueo     = Arc::clone(&bloqueo_estilos);
 
@@ -1709,12 +1711,18 @@ p.set_tamano_letra(font_size);
         let vp      = Arc::clone(&video_player);
         let sp      = Arc::clone(&segunda_pantalla);
         let bloqueo = Arc::clone(&bloqueo_estilos);
+        let modo_vivo   = Arc::clone(&modo_en_vivo);
         let bsc_estilos = build_and_save_config.clone();
         ui.on_sync_estilos(move || {
             let ui = ui_h.unwrap();
             let p  = p_h.unwrap();
             if bloqueo.load(Ordering::Acquire) { return; }
             let modo = ui.get_modal_tab();
+            let en_vivo = modo_vivo.lock().unwrap().clone();
+        if en_vivo.is_empty() || en_vivo != modo.as_str() {
+            bsc_estilos();  // igual se guarda para que aplique al proyectar
+            return;
+        }
             aplicar_estilos(&ui, &p, &vp, modo.as_str(), true);
             let active_idx = ui.get_active_estrofa_index();
             if active_idx >= 0 {
@@ -1748,6 +1756,7 @@ p.set_tamano_letra(font_size);
         let ui_h = ui.as_weak();
         let p_h  = proyector.as_weak();
         let sp   = Arc::clone(&segunda_pantalla);
+        let modo_vivo = Arc::clone(&modo_en_vivo); 
         let bsc_font = build_and_save_config.clone();
         ui.on_sync_font_scale(move || {
             let ui         = ui_h.unwrap();

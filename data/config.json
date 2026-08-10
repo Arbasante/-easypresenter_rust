@@ -13,9 +13,9 @@
   "biblias_bg_type": "",
   "cantos_bg_type": "blanco",
   "biblias_font_color": [
-    254,
-    240,
-    138
+    0,
+    0,
+    0
   ],
   "cantos_font_color": [
     0,
@@ -24,7 +24,7 @@
   ],
   "biblias_fondo_opacity": 0.0,
   "cantos_fondo_opacity": 0.0,
-  "biblias_font_scale": 2.0,
+  "biblias_font_scale": 0.99999976,
   "cantos_font_scale": 2.0,
   "multimedia_paths": [],
   "multimedia_names": [],

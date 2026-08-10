@@ -1033,6 +1033,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let state       = Arc::new(Mutex::new(AppState::new()?));
     let ui          = AppWindow::new()?;
+    ui.window().set_maximized(true); 
     let proyector   = ProjectorWindow::new()?;
     let video_player = Arc::new(Mutex::new(NativeVideoPlayer::new()));
 

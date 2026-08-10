@@ -593,46 +593,34 @@ fn mover_proyector_a_pantalla(p_weak: slint::Weak<ProjectorWindow>, x: i32, y: i
         });
     }
 }
+
+// ---------------------------------------------------------------------------
+// ── Cálculo de tamaño de fuente para la proyección ──────────────────────────
+//
+// NUEVO PARADIGMA (feature de "tamaño máximo sin desborde"):
+//   Tanto para cantos como para versículos, el texto se dimensiona por
+//   defecto al TAMAÑO MÁXIMO que cabe en el espacio disponible de la
+//   segunda pantalla (llenando el mayor espacio posible, sin desbordar).
+//   El "scale" (el % de tamaño en las opciones de fondo) permite REDUCIR
+//   ese tamaño máximo, pero nunca superarlo — así nunca hay desborde,
+//   sin importar el texto.
+//   La referencia/cita bíblica NO pasa por este cálculo: tiene tamaño
+//   fijo definido directamente en projector.ui.slint (36px), tal como
+//   se requiere.
+// ---------------------------------------------------------------------------
+
 // Constantes que deben coincidir exactamente con los valores del .slint
 const PROJ_PADDING: f32 = 30.0;  // padding-* del VerticalLayout en ProjectorWindow
 const REF_ZONE_H:   f32 = 70.0;  // height del bloque "if referencia != """
-const CHAR_W:       f32 = 0.55;  // calibrado para font-weight 900 + Google Sans
+const CHAR_W:       f32 = 0.58;  // calibrado para font-weight 900 + Google Sans
 const LINE_H:       f32 = 1.38;  // line-height efectivo del Text de Slint
 
-// Para cantos: usa TODO el alto disponible (sin zona de cita)
-fn calcular_font_size_canto(texto: &str, screen_w: f32, screen_h: f32, scale: f32) -> f32 {
-    let ancho_util = screen_w - PROJ_PADDING * 2.0;
-    let alto_util  = screen_h - PROJ_PADDING * 2.0;
-    let fit = _busqueda_binaria(texto, ancho_util, alto_util);
-    (fit.recomendado * scale).min(fit.maximo)
-}
-
-fn calcular_font_size_versiculo(texto: &str, screen_w: f32, screen_h: f32, scale: f32) -> f32 {
-    let ancho_util = screen_w - PROJ_PADDING * 2.0;
-    let alto_util  = screen_h - PROJ_PADDING * 2.0 - REF_ZONE_H - 8.0;
-    let fit = _busqueda_binaria(texto, ancho_util, alto_util);
-
-    let chars = texto.chars().count() as f32;
-    let factor = screen_h / 1080.0;
-
-    let techo = if chars < 12.0 {
-        180.0 * factor
-    } else if chars < 30.0 {
-        140.0 * factor
-    } else if chars < 70.0 {
-        110.0 * factor
-    } else {
-        f32::MAX
-    };
-
-    let recomendado = fit.recomendado.min(techo);
-    (recomendado * scale).min(fit.maximo)
-}
-
-struct FontFit { recomendado: f32, maximo: f32 }
-
-fn _busqueda_binaria(texto: &str, ancho_util: f32, alto_util: f32) -> FontFit {
-    if texto.is_empty() { return FontFit { recomendado: 60.0, maximo: 60.0 }; }
+/// Búsqueda binaria: devuelve el tamaño de fuente MÁXIMO que cabe en el
+/// recuadro (ancho_util x alto_util) sin que el texto se desborde,
+/// considerando el ancho de la palabra más larga y el número de líneas
+/// que ocuparía cada tamaño candidato.
+fn _busqueda_binaria(texto: &str, ancho_util: f32, alto_util: f32) -> f32 {
+    if texto.is_empty() { return 60.0; }
 
     let max_word_chars = texto
         .split_whitespace()
@@ -655,9 +643,9 @@ fn _busqueda_binaria(texto: &str, ancho_util: f32, alto_util: f32) -> FontFit {
     };
 
     let mut min_size: f32 = 24.0;
-    let mut max_size: f32 = alto_util * 0.90;
+    let mut max_size: f32 = alto_util.max(min_size + 1.0);
 
-    for _ in 0..48 {
+    for _ in 0..48 { // más iteraciones = más precisión
         let mid           = (min_size + max_size) / 2.0;
         let alto_ocupado  = estimar_lineas(mid) * mid * LINE_H;
         let ancho_palabra = max_word_chars * mid * CHAR_W;
@@ -668,11 +656,36 @@ fn _busqueda_binaria(texto: &str, ancho_util: f32, alto_util: f32) -> FontFit {
         }
     }
 
-    // min_size es (casi) el tamaño máximo real que cabe sin desbordar
-    let maximo      = (min_size * 0.98).clamp(24.0, alto_util);
-    let recomendado = (min_size * 0.96).clamp(24.0, alto_util * 0.88);
+    // Pequeño margen de seguridad (2%) para compensar aproximaciones del
+    // word-wrap real de Slint frente a la estimación de este algoritmo.
+    (min_size * 0.98).clamp(24.0, alto_util)
+}
 
-    FontFit { recomendado, maximo }
+/// Tamaño de fuente para CANTOS: usa todo el alto disponible de la
+/// segunda pantalla (sin zona de cita), restando los márgenes del
+/// proyector para no desbordar la zona de proyección real.
+fn calcular_font_size_canto(
+    texto: &str, screen_w: f32, screen_h: f32, scale: f32,
+    m_izq: f32, m_der: f32, m_sup: f32, m_inf: f32,
+) -> f32 {
+    let ancho_util = (screen_w - PROJ_PADDING * 2.0 - m_izq - m_der).max(10.0);
+    let alto_util  = (screen_h - PROJ_PADDING * 2.0 - m_sup - m_inf).max(10.0);
+    let maximo = _busqueda_binaria(texto, ancho_util, alto_util);
+    // El scale puede reducir el tamaño, pero nunca superar el máximo real.
+    (maximo * scale).min(maximo)
+}
+
+/// Tamaño de fuente para VERSÍCULOS: mismo criterio de "máximo sin
+/// desborde" que los cantos, reservando únicamente el espacio de la
+/// zona de referencia (que tiene tamaño fijo y no se calcula aquí).
+fn calcular_font_size_versiculo(
+    texto: &str, screen_w: f32, screen_h: f32, scale: f32,
+    m_izq: f32, m_der: f32, m_sup: f32, m_inf: f32,
+) -> f32 {
+    let ancho_util = (screen_w - PROJ_PADDING * 2.0 - m_izq - m_der).max(10.0);
+    let alto_util  = (screen_h - PROJ_PADDING * 2.0 - REF_ZONE_H - 8.0 - m_sup - m_inf).max(10.0);
+    let maximo = _busqueda_binaria(texto, ancho_util, alto_util);
+    (maximo * scale).min(maximo)
 }
 
 // ---------------------------------------------------------------------------
@@ -1361,15 +1374,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     } else if !diapos_slint.is_empty() {
                         ui.set_active_estrofa_index(0); 0
                     } else { return; };
-                    //let p_size = p.window().size();
-                    //let (screen_w, screen_h) = (p_size.width as f32, p_size.height as f32);
                     let info_screen = *sp_guardar.lock().unwrap();
                     let (screen_w, screen_h) = if let Some((_, _, w, h)) = info_screen { (w as f32, h as f32) } else { (1920.0, 1080.0) };
+                    let (m_izq, m_der, m_sup, m_inf) = (
+                        ui.get_margen_izquierdo(), ui.get_margen_derecho(),
+                        ui.get_margen_superior(),  ui.get_margen_inferior(),
+                    );
                     let texto_nuevo = diapos_slint[idx].texto.clone();
-let scale       = ui.get_cantos_font_scale();
-let font_size   = calcular_font_size_canto(&texto_nuevo, screen_w, screen_h, scale);
-p.set_texto_proyeccion(texto_nuevo);
-p.set_tamano_letra(font_size);
+                    let scale       = ui.get_cantos_font_scale();
+                    let font_size   = calcular_font_size_canto(&texto_nuevo, screen_w, screen_h, scale, m_izq, m_der, m_sup, m_inf);
+                    p.set_texto_proyeccion(texto_nuevo);
+                    p.set_tamano_letra(font_size);
                     p.set_referencia(SharedString::from(""));
                 }
             }
@@ -1473,17 +1488,19 @@ p.set_tamano_letra(font_size);
             }
             p.set_referencia(SharedString::from(ref_str.clone()));
             let tiene_referencia = !ref_str.is_empty();
-            //let p_size = p.window().size();
-            //let (screen_w, screen_h) = (p_size.width as f32, p_size.height as f32);
             let info = *sp.lock().unwrap();
             let (screen_w, screen_h) = if let Some((_, _, w, h)) = info { (w as f32, h as f32) } else { (1280.0, 720.0) };
             let scale = if tiene_referencia { ui_local.get_biblias_font_scale() } else { ui_local.get_cantos_font_scale() };
+            let (m_izq, m_der, m_sup, m_inf) = (
+                ui_local.get_margen_izquierdo(), ui_local.get_margen_derecho(),
+                ui_local.get_margen_superior(),  ui_local.get_margen_inferior(),
+            );
             let font_size = if tiene_referencia {
-                calcular_font_size_versiculo(&texto, screen_w, screen_h, scale)
-                } else {
-                        calcular_font_size_canto(&texto, screen_w, screen_h, scale)
-                            };
-p.set_tamano_letra(font_size);
+                calcular_font_size_versiculo(&texto, screen_w, screen_h, scale, m_izq, m_der, m_sup, m_inf)
+            } else {
+                calcular_font_size_canto(&texto, screen_w, screen_h, scale, m_izq, m_der, m_sup, m_inf)
+            };
+            p.set_tamano_letra(font_size);
             let modo_actual = if tiene_referencia { "biblias" } else { "cantos" };
             let mut l_modo    = last_modo.lock().unwrap();
             let forzar_video  = *l_modo != modo_actual;
@@ -1733,17 +1750,19 @@ p.set_tamano_letra(font_size);
                         let texto      = d.texto.to_string();
                         let referencia = p.get_referencia().to_string();
                         let tiene_ref  = !referencia.is_empty();
-                        //let p_size = p.window().size();
-                        //let (sw, sh) = (p_size.width as f32, p_size.height as f32);
                         let info       = *sp.lock().unwrap();
                         let (sw, sh)   = if let Some((_, _, w, h)) = info { (w as f32, h as f32) } else { (1280.0, 720.0) };
                         let scale      = if modo == "biblias" { ui.get_biblias_font_scale() } else { ui.get_cantos_font_scale() };
+                        let (m_izq, m_der, m_sup, m_inf) = (
+                            ui.get_margen_izquierdo(), ui.get_margen_derecho(),
+                            ui.get_margen_superior(),  ui.get_margen_inferior(),
+                        );
                         let base_size  = if tiene_ref {
-                            calcular_font_size_versiculo(&texto, sw, sh, scale)
+                            calcular_font_size_versiculo(&texto, sw, sh, scale, m_izq, m_der, m_sup, m_inf)
                         } else {
-                               calcular_font_size_canto(&texto, sw, sh, scale)
-                            };
-                            p.set_tamano_letra(base_size);
+                            calcular_font_size_canto(&texto, sw, sh, scale, m_izq, m_der, m_sup, m_inf)
+                        };
+                        p.set_tamano_letra(base_size);
                     }
                 }
             }
@@ -1770,18 +1789,20 @@ p.set_tamano_letra(font_size);
                 let texto     = d.texto.to_string();
                 let referencia = p.get_referencia().to_string();
                 let tiene_ref  = !referencia.is_empty();
-                //let p_size = p.window().size();
-                //let (sw, sh) = (p_size.width as f32, p_size.height as f32);
                 let info       = *sp.lock().unwrap();
                 let (sw, sh)   = if let Some((_, _, w, h)) = info { (w as f32, h as f32) } else { (1280.0, 720.0) };
                 let modo       = ui.get_modal_tab();
                 let scale      = if modo == "biblias" { ui.get_biblias_font_scale() } else { ui.get_cantos_font_scale() };
-let base_size  = if tiene_ref {
-    calcular_font_size_versiculo(&texto, sw, sh, scale)
-} else {
-    calcular_font_size_canto(&texto, sw, sh, scale)
-};
-p.set_tamano_letra(base_size);
+                let (m_izq, m_der, m_sup, m_inf) = (
+                    ui.get_margen_izquierdo(), ui.get_margen_derecho(),
+                    ui.get_margen_superior(),  ui.get_margen_inferior(),
+                );
+                let base_size  = if tiene_ref {
+                    calcular_font_size_versiculo(&texto, sw, sh, scale, m_izq, m_der, m_sup, m_inf)
+                } else {
+                    calcular_font_size_canto(&texto, sw, sh, scale, m_izq, m_der, m_sup, m_inf)
+                };
+                p.set_tamano_letra(base_size);
             }
             bsc_font();
         });

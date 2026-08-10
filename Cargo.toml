@@ -1,6 +1,6 @@
 [package]
-name = "easy-presenter-slint"
-version = "1.0.0"
+name = "easy-presenter"
+version = "1.3.2"
 edition = "2021"
 build = "build.rs"        
 

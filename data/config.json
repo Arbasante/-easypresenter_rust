@@ -3,7 +3,7 @@
   "cantos_image_paths": [],
   "biblias_video_paths": [],
   "cantos_video_paths": [],
-  "tema_oscuro": false,
+  "tema_oscuro": true,
   "biblias_selected_img": -1,
   "cantos_selected_img": -1,
   "biblias_selected_vid": -1,

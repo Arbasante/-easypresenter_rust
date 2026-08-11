@@ -172,6 +172,19 @@ in-out property <float> margen_inferior: 0;
     in-out property <string> active-tab: "cantos";
     in property <[Canto]> cantos: [];
     in-out property <string> buscador_texto: "";
+
+    property <string> buscador_pending: "";
+    Timer {
+    interval: 200ms;
+    running: true;
+    triggered => {
+        if (root.buscador_pending != "" || root.buscador_texto == "") {
+            root.buscar_cantos(root.buscador_pending);
+            root.buscador_pending = "";
+        }
+    }
+}
+
     in-out property <string> elemento_seleccionado: "";
     in-out property <[DiapositivaUI]> estrofas_actuales: [];
     in-out property <int> active_estrofa_index: -1;
@@ -437,7 +450,7 @@ in-out property <float> margen_inferior: 0;
                                     HorizontalLayout {
                                         padding-left: 10px; spacing: 6px;
                                         Text { text: "🔍"; font-size: 10px; color: Theme.text_muted; vertical-alignment: center; }
-                                        TextInput { text <=> root.buscador_texto; font-size: 10px; color: Theme.text_primary; vertical-alignment: center; horizontal-stretch: 1; edited => { root.buscar_cantos(self.text); } }
+                                        TextInput { text <=> root.buscador_texto; font-size: 10px; color: Theme.text_primary; vertical-alignment: center; horizontal-stretch: 1; edited => { root.buscador_pending = self.text; } }
                                     }
                                 }
                             }

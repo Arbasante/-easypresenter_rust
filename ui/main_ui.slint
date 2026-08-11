@@ -838,26 +838,41 @@ in-out property <float> margen_inferior: 0;
                                     clicked => { root.mostrar_personalizar = true; }
                                 }
 
-                                TopMenuItem {
-                                    text: "Proyector";
-                                    clicked => { root.mostrar_modal_margenes = true; }
-                                }
-
-                                TopMenuItem {
-                                    text: "Tema";
+                                Rectangle {
+                                width: 140px; height: 36px;
+                                cfg-touch := TouchArea {
                                     clicked => {
-                                        Theme.is_dark = !Theme.is_dark;
-                                        root.notificar_cambio_tema(Theme.is_dark);
+                                        root.menu_configuracion_x = self.absolute-position.x;
+                                        root.menu_configuracion_y = self.absolute-position.y + self.height;
+                                        root.mostrar_menu_configuracion = !root.mostrar_menu_configuracion;
                                     }
                                 }
+                                Text {
+                                    text: "Configuración";
+                                    color: cfg-touch.has-hover ? Theme.text_primary : Theme.text_secondary;
+                                    font-size: 11px; font-weight: 700;
+                                    horizontal-alignment: center; vertical-alignment: center;
+                                    width: 100%; height: 100%;
+                                }
+                            }
 
-                                TopMenuItem {
-                                    text: "Importar/Exportar";
+                            Rectangle {
+                                width: 118px; height: 36px;
+                                tools-touch := TouchArea {
                                     clicked => {
-                                        // Opción preparada para la futura lógica
-                                        // de importación/exportación.
+                                        root.menu_herramientas_x = self.absolute-position.x;
+                                        root.menu_herramientas_y = self.absolute-position.y + self.height;
+                                        root.mostrar_menu_herramientas = !root.mostrar_menu_herramientas;
                                     }
                                 }
+                                Text {
+                                    text: "Herramientas";
+                                    color: tools-touch.has-hover ? Theme.text_primary : Theme.text_secondary;
+                                    font-size: 11px; font-weight: 700;
+                                    horizontal-alignment: center; vertical-alignment: center;
+                                    width: 100%; height: 100%;
+                                }
+                            }
 
                                 Rectangle { horizontal-stretch: 1; }
 
@@ -1540,6 +1555,71 @@ in-out property <float> margen_inferior: 0;
             }
         }
     }
+
+    in-out property <bool> mostrar_menu_configuracion: false;
+    in-out property <length> menu_configuracion_x: 0px;
+    in-out property <length> menu_configuracion_y: 0px;
+
+    in-out property <bool> mostrar_menu_herramientas: false;
+    in-out property <length> menu_herramientas_x: 0px;
+    in-out property <length> menu_herramientas_y: 0px;
+
+    // ══════════════════════════════════════════════════════════════
+//  MENÚ DESPLEGABLE: CONFIGURACIÓN (Proyector + Tema)
+// ══════════════════════════════════════════════════════════════
+if (root.mostrar_menu_configuracion) : Rectangle {
+    width: 100%; height: 100%; background: transparent;
+    TouchArea { clicked => { root.mostrar_menu_configuracion = false; } }
+    Rectangle {
+        x: root.menu_configuracion_x; y: root.menu_configuracion_y;
+        width: 160px; height: 68px;
+        background: Theme.bg_popup; border-radius: 8px; border-width: 1px; border-color: Theme.border_strong;
+        drop-shadow-color: Theme.shadow; drop-shadow-blur: 16px;
+        TouchArea {}
+        VerticalLayout {
+            padding: 4px; spacing: 2px;
+            MenuItem {
+                text: "Proyector"; icon: "🖥";
+                clicked => { root.mostrar_menu_configuracion = false; root.mostrar_modal_margenes = true; }
+            }
+            MenuItem {
+                text: "Tema"; icon: "🎨";
+                clicked => {
+                    root.mostrar_menu_configuracion = false;
+                    Theme.is_dark = !Theme.is_dark;
+                    root.notificar_cambio_tema(Theme.is_dark);
+                }
+            }
+        }
+    }
+}
+
+// ══════════════════════════════════════════════════════════════
+//  MENÚ DESPLEGABLE: HERRAMIENTAS (Importar/Exportar)
+// ══════════════════════════════════════════════════════════════
+if (root.mostrar_menu_herramientas) : Rectangle {
+    width: 100%; height: 100%; background: transparent;
+    TouchArea { clicked => { root.mostrar_menu_herramientas = false; } }
+    Rectangle {
+        x: root.menu_herramientas_x; y: root.menu_herramientas_y;
+        width: 170px; height: 40px;
+        background: Theme.bg_popup; border-radius: 8px; border-width: 1px; border-color: Theme.border_strong;
+        drop-shadow-color: Theme.shadow; drop-shadow-blur: 16px;
+        TouchArea {}
+        VerticalLayout {
+            padding: 4px; spacing: 2px;
+            MenuItem {
+                text: "Importar/Exportar"; icon: "⇅";
+                clicked => {
+                    root.mostrar_menu_herramientas = false;
+                    // Opción preparada para la futura lógica de importación/exportación.
+                }
+            }
+        }
+    }
+}
+
+
 
     // ══════════════════════════════════════════════════════════════
     //  MENÚ CONTEXTUAL DE CANTO (adaptado al tema claro/oscuro)

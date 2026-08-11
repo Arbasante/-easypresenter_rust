@@ -1316,8 +1316,44 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     cargar_cantos(String::new());
 
     {
-        let c_clone = cargar_cantos.clone();
-        ui.on_buscar_cantos(move |t| c_clone(t.to_string()));
+        let ui_handle   = ui.as_weak();
+    let state_clone = Arc::clone(&state);
+    ui.on_buscar_cantos(move |t| {
+        let busqueda = t.to_string();
+        let ui_t     = ui_handle.clone();
+        let state_t  = Arc::clone(&state_clone);
+        thread::spawn(move || {
+            let (cantos_slint, favs) = {
+                let estado   = state_t.lock().unwrap();
+                let fav_ids  = estado.get_favoritos_ids_cantos();
+                let cantos_db = if busqueda.is_empty() {
+                    estado.get_all_cantos()
+                } else {
+                    estado.get_cantos_filtrados(&busqueda)
+                };
+                let mut lista: Vec<Canto> = cantos_db.into_iter().map(|c| {
+                    let is_fav = fav_ids.contains(&c.id);
+                    Canto { id: c.id, titulo: SharedString::from(c.titulo), letra: SharedString::from(""), favorito: is_fav }
+                }).collect();
+                if lista.is_empty() {
+                    lista.push(Canto {
+                        id: 0,
+                        titulo: SharedString::from("Click derecho para agregar canto"),
+                        letra: SharedString::from(""),
+                        favorito: false,
+                    });
+                }
+                let favs = estado.get_all_favoritos();
+                (lista, favs)
+            };
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(ui) = ui_t.upgrade() {
+                    ui.set_cantos(ModelRc::from(Rc::new(VecModel::from(cantos_slint))));
+                    ui.set_favoritos(ModelRc::from(Rc::new(VecModel::from(favs))));
+                }
+            });
+        });
+    });
     }
 
     // ── Seleccionar canto ────────────────────────────────────────────────────

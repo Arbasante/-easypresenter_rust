@@ -9,9 +9,9 @@ import "./fonts/GoogleSans-Regular.ttf";
 import "./fonts/GoogleSans-Medium.ttf";
 import "./fonts/GoogleSans-Bold.ttf";
 
-import "./fonts/Inter-Regular.ttf";
-import "./fonts/Inter-Medium.ttf";
-import "./fonts/Inter-Bold.ttf";
+//import "./fonts/Inter-Regular.ttf";
+//import "./fonts/Inter-Medium.ttf";
+//import "./fonts/Inter-Bold.ttf";
 
 export struct Canto { id: int, titulo: string, letra: string, favorito: bool }
 export struct BookInfo { id: int, nombre: string, capitulos: int }
@@ -882,9 +882,8 @@ in-out property <float> margen_inferior: 0;
                                     height: 28px;
                                     border-radius: 8px;
                                     background: touch-live.has-hover ? #b91c1c : #dc2626;
-                                    drop-shadow-color: rgba(220, 38, 38, 0.35);
-                                    drop-shadow-blur: 8px;
-                                    drop-shadow-offset-y: 2px;
+                                    border-width: 1px;
+                                    border-color: rgba(220, 38, 38, 0.6);
 
                                     touch-live := TouchArea {
                                         clicked => {

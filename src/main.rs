@@ -240,36 +240,42 @@ struct AppState {
 impl AppState {
     fn new() -> Result<Self> {
         // 1. Determinar las rutas de forma inteligente
+        //
+        // PRINCIPIO UNIFICADO (Windows y Linux):
+        //   - system_data_dir: carpeta de INSTALACIÓN (solo lectura), junto al .exe
+        //     o en /usr/share — aquí viven las bases de datos "semilla" originales.
+        //   - user_data_dir: carpeta de DATOS DEL USUARIO (lectura/escritura),
+        //     SIEMPRE fuera de la carpeta de instalación. Clave en Windows: si se
+        //     instaló en "C:\Program Files\...", esa carpeta está protegida y
+        //     escribir ahí sin admin falla. Por eso usamos ProjectDirs también en
+        //     Windows, que resuelve a una carpeta 100% del usuario, sin admin:
+        //     C:\Users\<usuario>\AppData\Roaming\Arbasante\EasyPresenter\data
         let (user_data_dir, system_data_dir) = if std::path::Path::new("data/cantos.db").exists() {
             // 🟢 MODO DESARROLLADOR: Si corres 'cargo run', usa la carpeta local
             let base = std::env::current_dir().unwrap().join("data");
             (base.clone(), base)
-        } else if cfg!(target_os = "windows") {
-            // 🔵 WINDOWS (Instalado)
-            let mut path = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("."));
-            path.pop();
-            let base = path.join("data");
-            (base.clone(), base)
         } else {
-    //  LINUX (Instalado via .deb o AppImage)
-    let proj_dirs = ProjectDirs::from("com", "Arbasante", "EasyPresenter")
-        .expect("No se pudo encontrar el directorio del usuario");
-    let user_dir = proj_dirs.data_dir().to_path_buf();
+            let proj_dirs = ProjectDirs::from("com", "Arbasante", "EasyPresenter")
+                .expect("No se pudo encontrar el directorio del usuario");
+            let user_dir = proj_dirs.data_dir().to_path_buf();
 
-    // Si corremos dentro de un AppImage, $APPDIR apunta a la raíz del bundle.
-    // Si es un .deb instalado normalmente, usamos la ruta del sistema.
-    let sys_dir = if let Ok(appdir) = std::env::var("APPDIR") {
-        std::path::PathBuf::from(appdir)
-            .join("usr/share/easy-presenter/data")
-    } else {
-        // Busca en la nueva ruta primero, luego en la antigua por compatibilidad
-        let nueva = std::path::PathBuf::from("/usr/share/easy-presenter/data");
-        let antigua = std::path::PathBuf::from("/usr/share/easy-presenter-slint/data");
-        if nueva.exists() { nueva } else { antigua }
-    };
+            let sys_dir = if cfg!(target_os = "windows") {
+                // 🔵 WINDOWS: los datos "semilla" de instalación viven junto al .exe
+                let mut path = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("."));
+                path.pop();
+                path.join("data")
+            } else if let Ok(appdir) = std::env::var("APPDIR") {
+                // 🟣 LINUX (AppImage): $APPDIR apunta a la raíz del bundle
+                std::path::PathBuf::from(appdir).join("usr/share/easy-presenter/data")
+            } else {
+                // 🟠 LINUX (.deb): ruta nueva, con fallback a la antigua por compatibilidad
+                let nueva   = std::path::PathBuf::from("/usr/share/easy-presenter/data");
+                let antigua = std::path::PathBuf::from("/usr/share/easy-presenter-slint/data");
+                if nueva.exists() { nueva } else { antigua }
+            };
 
-    (user_dir, sys_dir)
-};
+            (user_dir, sys_dir)
+        };
 
         println!("📂 DIRECTORIO DE BASES DE DATOS: {:?}", user_data_dir);
 
@@ -575,9 +581,9 @@ if !biblias_ok {
 // ---------------------------------------------------------------------------
 fn mover_proyector_a_pantalla(p_weak: slint::Weak<ProjectorWindow>, x: i32, y: i32, width: u32, height: u32) {
     let intentos: &[(u64, bool)] = if cfg!(target_os = "windows") {
-        &[(80, false), (200, false), (400, true)]
+        &[(100, false), (400, true)]
     } else {
-        &[(150, false), (350, false), (600, false), (900, true)]
+        &[(200, false), (700, true)]
     };
     for &(delay_ms, es_ultimo) in intentos {
         let p_clone = p_weak.clone();
@@ -934,7 +940,8 @@ fn configurar_ventana_proyector_linux(wid_store: Arc<Mutex<Option<String>>>) {
     {
         let pid = std::process::id().to_string();
         thread::spawn(move || {
-            for delay_ms in [600u64, 1200u64, 2500u64, 4000u64] {
+            //for delay_ms in [600u64, 1200u64, 2500u64, 4000u64] {
+            for delay_ms in [500u64, 1500u64] {
                 thread::sleep(std::time::Duration::from_millis(delay_ms));
 
                 let Ok(out) = std::process::Command::new("xdotool")
@@ -1033,7 +1040,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let state       = Arc::new(Mutex::new(AppState::new()?));
     let ui          = AppWindow::new()?;
-    ui.window().set_maximized(true); 
+    //ui.window().set_maximized(true); 
     let proyector   = ProjectorWindow::new()?;
     let video_player = Arc::new(Mutex::new(NativeVideoPlayer::new()));
 
@@ -2248,15 +2255,44 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let ui_pdf_sel  = ui.as_weak();
         let state_pdf_s = Arc::clone(&pdf_state);
         ui.on_seleccionar_pdf(move |idx| {
-            let ui    = ui_pdf_sel.unwrap();
-            let state = state_pdf_s.read().unwrap();
-            if let Some(pdf) = state.get(idx as usize) {
-                ui.set_selected_pdf_idx(idx);
-                let pages_img: Vec<slint::Image> = pdf.pages.iter()
-                    .filter_map(|p| slint::Image::load_from_path(std::path::Path::new(p)).ok())
+            let ui = ui_pdf_sel.unwrap();
+            ui.set_selected_pdf_idx(idx);
+            ui.set_pdf_pages(ModelRc::from(Rc::new(VecModel::<slint::Image>::from(vec![]))));
+
+            let ui_t    = ui_pdf_sel.clone();
+            let state_t = Arc::clone(&state_pdf_s);
+            thread::spawn(move || {
+                let paths: Vec<String> = {
+                    let state = state_t.read().unwrap();
+                    match state.get(idx as usize) {
+                        Some(pdf) => pdf.pages.clone(),
+                        None => return,
+                    }
+                };
+
+                let decoded: Vec<(u32, u32, Vec<u8>)> = paths.iter()
+                    .filter_map(|p| {
+                        let img = image::open(p).ok()?.to_rgba8();
+                        let (w, h) = (img.width(), img.height());
+                        Some((w, h, img.into_raw()))
+                    })
                     .collect();
-                ui.set_pdf_pages(ModelRc::from(Rc::new(VecModel::from(pages_img))));
-            }
+
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = ui_t.upgrade() {
+                        if ui.get_selected_pdf_idx() == idx {
+                            let pages_img: Vec<slint::Image> = decoded.into_iter()
+                                .map(|(w, h, raw)| {
+                                    let mut buf = SharedPixelBuffer::<slint::Rgba8Pixel>::new(w, h);
+                                    buf.make_mut_bytes().copy_from_slice(&raw);
+                                    slint::Image::from_rgba8(buf)
+                                })
+                                .collect();
+                            ui.set_pdf_pages(ModelRc::from(Rc::new(VecModel::from(pages_img))));
+                        }
+                    }
+                });
+            });
         });
     }
 
@@ -2496,7 +2532,7 @@ let pa_timer  = Arc::clone(&proyector_abierto);
 let _restore_timer = slint::Timer::default();
 _restore_timer.start(
     slint::TimerMode::Repeated,
-    std::time::Duration::from_millis(100),
+    std::time::Duration::from_millis(350), // antes 100ms — 3.5x menos wakeups
     move || {
         if pa_timer.load(Ordering::Acquire) {
             if let Some(p) = p_restore.upgrade() {
@@ -2511,7 +2547,7 @@ _restore_timer.start(
     let vp_timer       = Arc::clone(&video_player);
     let ui_timer_handle = ui.as_weak();
     let _video_timer   = slint::Timer::default(); // '_' evita unused-variable warning
-    _video_timer.start(slint::TimerMode::Repeated, std::time::Duration::from_millis(500), move || {
+    _video_timer.start(slint::TimerMode::Repeated, std::time::Duration::from_millis(750), move || {
         if let Some(ui) = ui_timer_handle.upgrade() {
             if ui.get_is_video_projecting() {
                 let (pos_ms, dur_ms) = vp_timer.lock().unwrap().get_position_and_duration();

@@ -2266,7 +2266,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     ui.on_agregar_pdf(move || {
         let ui = ui_pdf.unwrap();
-        if let Some(path) = rfd::FileDialog::new().add_filter("PDF", &["pdf"]).pick_file() {
+        if let Some(path) = rfd::FileDialog::new().add_filter("Presentaciones", &["pdf", "pptx", "ppt", "odp"]).pick_file() {
             let file_name  = path.file_name().unwrap_or_default().to_string_lossy().to_string();
             ui.set_is_importing_pdf(true);
             ui.set_pdf_import_progress(0.0);
@@ -2315,7 +2315,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 let pdfium = Pdfium::new(bind);
 
-                let document = match pdfium.load_pdf_from_file(&path_clone, None) {
+                // Si es PPTX/PPT/ODP, conviértelo a PDF primero con LibreOffice.
+                // Si ya es PDF, se usa el archivo tal cual, sin pasos extra.
+                let ext = path_clone.extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or("")
+                    .to_lowercase();
+                let pdf_a_abrir: PathBuf = if ext == "pptx" || ext == "ppt" || ext == "odp" {
+                    println!("📎 Detectada presentación ({}). Convirtiendo con LibreOffice...", ext);
+                    match convertir_pptx_a_pdf(&path_clone, &udd_clone) {
+                        Some(p) => {
+                            println!("✅ Conversión exitosa: {:?}", p);
+                            p
+                        }
+                        None => {
+                            eprintln!("❌ ERROR: No se pudo convertir la presentación.");
+                            let ui_err = ui_t.clone();
+                            let _ = slint::invoke_from_event_loop(move || {
+                                if let Some(ui) = ui_err.upgrade() {
+                                    ui.set_is_importing_pdf(false);
+                                }
+                            });
+                            return;
+                        }
+                    }
+                } else {
+                    path_clone.clone()
+                };
+
+                let document = match pdfium.load_pdf_from_file(&pdf_a_abrir, None) {
                     Ok(d) => d,
                     Err(e) => {
                         eprintln!("ERROR al abrir PDF: {}", e);

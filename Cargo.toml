@@ -20,6 +20,7 @@ gstreamer = "0.22"
 gstreamer-app = "0.22"
 gstreamer-video = "0.22"
 lru = "0.12"
+reqwest = { version = "0.12", features = ["blocking", "rustls-tls"], default-features = false }
 
 
 

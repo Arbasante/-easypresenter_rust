@@ -1014,6 +1014,154 @@ struct MediaData { path: String, name: String, aspecto: String, is_loop: bool }
 struct PdfData   { name: String, thumb_path: String, pages: Vec<String>       }
 
 // ---------------------------------------------------------------------------
+// Soporte PPTX/ODP vía LibreOffice
+// ---------------------------------------------------------------------------
+
+/// Encuentra el ejecutable de LibreOffice instalado en el sistema.
+fn encontrar_soffice() -> Option<PathBuf> {
+    if cfg!(target_os = "windows") {
+        let candidatos = [
+            r"C:\Program Files\LibreOffice\program\soffice.exe",
+            r"C:\Program Files (x86)\LibreOffice\program\soffice.exe",
+        ];
+        candidatos.iter()
+            .map(PathBuf::from)
+            .find(|p| p.exists())
+    } else {
+        // Linux/Mac: verifica que "soffice" exista en el PATH antes de
+        // devolverlo, para no dar un falso positivo.
+        std::process::Command::new("which")
+            .arg("soffice")
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|_| PathBuf::from("soffice"))
+    }
+}
+
+/// true si LibreOffice ya está disponible en el sistema (sin instalar nada).
+fn libreoffice_disponible() -> bool {
+    encontrar_soffice().is_some()
+}
+
+/// Convierte un .pptx/.ppt/.odp a PDF usando LibreOffice en modo headless.
+/// Devuelve la ruta del PDF generado, o None si falla.
+fn convertir_pptx_a_pdf(input: &std::path::Path, user_data_dir: &std::path::Path) -> Option<PathBuf> {
+    let out_dir = user_data_dir.join("tmp_conversion");
+    std::fs::create_dir_all(&out_dir).ok()?;
+
+    let soffice_bin = encontrar_soffice()?;
+
+    let status = std::process::Command::new(soffice_bin)
+        .args(["--headless", "--norestore", "--convert-to", "pdf", "--outdir"])
+        .arg(&out_dir)
+        .arg(input)
+        .status()
+        .ok()?;
+
+    if !status.success() {
+        return None;
+    }
+
+    let stem = input.file_stem()?.to_string_lossy().to_string();
+    let generado = out_dir.join(format!("{}.pdf", stem));
+    if generado.exists() { Some(generado) } else { None }
+}
+
+/// Punto de entrada único de instalación: decide según el sistema operativo.
+fn instalar_libreoffice(ui_weak: &slint::Weak<AppWindow>) -> bool {
+    if cfg!(target_os = "windows") {
+        instalar_libreoffice_windows(ui_weak)
+    } else {
+        instalar_libreoffice_linux(ui_weak)
+    }
+}
+
+/// WINDOWS: descarga el .msi oficial y lo instala en modo silencioso.
+/// Dispara UAC una vez (normal, como instalar cualquier programa).
+fn instalar_libreoffice_windows(ui_weak: &slint::Weak<AppWindow>) -> bool {
+    // ⚠️ Verifica la URL/versión vigente en https://www.libreoffice.org/download/download/
+    let url = "https://download.documentfoundation.org/libreoffice/stable/25.2.4/win/x86_64/LibreOffice_25.2.4_Win_x86-64.msi";
+    let tmp_msi = std::env::temp_dir().join("LibreOffice_installer.msi");
+
+    let resp = match reqwest::blocking::get(url) {
+        Ok(r) => r,
+        Err(e) => { eprintln!("Error descargando LibreOffice: {}", e); return false; }
+    };
+    let total = resp.content_length().unwrap_or(0);
+    let mut downloaded: u64 = 0;
+    let mut file = match std::fs::File::create(&tmp_msi) {
+        Ok(f) => f,
+        Err(e) => { eprintln!("Error creando archivo temporal: {}", e); return false; }
+    };
+    let mut resp = resp;
+    let mut buffer = [0u8; 65536];
+    use std::io::{Read, Write};
+    loop {
+        let n = match resp.read(&mut buffer) { Ok(0) => break, Ok(n) => n, Err(_) => break };
+        let _ = file.write_all(&buffer[..n]);
+        downloaded += n as u64;
+        if total > 0 {
+            let progreso = downloaded as f32 / total as f32;
+            let ui_t = ui_weak.clone();
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(ui) = ui_t.upgrade() { ui.set_libreoffice_progreso(progreso); }
+            });
+        }
+    }
+
+    let status = std::process::Command::new("msiexec")
+        .args(["/i", tmp_msi.to_str().unwrap_or_default(), "/qn", "/norestart"])
+        .status();
+
+    let _ = std::fs::remove_file(&tmp_msi);
+
+    match status {
+        Ok(s) if s.success() => encontrar_soffice().is_some(),
+        _ => false,
+    }
+}
+
+/// LINUX: instala libreoffice-impress con el gestor de paquetes de la distro.
+/// Usa `pkexec` (diálogo gráfico de contraseña), sin necesidad de terminal.
+fn instalar_libreoffice_linux(_ui_weak: &slint::Weak<AppWindow>) -> bool {
+    println!("🔧 Iniciando instalación de LibreOffice en Linux...");
+
+    let gestores: &[(&str, &[&str])] = &[
+        ("apt-get", &["install", "-y", "libreoffice-impress"]),
+        ("dnf",     &["install", "-y", "libreoffice-impress"]),
+        ("pacman",  &["-S", "--noconfirm", "libreoffice-impress"]),
+        ("zypper",  &["install", "-y", "libreoffice-impress"]),
+    ];
+
+    for (bin, args) in gestores {
+        let existe = std::process::Command::new("which")
+            .arg(bin)
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        println!("  ¿Existe {}? {}", bin, existe);
+        if !existe { continue; }
+
+        println!("  ▶ Ejecutando: pkexec {} {:?}", bin, args);
+        let mut cmd_args = vec![*bin];
+        cmd_args.extend_from_slice(args);
+        let status = std::process::Command::new("pkexec")
+            .args(&cmd_args)
+            .status();
+
+        println!("  Resultado de pkexec: {:?}", status);
+        let ok = matches!(status, Ok(s) if s.success());
+        let encontrado = encontrar_soffice().is_some();
+        println!("  ¿Instalación exitosa? {} | ¿soffice encontrado después? {}", ok, encontrado);
+        return ok && encontrado;
+    }
+
+    eprintln!("❌ No se encontró un gestor de paquetes compatible (apt-get, dnf, pacman, zypper).");
+    false
+}
+
+// ---------------------------------------------------------------------------
 // main()
 // ---------------------------------------------------------------------------
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -1149,6 +1297,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ui.set_default_bg_type(SharedString::from(&cfg.default_bg_type));
     ui.set_default_bg_idx(cfg.default_bg_idx);
     ui.global::<Theme>().set_is_dark(cfg.tema_oscuro);
+    ui.set_libreoffice_listo(libreoffice_disponible());
+
+
 
     // Restaurar galería de imágenes en la UI
     {
@@ -2094,6 +2245,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ui_pdf    = ui.as_weak();
     let state_pdf = Arc::clone(&pdf_state);
     let udd_pdf   = user_data_dir_cfg.clone();
+
+    {
+        let ui_lo = ui.as_weak();
+        ui.on_activar_soporte_pptx(move || {
+            let ui = ui_lo.unwrap();
+            ui.set_instalando_libreoffice(true);
+            let ui_t = ui_lo.clone();
+            thread::spawn(move || {
+                let resultado = instalar_libreoffice(&ui_t);
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = ui_t.upgrade() {
+                        ui.set_instalando_libreoffice(false);
+                        ui.set_libreoffice_listo(resultado);
+                    }
+                });
+            });
+        });
+    }
 
     ui.on_agregar_pdf(move || {
         let ui = ui_pdf.unwrap();

@@ -1564,6 +1564,11 @@ in-out property <float> margen_inferior: 0;
     in-out property <length> menu_herramientas_x: 0px;
     in-out property <length> menu_herramientas_y: 0px;
 
+    in-out property <bool> libreoffice_listo: false;
+    in-out property <bool> instalando_libreoffice: false;
+    in-out property <float> libreoffice_progreso: 0.0;
+    callback activar_soporte_pptx();
+
     // ══════════════════════════════════════════════════════════════
 //  MENÚ DESPLEGABLE: CONFIGURACIÓN (Proyector + Tema)
 // ══════════════════════════════════════════════════════════════
@@ -1602,7 +1607,7 @@ if (root.mostrar_menu_herramientas) : Rectangle {
     TouchArea { clicked => { root.mostrar_menu_herramientas = false; } }
     Rectangle {
         x: root.menu_herramientas_x; y: root.menu_herramientas_y;
-        width: 170px; height: 40px;
+        width: 200px; height: 78px;
         background: Theme.bg_popup; border-radius: 8px; border-width: 1px; border-color: Theme.border_strong;
         drop-shadow-color: Theme.shadow; drop-shadow-blur: 16px;
         TouchArea {}
@@ -1612,7 +1617,18 @@ if (root.mostrar_menu_herramientas) : Rectangle {
                 text: "Importar/Exportar"; icon: "⇅";
                 clicked => {
                     root.mostrar_menu_herramientas = false;
-                    // Opción preparada para la futura lógica de importación/exportación.
+                }
+            }
+            MenuItem {
+                text: root.libreoffice_listo ? "PPTX/ODP: Activado" : "Activar PPTX/ODP";
+                icon: root.libreoffice_listo ? "✓" : "⬇";
+                text_color: root.libreoffice_listo ? #22c55e : Theme.menu_text;
+                icon_color: root.libreoffice_listo ? #22c55e : Theme.menu_icon;
+                clicked => {
+                    root.mostrar_menu_herramientas = false;
+                    if (!root.libreoffice_listo) {
+                        root.activar_soporte_pptx();
+                    }
                 }
             }
         }

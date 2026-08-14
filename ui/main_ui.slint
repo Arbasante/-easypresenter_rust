@@ -20,6 +20,17 @@ export struct ChapterRow { caps: [int] }
 export struct MediaItem { id: int, nombre: string, path: string, img: image, aspecto: string, is_loop: bool, }
 export struct PdfItem { id: int, nombre: string, miniatura: image, total_paginas: int }
 
+export struct ScreenInfo {
+    id: int,
+    nombre: string,
+    x: int,
+    y: int,
+    width: int,
+    height: int,
+    es_primaria: bool,
+    rol: int, // 0 = sin asignar, 1 = Operador, 2 = Proyector, 3 = Stage Display
+}
+
 // ─────────────────────────────────────────────────────────────
 //  TEMA GLOBAL — claro / oscuro
 //  Un solo interruptor (is_dark) controla todos los colores
@@ -150,6 +161,49 @@ component MenuItem inherits Rectangle {
 // 👇 Aquí está la estructura que te está pidiendo
 export struct FavoritoItem { tipo: string, id: int, titulo: string, referencia: string }
 
+export component IdentifyWindow inherits Window {
+    title: "";
+    no-frame: true;
+    background: transparent;
+
+    in property <int> numero_pantalla: 1;
+    callback cerrar_solicitado();
+    public function enfocar_pantalla() { id-focus.focus(); }
+
+    forward-focus: id-focus;
+    id-focus := FocusScope {
+        key-pressed(event) => {
+            if (event.text == Key.Escape) {
+                root.cerrar_solicitado();
+                return accept;
+            }
+            return reject;
+        }
+
+        Rectangle {
+            width: 100%; height: 100%;
+            background: rgba(0, 0, 0, 0.75);
+            VerticalLayout {
+                alignment: center; spacing: 24px;
+                Text {
+                    text: root.numero_pantalla;
+                    color: white;
+                    font-size: 180px;
+                    font-weight: 900;
+                    horizontal-alignment: center;
+                }
+                Text {
+                    text: "Presiona ESC para salir";
+                    color: rgba(255,255,255,0.65);
+                    font-size: 20px;
+                    font-weight: 700;
+                    horizontal-alignment: center;
+                }
+            }
+        }
+    }
+}
+
 // ─────────────────────────────────────────────────────────────
 //  APP WINDOW
 // ─────────────────────────────────────────────────────────────
@@ -158,10 +212,18 @@ export component AppWindow inherits Window {
     min-width: 800px; min-height: 600px; background: Theme.bg_main; default-font-family: "Google Sans";
 
     in-out property <bool> mostrar_modal_margenes: false;
+    in-out property <bool> mostrar_modal_pantallas: false;
+    in property <[ScreenInfo]> pantallas_detectadas: [];
+    in-out property <bool> identificando_pantallas: false;
+    in-out property <bool> cambios_pendientes: false;
+    callback abrir_modal_pantallas();
+    callback identificar_pantallas();
+    callback asignar_rol_pantalla(int, int);
+    callback aplicar_cambios_pantallas();
     in-out property <float> margen_izquierdo: 0;
-in-out property <float> margen_derecho: 0;
-in-out property <float> margen_superior: 0;
-in-out property <float> margen_inferior: 0;
+    in-out property <float> margen_derecho: 0;
+    in-out property <float> margen_superior: 0;
+    in-out property <float> margen_inferior: 0;
     
     callback actualizar_margenes(float, float, float, float);
 
@@ -423,7 +485,7 @@ in-out property <float> margen_inferior: 0;
                             }
                             TabButton {
                                 horizontal-stretch: 1; height: 34px;
-                                icon: "📄"; text: "PDF";
+                                icon: "📄"; text: "PDF/PPTX";
                                 active: root.active-tab == "pdf";
                                 clicked => { 
                                     root.active-tab = "pdf"; 
@@ -1577,7 +1639,7 @@ if (root.mostrar_menu_configuracion) : Rectangle {
     TouchArea { clicked => { root.mostrar_menu_configuracion = false; } }
     Rectangle {
         x: root.menu_configuracion_x; y: root.menu_configuracion_y;
-        width: 160px; height: 68px;
+        width: 160px; height: 102px;
         background: Theme.bg_popup; border-radius: 8px; border-width: 1px; border-color: Theme.border_strong;
         drop-shadow-color: Theme.shadow; drop-shadow-blur: 16px;
         TouchArea {}
@@ -1586,6 +1648,14 @@ if (root.mostrar_menu_configuracion) : Rectangle {
             MenuItem {
                 text: "Proyector"; icon: "🖥";
                 clicked => { root.mostrar_menu_configuracion = false; root.mostrar_modal_margenes = true; }
+            }
+            MenuItem {
+                text: "Pantallas"; icon: "🖵";
+                clicked => {
+                    root.mostrar_menu_configuracion = false;
+                    root.mostrar_modal_pantallas = true;
+                    root.abrir_modal_pantallas();
+                }
             }
             MenuItem {
                 text: "Tema"; icon: "🎨";
@@ -1835,6 +1905,130 @@ if (root.mostrar_menu_herramientas) : Rectangle {
                 Button {
                     text: "Cerrar";
                     clicked => { root.mostrar_modal_margenes = false; }
+                }
+            }
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    //  MODAL DE PANTALLAS (mapa visual + identificación)
+    // ══════════════════════════════════════════════════════════════
+    if (root.mostrar_modal_pantallas) : Rectangle {
+        width: 100%; height: 100%; background: Theme.overlay;
+        TouchArea { clicked => { root.mostrar_modal_pantallas = false; } }
+
+        Rectangle {
+            width: 560px; height: 420px;
+            background: Theme.bg_popup; border-radius: 12px;
+            border-width: 1px; border-color: Theme.border_strong;
+            drop-shadow-color: Theme.shadow; drop-shadow-blur: 20px;
+            TouchArea {} // bloquea el clic hacia el backdrop
+
+            VerticalLayout {
+                padding: 24px; spacing: 16px;
+
+                HorizontalLayout {
+                    alignment: space-between; height: 30px;
+                    Text { text: "PANTALLAS"; color: Theme.text_primary; font-size: 15px; font-weight: 900; vertical-alignment: center; }
+                    Rectangle {
+                        width: 28px; height: 28px; border-radius: 6px;
+                        background: touch-close-pant.has-hover ? Theme.bg_card_hover : transparent;
+                        touch-close-pant := TouchArea { clicked => { root.mostrar_modal_pantallas = false; } }
+                        Text { text: "✕"; color: Theme.text_secondary; font-size: 13px; horizontal-alignment: center; vertical-alignment: center; }
+                    }
+                }
+
+                Text {
+                    text: root.pantallas_detectadas.length == 0
+                        ? "No se detectaron pantallas."
+                        : root.pantallas_detectadas.length + " pantalla(s) detectada(s).";
+                    color: Theme.text_secondary; font-size: 11px; font-weight: 600;
+                }
+
+                // ── MAPA VISUAL (escala relativa a la posición real) ──
+                Rectangle {
+                    height: 220px; border-radius: 8px; background: Theme.bg_list;
+                    border-width: 1px; border-color: Theme.border_subtle; clip: true;
+
+                    for pantalla[idx] in root.pantallas_detectadas : Rectangle {
+                        x: 20px + pantalla.x * 0.12px;
+                        y: 20px + pantalla.y * 0.12px;
+                        width: max(96px, pantalla.width * 0.12px);
+                        height: max(78px, pantalla.height * 0.12px);
+                        border-radius: 6px;
+                        background: pantalla.rol > 0 ? Theme.accent_soft : Theme.bg_card;
+                        border-width: 2px;
+                        border-color: pantalla.rol > 0 ? Theme.accent : Theme.border_subtle;
+
+                        VerticalLayout {
+                            padding: 4px; spacing: 2px; alignment: center;
+                            Text { text: "Pantalla " + (idx + 1); color: Theme.text_primary; font-size: 9px; font-weight: 800; horizontal-alignment: center; }
+                            Text { text: pantalla.width + "×" + pantalla.height; color: Theme.text_muted; font-size: 7px; horizontal-alignment: center; }
+                            Text {
+                                text: pantalla.rol == 1 ? "OPERADOR" : pantalla.rol == 2 ? "PROYECTOR" : pantalla.rol == 3 ? "STAGE DISPLAY" : "Sin asignar";
+                                color: pantalla.rol > 0 ? Theme.accent : Theme.text_muted;
+                                font-size: 7px; font-weight: 800; horizontal-alignment: center;
+                            }
+                            Rectangle { height: 4px; }
+                            // Selector de rol: 3 botones pequeños
+                            HorizontalLayout {
+                                spacing: 3px; alignment: center;
+                                Rectangle {
+                                    width: 20px; height: 18px; border-radius: 4px;
+                                    background: pantalla.rol == 1 ? Theme.accent : rgba(0,0,0,0.15);
+                                    TouchArea { clicked => { root.asignar_rol_pantalla(pantalla.id, pantalla.rol == 1 ? 0 : 1); } }
+                                    Text { text: "1"; color: white; font-size: 9px; font-weight: 900; horizontal-alignment: center; vertical-alignment: center; }
+                                }
+                                Rectangle {
+                                    width: 20px; height: 18px; border-radius: 4px;
+                                    background: pantalla.rol == 2 ? Theme.accent : rgba(0,0,0,0.15);
+                                    TouchArea { clicked => { root.asignar_rol_pantalla(pantalla.id, pantalla.rol == 2 ? 0 : 2); } }
+                                    Text { text: "2"; color: white; font-size: 9px; font-weight: 900; horizontal-alignment: center; vertical-alignment: center; }
+                                }
+                                Rectangle {
+                                    width: 20px; height: 18px; border-radius: 4px;
+                                    background: pantalla.rol == 3 ? Theme.accent : rgba(0,0,0,0.15);
+                                    TouchArea { clicked => { root.asignar_rol_pantalla(pantalla.id, pantalla.rol == 3 ? 0 : 3); } }
+                                    Text { text: "3"; color: white; font-size: 9px; font-weight: 900; horizontal-alignment: center; vertical-alignment: center; }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Text {
+                    text: "1 = Pantalla Operador   ·   2 = Proyector (Live)   ·   3 = Stage Display";
+                    color: Theme.text_muted; font-size: 9px; font-weight: 600; horizontal-alignment: center;
+                }
+
+                
+                // ── BOTONES: IDENTIFICAR + APLICAR CAMBIOS ──
+                HorizontalLayout {
+                    height: 42px; spacing: 10px;
+                    Rectangle {
+                        horizontal-stretch: 1; border-radius: 8px;
+                        background: identificar-touch.has-hover ? Theme.accent_hover : Theme.accent;
+                        identificar-touch := TouchArea {
+                            clicked => { root.identificar_pantallas(); }
+                        }
+                        Text {
+                            text: root.identificando_pantallas ? "Mostrando números..." : "Identificar Pantallas";
+                            color: white; font-size: 12px; font-weight: 800;
+                            horizontal-alignment: center; vertical-alignment: center;
+                        }
+                    }
+                    if (root.cambios_pendientes) : Rectangle {
+                        width: 140px; border-radius: 8px;
+                        background: aplicar-touch.has-hover ? #16a34a : #22c55e;
+                        aplicar-touch := TouchArea {
+                            clicked => { root.aplicar_cambios_pantallas(); }
+                        }
+                        Text {
+                            text: "Aplicar Cambios";
+                            color: white; font-size: 12px; font-weight: 800;
+                            horizontal-alignment: center; vertical-alignment: center;
+                        }
+                    }
                 }
             }
         }

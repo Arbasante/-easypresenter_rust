@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::LazyLock;
 use std::rc::Rc;
+use std::cell::RefCell;
 use std::thread;
 use regex::Regex;
 use display_info::DisplayInfo;
@@ -58,6 +59,10 @@ struct ConfigApp {
     // Fondo predeterminado
     default_bg_type: String,
     default_bg_idx:  i32,
+
+    // Roles de pantallas para Stage Display: (id_pantalla, rol)
+    #[serde(default)]
+    pantallas_roles: Vec<(i32, i32)>,
 }
 
 fn config_path(user_data_dir: &std::path::Path) -> std::path::PathBuf {
@@ -1209,6 +1214,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let proyector_wid: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
 
+    // Roles de pantallas: id_pantalla -> rol (0=sin asignar, 1=operador, 2=proyector, 3=stage)
+    let roles_pantallas: Arc<Mutex<HashMap<i32, i32>>> = Arc::new(Mutex::new(HashMap::new()));
+
+    // Ventanas de identificación activas + su temporizador de auto-cierre.
+    // Rc<RefCell<>> porque las ventanas de Slint no son Send (no pueden
+    // cruzar hilos), así que todo esto vive y se maneja en el hilo principal.
+    let identificar_windows: Rc<RefCell<Vec<IdentifyWindow>>> = Rc::new(RefCell::new(Vec::new()));
+    let identificar_timer: Rc<RefCell<Option<slint::Timer>>> = Rc::new(RefCell::new(None));
+
+    // Guarda id_pantalla -> rol asignado (0=sin asignar,1=operador,2=proyector,3=stage)
+    let roles_pantallas: Arc<Mutex<HashMap<i32, i32>>> = Arc::new(Mutex::new(HashMap::new()));
+
     // ── Márgenes del proyector ───────────────────────────────────────────────
     // {
     //     let p_weak = proyector.as_weak();
@@ -1255,6 +1272,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         st.cantos_image_paths  = cfg.cantos_image_paths.clone();
         st.biblias_video_paths = cfg.biblias_video_paths.clone();
         st.cantos_video_paths  = cfg.cantos_video_paths.clone();
+    }
+
+    // Restaurar roles de pantallas guardados
+    {
+        let mut roles = roles_pantallas.lock().unwrap();
+        for (id, rol) in &cfg.pantallas_roles {
+            roles.insert(*id, *rol);
+        }
     }
 
     // Restaurar multimedia proyectable
@@ -1352,6 +1377,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let state_cfg   = Arc::clone(&state);
         let mm_cfg      = Arc::clone(&multimedia_state);
         let vs_cfg      = Arc::clone(&video_state);
+        let roles_cfg   = Arc::clone(&roles_pantallas);
         let ui_cfg      = ui.as_weak();
         let udd         = user_data_dir_cfg.clone();
         move || {
@@ -1393,6 +1419,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 default_bg_type:  ui.get_default_bg_type().to_string(),
                 default_bg_idx:   ui.get_default_bg_idx(),
                 tema_oscuro: ui.global::<Theme>().get_is_dark(),
+                pantallas_roles: roles_cfg.lock().unwrap().iter().map(|(k, v)| (*k, *v)).collect(),
             };
             guardar_config(&udd, &cfg);
         }
@@ -2245,6 +2272,167 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ui_pdf    = ui.as_weak();
     let state_pdf = Arc::clone(&pdf_state);
     let udd_pdf   = user_data_dir_cfg.clone();
+
+    {
+        let ui_rol      = ui.as_weak();
+        let roles_clone = Arc::clone(&roles_pantallas);
+        ui.on_asignar_rol_pantalla(move |id_pantalla, nuevo_rol| {
+            let ui = ui_rol.unwrap();
+            {
+                let mut roles = roles_clone.lock().unwrap();
+                if nuevo_rol > 0 {
+                    roles.retain(|_, r| *r != nuevo_rol);
+                }
+                if nuevo_rol == 0 {
+                    roles.remove(&id_pantalla);
+                } else {
+                    roles.insert(id_pantalla, nuevo_rol);
+                }
+            }
+            let actuales = ui.get_pantallas_detectadas();
+            let nuevas: Vec<ScreenInfo> = {
+                let roles = roles_clone.lock().unwrap();
+                (0..actuales.row_count())
+                    .filter_map(|i| actuales.row_data(i))
+                    .map(|mut p| {
+                        p.rol = *roles.get(&p.id).unwrap_or(&0);
+                        p
+                    })
+                    .collect()
+            };
+            ui.set_pantallas_detectadas(ModelRc::from(Rc::new(VecModel::from(nuevas))));
+            ui.set_cambios_pendientes(true);
+        });
+    }
+
+    {
+        let ui_h   = ui.as_weak();
+        let bsc_ap = build_and_save_config.clone();
+        ui.on_aplicar_cambios_pantallas(move || {
+            let ui = ui_h.unwrap();
+            bsc_ap();
+            ui.set_cambios_pendientes(false);
+        });
+    }
+
+    // ── Detección de pantallas para Stage Display ────────────────────────────
+    {
+        let ui_h        = ui.as_weak();
+        let roles_clone = Arc::clone(&roles_pantallas);
+        let bsc_pant    = build_and_save_config.clone();
+        ui.on_abrir_modal_pantallas(move || {
+            let ui = ui_h.unwrap();
+            let detectadas = match DisplayInfo::all() {
+                Ok(lista) => lista,
+                Err(e) => { println!("No se pudieron detectar pantallas: {}", e); Vec::new() }
+            };
+
+            // Si todavía no hay NINGÚN rol asignado, aplica una configuración
+            // por defecto sensata: primaria = Operador, siguiente = Proyector,
+            // siguiente = Stage Display. Así nunca aparece "sin asignar" cuando
+            // ya hay un uso implícito obvio (ej. laptop + 1 monitor externo).
+            {
+                let mut roles = roles_clone.lock().unwrap();
+                if roles.is_empty() && !detectadas.is_empty() {
+                    let mut siguiente_rol = 1;
+                    if let Some((idx, _)) = detectadas.iter().enumerate().find(|(_, d)| d.is_primary) {
+                        roles.insert(idx as i32, siguiente_rol);
+                        siguiente_rol += 1;
+                    }
+                    for (idx, d) in detectadas.iter().enumerate() {
+                        if d.is_primary { continue; }
+                        if siguiente_rol > 3 { break; }
+                        roles.insert(idx as i32, siguiente_rol);
+                        siguiente_rol += 1;
+                    }
+                }
+            }
+
+            let pantallas: Vec<ScreenInfo> = {
+                let roles = roles_clone.lock().unwrap();
+                detectadas.iter().enumerate().map(|(i, d)| {
+                    let id = i as i32;
+                    ScreenInfo {
+                        id,
+                        nombre:      SharedString::from(format!("Pantalla {}", i + 1)),
+                        x:           d.x,
+                        y:           d.y,
+                        width:       d.width as i32,
+                        height:      d.height as i32,
+                        es_primaria: d.is_primary,
+                        rol:         *roles.get(&id).unwrap_or(&0),
+                    }
+                }).collect()
+            };
+
+            ui.set_pantallas_detectadas(ModelRc::from(Rc::new(VecModel::from(pantallas))));
+            ui.set_cambios_pendientes(false);
+            bsc_pant();
+        });
+    }
+
+    // ── Identificar pantallas: abre un número grande en cada monitor físico ──
+    {
+        let ui_h            = ui.as_weak();
+        let windows_holder  = Rc::clone(&identificar_windows);
+        let timer_holder    = Rc::clone(&identificar_timer);
+
+        ui.on_identificar_pantallas(move || {
+            let ui = ui_h.unwrap();
+            ui.set_identificando_pantallas(true);
+
+            // Cierra explícitamente ventanas de una identificación anterior
+            for w in windows_holder.borrow_mut().drain(..) {
+                let _ = w.hide();
+            }
+
+            let pantallas = ui.get_pantallas_detectadas();
+            let mut nuevas_ventanas = Vec::new();
+
+            for i in 0..pantallas.row_count() {
+                if let Some(p) = pantallas.row_data(i) {
+                    if let Ok(w) = IdentifyWindow::new() {
+                        w.set_numero_pantalla(i as i32 + 1);
+
+                        // Presionar ESC en cualquiera de las ventanas cierra todas
+                        let ui_esc      = ui_h.clone();
+                        let windows_esc = Rc::clone(&windows_holder);
+                        let timer_esc   = Rc::clone(&timer_holder);
+                        w.on_cerrar_solicitado(move || {
+                            *timer_esc.borrow_mut() = None; // cancela el auto-cierre pendiente
+                            for w in windows_esc.borrow_mut().drain(..) {
+                                let _ = w.hide();
+                            }
+                            if let Some(ui) = ui_esc.upgrade() {
+                                ui.set_identificando_pantallas(false);
+                            }
+                        });
+
+                        let _ = w.show();
+                        w.window().set_position(slint::PhysicalPosition::new(p.x, p.y));
+                        w.window().set_size(slint::PhysicalSize::new(p.width as u32, p.height as u32));
+                        w.invoke_enfocar_pantalla(); // necesario para que capture la tecla ESC
+                        nuevas_ventanas.push(w);
+                    }
+                }
+            }
+            *windows_holder.borrow_mut() = nuevas_ventanas;
+
+            // Auto-cierre después de 4 segundos si el usuario no presiona ESC
+            let ui_t      = ui_h.clone();
+            let windows_t = Rc::clone(&windows_holder);
+            let timer     = slint::Timer::default();
+            timer.start(slint::TimerMode::SingleShot, std::time::Duration::from_secs(4), move || {
+                for w in windows_t.borrow_mut().drain(..) {
+                    let _ = w.hide();
+                }
+                if let Some(ui) = ui_t.upgrade() {
+                    ui.set_identificando_pantallas(false);
+                }
+            });
+            *timer_holder.borrow_mut() = Some(timer);
+        });
+    }
 
     {
         let ui_lo = ui.as_weak();

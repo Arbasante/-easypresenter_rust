@@ -3,14 +3,14 @@
   "cantos_image_paths": [],
   "biblias_video_paths": [],
   "cantos_video_paths": [],
-  "tema_oscuro": true,
+  "tema_oscuro": false,
   "biblias_selected_img": -1,
   "cantos_selected_img": -1,
   "biblias_selected_vid": -1,
   "cantos_selected_vid": -1,
   "biblias_video_path": "",
   "cantos_video_path": "",
-  "biblias_bg_type": "imagen",
+  "biblias_bg_type": "blanco",
   "cantos_bg_type": "blanco",
   "biblias_font_color": [
     0,
@@ -37,5 +37,15 @@
   "margen_superior": 0.0,
   "margen_inferior": 0.0,
   "default_bg_type": "",
-  "default_bg_idx": 0
+  "default_bg_idx": 0,
+  "pantallas_roles": [
+    [
+      0,
+      1
+    ],
+    [
+      1,
+      2
+    ]
+  ]
 }

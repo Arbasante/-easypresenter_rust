@@ -40,12 +40,12 @@
   "default_bg_idx": 0,
   "pantallas_roles": [
     [
-      0,
-      1
-    ],
-    [
       1,
       2
+    ],
+    [
+      0,
+      1
     ]
   ]
 }

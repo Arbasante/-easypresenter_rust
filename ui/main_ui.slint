@@ -1629,6 +1629,7 @@ export component AppWindow inherits Window {
     in-out property <bool> libreoffice_listo: false;
     in-out property <bool> instalando_libreoffice: false;
     in-out property <float> libreoffice_progreso: 0.0;
+    in-out property <string> libreoffice_error: "";
     callback activar_soporte_pptx();
 
     // ══════════════════════════════════════════════════════════════
@@ -2034,6 +2035,8 @@ if (root.mostrar_menu_herramientas) : Rectangle {
         }
     }
 
+    
+
     // ══════════════════════════════════════════════════════════════
     //  OVERLAY DE PROGRESO DE IMPORTACIÓN PDF (adaptado al tema claro/oscuro)
     // ══════════════════════════════════════════════════════════════
@@ -2056,6 +2059,53 @@ if (root.mostrar_menu_herramientas) : Rectangle {
                 }
             }
             Text { text: round(root.pdf_import_progress * 100) + "% completado"; color: Theme.text_primary; font-size: 12px; font-weight: 800; horizontal-alignment: center; }
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    //  OVERLAY: INSTALANDO LIBREOFFICE (soporte PPTX/ODP)
+    // ══════════════════════════════════════════════════════════════
+    if (root.instalando_libreoffice) : Rectangle {
+        width: 100%; height: 100%; background: rgba(0,0,0,0.72);
+        TouchArea {}
+        VerticalLayout {
+            alignment: center; spacing: 16px;
+            Text { text: "⚙️ INSTALANDO SOPORTE PPTX/ODP"; color: Theme.text_primary; font-size: 16px; font-weight: 900; horizontal-alignment: center; letter-spacing: 2px; }
+            Text { text: "Esto puede tardar unos minutos. No cierres la aplicación."; color: Theme.text_secondary; font-size: 11px; horizontal-alignment: center; }
+            Rectangle { height: 16px; }
+            HorizontalLayout {
+                alignment: center;
+                Rectangle {
+                    width: 400px; height: 16px; background: Theme.bg_card_hover; border-radius: 8px;
+                    Rectangle { x: 0; width: parent.width * root.libreoffice_progreso; height: 100%; background: Theme.accent; border-radius: 8px; }
+                }
+            }
+            Text { text: root.libreoffice_progreso > 0 ? round(root.libreoffice_progreso * 100) + "% completado" : "Preparando..."; color: Theme.text_primary; font-size: 12px; font-weight: 800; horizontal-alignment: center; }
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    //  OVERLAY: ERROR AL INSTALAR LIBREOFFICE
+    // ══════════════════════════════════════════════════════════════
+   if (root.libreoffice_error != "") : Rectangle {
+        width: 100%; height: 100%; background: Theme.overlay;
+        TouchArea { clicked => { root.libreoffice_error = ""; } }
+        Rectangle {
+            width: 380px; height: 180px;
+            background: Theme.bg_popup; border-radius: 12px;
+            border-width: 1px; border-color: Theme.border_strong;
+            drop-shadow-color: Theme.shadow; drop-shadow-blur: 20px;
+            TouchArea {}
+            VerticalLayout {
+                padding: 24px; spacing: 12px;
+                Text { text: "⚠️ No se pudo instalar"; color: #f87171; font-size: 14px; font-weight: 900; horizontal-alignment: center; }
+                Text { text: root.libreoffice_error; color: Theme.text_secondary; font-size: 11px; horizontal-alignment: center; wrap: word-wrap; }
+                Rectangle {
+                    height: 36px; border-radius: 6px; background: Theme.accent;
+                    TouchArea { clicked => { root.libreoffice_error = ""; } }
+                    Text { text: "Entendido"; color: white; font-size: 11px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                }
+            }
         }
     }
 }

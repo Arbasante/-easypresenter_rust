@@ -1,3 +1,4 @@
+#![windows_subsystem = "windows"]
 use rusqlite::{Connection, Result};
 use slint::{ModelRc, SharedString, VecModel, ComponentHandle, SharedPixelBuffer};
 use slint::Model;
@@ -1086,7 +1087,7 @@ fn instalar_libreoffice(ui_weak: &slint::Weak<AppWindow>) -> bool {
 /// Dispara UAC una vez (normal, como instalar cualquier programa).
 fn instalar_libreoffice_windows(ui_weak: &slint::Weak<AppWindow>) -> bool {
     // ⚠️ Verifica la URL/versión vigente en https://www.libreoffice.org/download/download/
-    let url = "https://download.documentfoundation.org/libreoffice/stable/25.2.4/win/x86_64/LibreOffice_25.2.4_Win_x86-64.msi";
+    let url = "https://mirrors.atlas.net.co/tdf/libreoffice/stable/26.2.5/win/x86_64/LibreOffice_26.2.5_Win_x86-64.msi";
     let tmp_msi = std::env::temp_dir().join("LibreOffice_installer.msi");
 
     let resp = match reqwest::blocking::get(url) {
@@ -2439,6 +2440,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ui.on_activar_soporte_pptx(move || {
             let ui = ui_lo.unwrap();
             ui.set_instalando_libreoffice(true);
+            ui.set_libreoffice_error(SharedString::from(""));
             let ui_t = ui_lo.clone();
             thread::spawn(move || {
                 let resultado = instalar_libreoffice(&ui_t);
@@ -2446,6 +2448,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     if let Some(ui) = ui_t.upgrade() {
                         ui.set_instalando_libreoffice(false);
                         ui.set_libreoffice_listo(resultado);
+                        if !resultado {
+                            ui.set_libreoffice_error(SharedString::from(
+                                "No se pudo descargar o instalar LibreOffice. Verifica tu conexión a internet o instálalo manualmente desde libreoffice.org"
+                            ));
+                        }
                     }
                 });
             });

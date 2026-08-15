@@ -4,7 +4,7 @@
 ; ============================================================
 
 #define MyAppName "EasyPresenter"
-#define MyAppVersion "1.4.2"
+#define MyAppVersion "1.4.4"
 #define MyAppPublisher "Arbasante"
 #define MyAppExeName "easy-presenter-slint.exe"
 
@@ -48,11 +48,7 @@ Name: "spanish"; MessagesFile: "compiler:Languages\Spanish.isl"
 
 
 [Tasks]
-
-Name: "desktopicon";
-Description: "Crear un acceso directo en el escritorio";
-GroupDescription: "Accesos directos:"
-
+Name: "desktopicon"; Description: "Crear un acceso directo en el escritorio"
 
 [Files]
 

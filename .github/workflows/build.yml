@@ -10,189 +10,884 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+
+  # ============================================================
+  # LINUX
+  # ============================================================
   build-linux:
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
 
+    steps:
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+
+      # --------------------------------------------------------
+      # DEPENDENCIAS DEL SISTEMA
+      # --------------------------------------------------------
       - name: Instalar dependencias del sistema
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
-            build-essential pkg-config \
-            libglib2.0-dev libfontconfig1-dev \
-            libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
-            gstreamer1.0-tools gstreamer1.0-plugins-base \
-            gstreamer1.0-plugins-good \
-            libxkbcommon-x11-0 libx11-6 libx11-xcb1 libxcb1
 
+          sudo apt-get install -y \
+            build-essential \
+            pkg-config \
+            libglib2.0-dev \
+            libfontconfig1-dev \
+            libgstreamer1.0-dev \
+            libgstreamer-plugins-base1.0-dev \
+            gstreamer1.0-tools \
+            gstreamer1.0-plugins-base \
+            gstreamer1.0-plugins-good \
+            gstreamer1.0-plugins-bad \
+            gstreamer1.0-plugins-ugly \
+            gstreamer1.0-libav \
+            libxkbcommon-x11-0 \
+            libx11-6 \
+            libx11-xcb1 \
+            libxcb1
+
+
+      # --------------------------------------------------------
+      # RUST
+      # --------------------------------------------------------
       - name: Instalar Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Verificar assets presentes en el repo
+
+      # --------------------------------------------------------
+      # COMPROBAR ARCHIVOS
+      # --------------------------------------------------------
+      - name: Verificar archivos del proyecto
         run: |
+          echo "=========================================="
+          echo "ESTRUCTURA DEL PROYECTO"
+          echo "=========================================="
+
+          echo ""
+          echo "--- Cargo.toml ---"
+          test -f Cargo.toml && echo "OK" || echo "FALTA Cargo.toml"
+
+          echo ""
           echo "--- assets/ ---"
           ls -la assets/ || echo "La carpeta assets/ no existe"
+
+          echo ""
           echo "--- data/ ---"
           ls -la data/ || echo "La carpeta data/ no existe"
 
+          echo ""
+          echo "--- build.rs ---"
+          test -f build.rs && echo "OK" || echo "FALTA build.rs"
+
+
+      # --------------------------------------------------------
+      # CARGO-DEB
+      # --------------------------------------------------------
       - name: Instalar cargo-deb
-        run: cargo install cargo-deb
+        run: |
+          cargo install cargo-deb
 
-      - name: Build release
-        run: cargo build --release
 
-      - name: Generar .deb
-        run: cargo deb
+      # --------------------------------------------------------
+      # BUILD
+      # --------------------------------------------------------
+      - name: Build release Linux
+        run: |
+          cargo build --release
 
-      - name: Subir artefacto .deb
+
+      # --------------------------------------------------------
+      # DEB
+      # --------------------------------------------------------
+      - name: Generar paquete .deb
+        run: |
+          cargo deb
+
+
+      # --------------------------------------------------------
+      # SUBIR DEB
+      # --------------------------------------------------------
+      - name: Subir artefacto Linux
         uses: actions/upload-artifact@v4
         with:
           name: easy-presenter-linux-deb
           path: target/debian/*.deb
+          if-no-files-found: error
 
+
+  # ============================================================
+  # WINDOWS
+  # ============================================================
   build-windows:
     runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
 
-      - name: Instalar Rust (MSVC)
+    steps:
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+
+      # --------------------------------------------------------
+      # RUST MSVC
+      # --------------------------------------------------------
+      - name: Instalar Rust MSVC
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc
 
-      - name: Instalar pkg-config
-        run: choco install pkgconfiglite -y
 
-      - name: Instalar GStreamer (runtime + devel) — descarga directa oficial
+      # --------------------------------------------------------
+      # PKG-CONFIG
+      # --------------------------------------------------------
+      - name: Instalar pkg-config
         shell: pwsh
         run: |
-          $version = "1.28.6"
+          Write-Host "Instalando pkg-config..."
+
+          choco install pkgconfiglite -y
+
+          Write-Host ""
+          Write-Host "Verificando pkg-config..."
+
+          pkg-config --version
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "pkg-config no quedó disponible."
+          }
+
+
+      # ========================================================
+      # GSTREAMER
+      # ========================================================
+      #
+      # GStreamer 1.28.x para Windows usa Inno Setup.
+      #
+      # Utilizamos 1.28.5.
+      #
+      # El paquete DEVEL contiene lo necesario para compilar:
+      #
+      #   - DLLs runtime
+      #   - headers
+      #   - libraries
+      #   - pkg-config files
+      #   - plugins
+      #
+      # ========================================================
+      - name: Instalar GStreamer 1.28.5
+        shell: pwsh
+        run: |
+
+          $version = "1.28.5"
+
           $baseUrl = "https://gstreamer.freedesktop.org/data/pkg/windows/$version/msvc"
 
-          function Install-GstExe($url, $name) {
-            $out = "$env:TEMP\$name.exe"
-            $maxRetries = 3
-            for ($i = 1; $i -le $maxRetries; $i++) {
-              try {
-                Write-Host "Descargando $name (intento $i de $maxRetries)..."
-                Invoke-WebRequest -Uri $url -OutFile $out -TimeoutSec 180
-                Write-Host "Descarga de $name completada."
-                break
-              } catch {
-                Write-Host "Fallo en intento $i : $_"
-                if ($i -eq $maxRetries) { throw "No se pudo descargar $name tras $maxRetries intentos" }
-                Start-Sleep -Seconds 20
+          $url = "$baseUrl/gstreamer-1.0-msvc-x86_64-$version.exe"
+
+          $installer = "$env:TEMP\gstreamer-$version-x86_64.exe"
+
+          $gstRoot = "C:\gstreamer\1.0\msvc_x86_64"
+
+
+          Write-Host "=================================================="
+          Write-Host "GSTREAMER"
+          Write-Host "=================================================="
+
+          Write-Host ""
+          Write-Host "Versión:"
+          Write-Host $version
+
+          Write-Host ""
+          Write-Host "URL:"
+          Write-Host $url
+
+          Write-Host ""
+          Write-Host "Destino:"
+          Write-Host $gstRoot
+
+
+          # ----------------------------------------------------
+          # DESCARGA
+          # ----------------------------------------------------
+
+          $maxRetries = 3
+          $downloadOK = $false
+
+          for ($i = 1; $i -le $maxRetries; $i++) {
+
+            try {
+
+              Write-Host ""
+              Write-Host "Descargando GStreamer..."
+              Write-Host "Intento $i de $maxRetries"
+
+              Invoke-WebRequest `
+                -Uri $url `
+                -OutFile $installer `
+                -TimeoutSec 600
+
+              if (-not (Test-Path $installer)) {
+                throw "No se encontró el instalador descargado."
               }
+
+              $file = Get-Item $installer
+
+              $sizeMB = [math]::Round(
+                $file.Length / 1MB,
+                2
+              )
+
+              Write-Host ""
+              Write-Host "Descarga completada."
+              Write-Host "Archivo: $installer"
+              Write-Host "Tamaño: $sizeMB MB"
+
+              if ($sizeMB -lt 10) {
+                throw "El archivo descargado es demasiado pequeño."
+              }
+
+              $downloadOK = $true
+
+              break
+
             }
-            Write-Host "Instalando $name (instalador NSIS, modo silencioso /S)..."
-            Start-Process -FilePath $out -ArgumentList "/S" -Wait
-            Write-Host "${name}: proceso de instalación finalizado."
+            catch {
+
+              Write-Host ""
+              Write-Host "ERROR:"
+              Write-Host $_
+
+              if ($i -eq $maxRetries) {
+                throw "No se pudo descargar GStreamer."
+              }
+
+              Write-Host ""
+              Write-Host "Esperando 20 segundos..."
+              Start-Sleep -Seconds 20
+            }
           }
 
-          Install-GstExe "$baseUrl/gstreamer-1.0-msvc-x86_64-$version.exe" "gstreamer-runtime"
-          Install-GstExe "$baseUrl/gstreamer-1.0-devel-msvc-x86_64-$version.exe" "gstreamer-devel"
 
-          $rutaEsperada = "C:\gstreamer\1.0\msvc_x86_64"
-          if (-not (Test-Path $rutaEsperada)) {
-            Write-Host "ADVERTENCIA: no se encontró $rutaEsperada. Buscando en otras ubicaciones..."
-            Get-ChildItem "C:\" -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "*gstreamer*" }
-          } else {
-            Write-Host "Confirmado: GStreamer instalado en $rutaEsperada"
+          if (-not $downloadOK) {
+            throw "La descarga de GStreamer falló."
           }
 
-      - name: Localizar instalación real de GStreamer
-        shell: pwsh
-        run: |
-          Write-Host "Buscando glib-2.0.pc en el sistema..."
-          $pcFile = Get-ChildItem -Path "C:\gstreamer","C:\Program Files","C:\ProgramData\chocolatey\lib" `
-            -Recurse -Filter "glib-2.0.pc" -ErrorAction SilentlyContinue | Select-Object -First 1
+
+          # ----------------------------------------------------
+          # CREAR DIRECTORIO
+          # ----------------------------------------------------
+
+          New-Item `
+            -ItemType Directory `
+            -Force `
+            -Path $gstRoot |
+            Out-Null
+
+
+          # ----------------------------------------------------
+          # INSTALAR DEVEL
+          #
+          # /TYPE=devel instala los componentes de desarrollo
+          # necesarios para compilar contra GStreamer.
+          #
+          # /VERYSILENT evita que el runner se quede esperando
+          # interacción gráfica.
+          # ----------------------------------------------------
+
+          Write-Host ""
+          Write-Host "=================================================="
+          Write-Host "INSTALANDO GSTREAMER"
+          Write-Host "=================================================="
+
+          $arguments = @(
+            "/VERYSILENT"
+            "/SUPPRESSMSGBOXES"
+            "/NORESTART"
+            "/ALLUSERS"
+            "/TYPE=devel"
+            "/DIR=$gstRoot"
+          )
+
+          Write-Host ""
+          Write-Host "Ejecutando:"
+          Write-Host $installer
+
+          Write-Host ""
+          Write-Host "Argumentos:"
+          Write-Host ($arguments -join " ")
+
+
+          $process = Start-Process `
+            -FilePath $installer `
+            -ArgumentList $arguments `
+            -Wait `
+            -PassThru
+
+
+          Write-Host ""
+          Write-Host "=================================================="
+          Write-Host "INSTALADOR FINALIZADO"
+          Write-Host "=================================================="
+
+          Write-Host "ExitCode = $($process.ExitCode)"
+
+
+          if ($process.ExitCode -ne 0) {
+            throw "GStreamer terminó con código $($process.ExitCode)"
+          }
+
+
+          # ----------------------------------------------------
+          # VERIFICAR DIRECTORIOS
+          # ----------------------------------------------------
+
+          Write-Host ""
+          Write-Host "Verificando instalación..."
+
+          if (-not (Test-Path $gstRoot)) {
+            throw "No existe GST_ROOT: $gstRoot"
+          }
+
+          $gstBin = "$gstRoot\bin"
+          $gstLib = "$gstRoot\lib"
+          $gstInclude = "$gstRoot\include"
+
+          if (-not (Test-Path $gstBin)) {
+            throw "No existe: $gstBin"
+          }
+
+          if (-not (Test-Path $gstLib)) {
+            throw "No existe: $gstLib"
+          }
+
+          if (-not (Test-Path $gstInclude)) {
+            throw "No existe: $gstInclude"
+          }
+
+
+          Write-Host ""
+          Write-Host "GStreamer instalado correctamente."
+
+          Write-Host ""
+          Write-Host "GST_ROOT:"
+          Write-Host $gstRoot
+
+          Write-Host ""
+          Write-Host "BIN:"
+          Write-Host $gstBin
+
+          Write-Host ""
+          Write-Host "LIB:"
+          Write-Host $gstLib
+
+          Write-Host ""
+          Write-Host "INCLUDE:"
+          Write-Host $gstInclude
+
+
+          # ----------------------------------------------------
+          # BUSCAR glib-2.0.pc
+          # ----------------------------------------------------
+
+          Write-Host ""
+          Write-Host "Buscando glib-2.0.pc..."
+
+          $pcFile = Get-ChildItem `
+            -Path $gstRoot `
+            -Recurse `
+            -Filter "glib-2.0.pc" `
+            -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+
 
           if (-not $pcFile) {
-            Write-Host "No se encontró glib-2.0.pc. Listando lo que SÍ se instaló para depurar:"
-            Get-ChildItem "C:\gstreamer" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 100 FullName
-            Get-ChildItem "C:\ProgramData\chocolatey\lib" -ErrorAction SilentlyContinue | Select-Object Name
-            throw "No se pudo localizar glib-2.0.pc en ninguna ruta conocida"
+
+            Write-Host ""
+            Write-Host "ERROR: no se encontró glib-2.0.pc."
+
+            Write-Host ""
+            Write-Host "Contenido de GStreamer:"
+
+            Get-ChildItem `
+              $gstRoot `
+              -Recurse `
+              -ErrorAction SilentlyContinue |
+              Select-Object -First 200 FullName
+
+            throw "No se encontró glib-2.0.pc."
           }
+
 
           $pkgConfigDirWin = $pcFile.DirectoryName
-          # DirectoryName típico: ...\lib\pkgconfig  ->  root = dos niveles arriba
-          $gstRootWin = Split-Path (Split-Path $pkgConfigDirWin -Parent) -Parent
 
-          # Convertir C:\algo\ruta a formato Unix /c/algo/ruta (pkgconfiglite lo requiere así)
-          $pkgConfigDirUnix = "/" + $pkgConfigDirWin.Substring(0,1).ToLower() + $pkgConfigDirWin.Substring(2).Replace('\','/')
 
-          Write-Host "Root de GStreamer detectado: $gstRootWin"
-          Write-Host "pkgconfig (Unix)          : $pkgConfigDirUnix"
+          Write-Host ""
+          Write-Host "glib-2.0.pc:"
+          Write-Host $pcFile.FullName
 
-          echo "GST_ROOT_WIN=$gstRootWin" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          echo "PKG_CONFIG_PATH=$pkgConfigDirUnix" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          echo "$gstRootWin\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
-      - name: Verificar que pkg-config encuentra glib-2.0
+          # ----------------------------------------------------
+          # PKG_CONFIG_PATH
+          # ----------------------------------------------------
+
+          $pkgConfigDirUnix =
+            "/" +
+            $pkgConfigDirWin.Substring(0, 1).ToLower() +
+            $pkgConfigDirWin.Substring(2).Replace('\', '/')
+
+
+          Write-Host ""
+          Write-Host "PKG_CONFIG_PATH:"
+          Write-Host $pkgConfigDirUnix
+
+
+          # ----------------------------------------------------
+          # VARIABLES PARA LOS SIGUIENTES STEPS
+          # ----------------------------------------------------
+
+          "GST_ROOT_WIN=$gstRoot" |
+            Out-File `
+              -FilePath $env:GITHUB_ENV `
+              -Encoding utf8 `
+              -Append
+
+          "PKG_CONFIG_PATH=$pkgConfigDirUnix" |
+            Out-File `
+              -FilePath $env:GITHUB_ENV `
+              -Encoding utf8 `
+              -Append
+
+          "$gstBin" |
+            Out-File `
+              -FilePath $env:GITHUB_PATH `
+              -Encoding utf8 `
+              -Append
+
+
+          Write-Host ""
+          Write-Host "Variables de entorno configuradas."
+
+
+      # ========================================================
+      # VERIFICAR GSTREAMER
+      # ========================================================
+      - name: Verificar GStreamer y pkg-config
         shell: pwsh
         run: |
-          Write-Host "PKG_CONFIG_PATH = $env:PKG_CONFIG_PATH"
-          pkg-config --debug --exists glib-2.0
-          pkg-config --modversion glib-2.0
 
-      - name: Build release
-        run: cargo build --release --target x86_64-pc-windows-msvc
+          Write-Host "=================================================="
+          Write-Host "VERIFICACIÓN GSTREAMER"
+          Write-Host "=================================================="
 
-      - name: Copiar DLLs necesarias junto al .exe
-        shell: pwsh
-        run: |
-          $out = "target\x86_64-pc-windows-msvc\release"
-          Copy-Item pdfium.dll -Destination $out -Force
 
-          $gstBin = "$env:GST_ROOT_WIN\bin"
-          Write-Host "Copiando TODAS las DLLs desde: $gstBin"
+          Write-Host ""
+          Write-Host "GST_ROOT_WIN:"
+          Write-Host $env:GST_ROOT_WIN
 
-          # En vez de mantener una lista manual (que siempre termina incompleta:
-          # gio, gmodule, orc, pcre2, etc.), copiamos absolutamente todas las
-          # DLLs de runtime de GStreamer. Es más pesado pero elimina por completo
-          # los errores de "DLL no encontrada" al ejecutar en una PC limpia.
-          $dllCount = (Get-ChildItem "$gstBin\*.dll").Count
-          Write-Host "Se encontraron $dllCount DLLs en $gstBin"
-          Copy-Item "$gstBin\*.dll" -Destination $out -Force
 
-          New-Item -ItemType Directory -Force -Path "$out\lib\gstreamer-1.0" | Out-Null
-          $pluginsSrc = "$env:GST_ROOT_WIN\lib\gstreamer-1.0"
-          if (Test-Path $pluginsSrc) {
-            Copy-Item "$pluginsSrc\*" -Destination "$out\lib\gstreamer-1.0" -Recurse -Force
-          } else {
-            throw "No se encontraron los plugins de GStreamer en $pluginsSrc"
+          Write-Host ""
+          Write-Host "PKG_CONFIG_PATH:"
+          Write-Host $env:PKG_CONFIG_PATH
+
+
+          Write-Host ""
+          Write-Host "pkg-config:"
+          pkg-config --version
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "pkg-config no funciona."
           }
 
-      - name: Instalar Inno Setup
-        run: choco install innosetup -y
 
+          Write-Host ""
+          Write-Host "glib-2.0:"
+          pkg-config --modversion glib-2.0
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "pkg-config no encuentra glib-2.0."
+          }
+
+
+          Write-Host ""
+          Write-Host "gstreamer-1.0:"
+          pkg-config --modversion gstreamer-1.0
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "pkg-config no encuentra gstreamer-1.0."
+          }
+
+
+          Write-Host ""
+          Write-Host "gstreamer-video-1.0:"
+          pkg-config --modversion gstreamer-video-1.0
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "pkg-config no encuentra gstreamer-video-1.0."
+          }
+
+
+          Write-Host ""
+          Write-Host "gstreamer-app-1.0:"
+          pkg-config --modversion gstreamer-app-1.0
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "pkg-config no encuentra gstreamer-app-1.0."
+          }
+
+
+          Write-Host ""
+          Write-Host "gst-inspect-1.0:"
+
+          $gstInspect = Get-Command gst-inspect-1.0 `
+            -ErrorAction SilentlyContinue
+
+          if (-not $gstInspect) {
+            throw "gst-inspect-1.0 no está disponible."
+          }
+
+          Write-Host $gstInspect.Source
+
+
+          Write-Host ""
+          Write-Host "Versión GStreamer:"
+
+          gst-inspect-1.0 --version
+
+
+      # ========================================================
+      # BUILD RUST WINDOWS
+      # ========================================================
+      - name: Build release Windows
+        shell: pwsh
+        run: |
+
+          Write-Host "=================================================="
+          Write-Host "COMPILANDO EASY PRESENTER"
+          Write-Host "=================================================="
+
+          cargo build `
+            --release `
+            --target x86_64-pc-windows-msvc
+
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Cargo build falló."
+          }
+
+
+          $out = "target\x86_64-pc-windows-msvc\release"
+
+
+          if (-not (Test-Path $out)) {
+            throw "No existe el directorio de release: $out"
+          }
+
+
+          Write-Host ""
+          Write-Host "Build completado."
+
+
+      # ========================================================
+      # PREPARAR ARCHIVOS WINDOWS
+      # ========================================================
+      - name: Copiar DLLs y plugins de GStreamer
+        shell: pwsh
+        run: |
+
+          $out = "target\x86_64-pc-windows-msvc\release"
+
+
+          Write-Host "=================================================="
+          Write-Host "PREPARANDO APLICACIÓN"
+          Write-Host "=================================================="
+
+
+          # ----------------------------------------------------
+          # PDFIUM
+          # ----------------------------------------------------
+
+          if (-not (Test-Path "pdfium.dll")) {
+            throw "No se encontró pdfium.dll en la raíz del proyecto."
+          }
+
+          Copy-Item `
+            "pdfium.dll" `
+            -Destination $out `
+            -Force
+
+          Write-Host "pdfium.dll copiado."
+
+
+          # ----------------------------------------------------
+          # GSTREAMER DLLS
+          # ----------------------------------------------------
+
+          $gstBin = "$env:GST_ROOT_WIN\bin"
+
+          if (-not (Test-Path $gstBin)) {
+            throw "No existe: $gstBin"
+          }
+
+
+          Write-Host ""
+          Write-Host "Buscando DLLs en:"
+          Write-Host $gstBin
+
+
+          $dlls = Get-ChildItem `
+            "$gstBin\*.dll" `
+            -ErrorAction SilentlyContinue
+
+
+          Write-Host ""
+          Write-Host "DLLs encontradas: $($dlls.Count)"
+
+
+          if ($dlls.Count -eq 0) {
+            throw "No se encontraron DLLs de GStreamer."
+          }
+
+
+          Copy-Item `
+            "$gstBin\*.dll" `
+            -Destination $out `
+            -Force
+
+
+          Write-Host ""
+          Write-Host "DLLs copiadas."
+
+
+          # ----------------------------------------------------
+          # GSTREAMER PLUGINS
+          # ----------------------------------------------------
+
+          $pluginsSrc = "$env:GST_ROOT_WIN\lib\gstreamer-1.0"
+
+          $pluginsDst = "$out\lib\gstreamer-1.0"
+
+
+          if (-not (Test-Path $pluginsSrc)) {
+            throw "No se encontraron plugins en: $pluginsSrc"
+          }
+
+
+          New-Item `
+            -ItemType Directory `
+            -Force `
+            -Path $pluginsDst |
+            Out-Null
+
+
+          Write-Host ""
+          Write-Host "Copiando plugins..."
+
+          Write-Host "Origen:"
+          Write-Host $pluginsSrc
+
+          Write-Host "Destino:"
+          Write-Host $pluginsDst
+
+
+          Copy-Item `
+            "$pluginsSrc\*" `
+            -Destination $pluginsDst `
+            -Recurse `
+            -Force
+
+
+          # ----------------------------------------------------
+          # COMPROBAR PLUGINS
+          # ----------------------------------------------------
+
+          $pluginFiles = Get-ChildItem `
+            $pluginsDst `
+            -Recurse `
+            -File `
+            -ErrorAction SilentlyContinue
+
+
+          Write-Host ""
+          Write-Host "Plugins copiados: $($pluginFiles.Count)"
+
+
+          if ($pluginFiles.Count -eq 0) {
+            throw "No se copiaron plugins de GStreamer."
+          }
+
+
+          # ----------------------------------------------------
+          # MOSTRAR ESTRUCTURA
+          # ----------------------------------------------------
+
+          Write-Host ""
+          Write-Host "=================================================="
+          Write-Host "ESTRUCTURA FINAL"
+          Write-Host "=================================================="
+
+
+          Write-Host ""
+          Write-Host "--- Ejecutable ---"
+
+          Get-Item `
+            "$out\easy-presenter-slint.exe" `
+            -ErrorAction Stop
+
+
+          Write-Host ""
+          Write-Host "--- DLLs ---"
+
+          Get-ChildItem `
+            "$out\*.dll" |
+            Select-Object Name, Length
+
+
+          Write-Host ""
+          Write-Host "--- Plugins ---"
+
+          Get-ChildItem `
+            $pluginsDst `
+            -Recurse `
+            -File |
+            Select-Object -First 100 FullName
+
+
+      # ========================================================
+      # INNO SETUP
+      # ========================================================
+      - name: Instalar Inno Setup
+        shell: pwsh
+        run: |
+
+          Write-Host "Instalando Inno Setup..."
+
+          choco install innosetup -y
+
+
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+
+
+          if (-not (Test-Path $iscc)) {
+            throw "No se encontró ISCC.exe."
+          }
+
+
+          Write-Host ""
+          Write-Host "Inno Setup encontrado:"
+          Write-Host $iscc
+
+
+      # ========================================================
+      # COMPILAR INSTALADOR
+      # ========================================================
       - name: Compilar instalador con Inno Setup
         shell: pwsh
         run: |
-          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
 
-      - name: Subir artefacto instalador
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+
+
+          if (-not (Test-Path "installer.iss")) {
+            throw "No se encontró installer.iss."
+          }
+
+
+          Write-Host "=================================================="
+          Write-Host "COMPILANDO INSTALADOR"
+          Write-Host "=================================================="
+
+
+          & $iscc "installer.iss"
+
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Inno Setup terminó con código $LASTEXITCODE"
+          }
+
+
+          Write-Host ""
+          Write-Host "Instalador compilado correctamente."
+
+
+          if (-not (Test-Path "Output")) {
+            throw "No existe la carpeta Output."
+          }
+
+
+          $installers = Get-ChildItem `
+            "Output\*.exe" `
+            -ErrorAction SilentlyContinue
+
+
+          if ($installers.Count -eq 0) {
+            throw "No se generó ningún instalador."
+          }
+
+
+          Write-Host ""
+          Write-Host "Instaladores generados:"
+
+          $installers |
+            Select-Object Name, Length
+
+
+      # ========================================================
+      # SUBIR INSTALADOR
+      # ========================================================
+      - name: Subir instalador Windows
         uses: actions/upload-artifact@v4
         with:
           name: easy-presenter-windows-installer
           path: Output\*.exe
+          if-no-files-found: error
 
+
+  # ============================================================
+  # RELEASE
+  # ============================================================
   release:
-    needs: [build-linux, build-windows]
+    needs:
+      - build-linux
+      - build-windows
+
     runs-on: ubuntu-latest
+
     if: startsWith(github.ref, 'refs/tags/')
+
     steps:
+
+      # --------------------------------------------------------
+      # DESCARGAR ARTEFACTOS
+      # --------------------------------------------------------
       - name: Descargar artefactos
         uses: actions/download-artifact@v4
         with:
           path: artifacts
 
+
+      # --------------------------------------------------------
+      # MOSTRAR ARTEFACTOS
+      # --------------------------------------------------------
+      - name: Verificar artefactos
+        run: |
+
+          echo "=========================================="
+          echo "ARTEFACTOS GENERADOS"
+          echo "=========================================="
+
+          find artifacts -type f -print
+
+
+      # --------------------------------------------------------
+      # CREAR RELEASE
+      # --------------------------------------------------------
       - name: Crear Release en GitHub
         uses: softprops/action-gh-release@v2
         with:
           files: |
             artifacts/easy-presenter-linux-deb/*.deb
             artifacts/easy-presenter-windows-installer/*.exe
+
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

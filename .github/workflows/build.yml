@@ -86,18 +86,13 @@ jobs:
               }
             }
             Write-Host "Instalando $name (instalador NSIS, modo silencioso /S)..."
-            # Los instaladores .exe de GStreamer son NSIS: /S = instalación silenciosa.
-            # A diferencia de msiexec, NSIS no siempre expone un ExitCode confiable,
-            # así que verificamos el resultado buscando la carpeta instalada después.
             Start-Process -FilePath $out -ArgumentList "/S" -Wait
-            Write-Host "$name: proceso de instalación finalizado."
+            Write-Host "${name}: proceso de instalación finalizado."
           }
 
           Install-GstExe "$baseUrl/gstreamer-1.0-msvc-x86_64-$version.exe" "gstreamer-runtime"
           Install-GstExe "$baseUrl/gstreamer-1.0-devel-msvc-x86_64-$version.exe" "gstreamer-devel"
 
-          # Verificación explícita: confirma que la instalación realmente dejó archivos,
-          # ya que NSIS no siempre falla "ruidosamente" si algo sale mal.
           $rutaEsperada = "C:\gstreamer\1.0\msvc_x86_64"
           if (-not (Test-Path $rutaEsperada)) {
             Write-Host "ADVERTENCIA: no se encontró $rutaEsperada. Buscando en otras ubicaciones..."

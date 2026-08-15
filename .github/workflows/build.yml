@@ -64,11 +64,47 @@ jobs:
       - name: Instalar pkg-config
         run: choco install pkgconfiglite -y
 
-      - name: Instalar GStreamer (runtime + devel) via Chocolatey
+      - name: Instalar GStreamer (runtime + devel) — descarga directa oficial
         shell: pwsh
         run: |
-          choco install gstreamer --version=1.26.9 -y --no-progress
-          choco install gstreamer-devel --version=1.26.9 -y --no-progress
+          $version = "1.28.6"
+          $baseUrl = "https://gstreamer.freedesktop.org/data/pkg/windows/$version/msvc"
+
+          function Install-GstExe($url, $name) {
+            $out = "$env:TEMP\$name.exe"
+            $maxRetries = 3
+            for ($i = 1; $i -le $maxRetries; $i++) {
+              try {
+                Write-Host "Descargando $name (intento $i de $maxRetries)..."
+                Invoke-WebRequest -Uri $url -OutFile $out -TimeoutSec 180
+                Write-Host "Descarga de $name completada."
+                break
+              } catch {
+                Write-Host "Fallo en intento $i : $_"
+                if ($i -eq $maxRetries) { throw "No se pudo descargar $name tras $maxRetries intentos" }
+                Start-Sleep -Seconds 20
+              }
+            }
+            Write-Host "Instalando $name (instalador NSIS, modo silencioso /S)..."
+            # Los instaladores .exe de GStreamer son NSIS: /S = instalación silenciosa.
+            # A diferencia de msiexec, NSIS no siempre expone un ExitCode confiable,
+            # así que verificamos el resultado buscando la carpeta instalada después.
+            Start-Process -FilePath $out -ArgumentList "/S" -Wait
+            Write-Host "$name: proceso de instalación finalizado."
+          }
+
+          Install-GstExe "$baseUrl/gstreamer-1.0-msvc-x86_64-$version.exe" "gstreamer-runtime"
+          Install-GstExe "$baseUrl/gstreamer-1.0-devel-msvc-x86_64-$version.exe" "gstreamer-devel"
+
+          # Verificación explícita: confirma que la instalación realmente dejó archivos,
+          # ya que NSIS no siempre falla "ruidosamente" si algo sale mal.
+          $rutaEsperada = "C:\gstreamer\1.0\msvc_x86_64"
+          if (-not (Test-Path $rutaEsperada)) {
+            Write-Host "ADVERTENCIA: no se encontró $rutaEsperada. Buscando en otras ubicaciones..."
+            Get-ChildItem "C:\" -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -like "*gstreamer*" }
+          } else {
+            Write-Host "Confirmado: GStreamer instalado en $rutaEsperada"
+          }
 
       - name: Localizar instalación real de GStreamer
         shell: pwsh

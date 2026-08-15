@@ -64,7 +64,14 @@ struct ConfigApp {
     // Roles de pantallas para Stage Display: (id_pantalla, rol)
     #[serde(default)]
     pantallas_roles: Vec<(i32, i32)>,
+
+    // Si hay 2da pantalla detectada, abre el proyector ahí automáticamente al iniciar
+    #[serde(default = "default_true")]
+    auto_proyectar_inicio: bool,
+
 }
+
+fn default_true() -> bool { true }
 
 fn config_path(user_data_dir: &std::path::Path) -> std::path::PathBuf {
     user_data_dir.join("config.json")
@@ -146,6 +153,40 @@ static LIBROS_NORMALIZADOS: LazyLock<Vec<String>> = LazyLock::new(||
 );
 
 // ---------------------------------------------------------------------------
+// Detección adaptativa de hardware — un solo punto de verdad.
+// Se calcula UNA vez (LazyLock) y se reutiliza en toda la app: resolución de
+// miniaturas, resolución de páginas PDF/PPTX, tamaño de cachés, etc.
+// Nivel 1 = equipos débiles (Celeron B815, AMD E1-6015, 1-2 núcleos)
+// Nivel 2 = gama media (3-4 núcleos)
+// Nivel 3 = equipos modernos (5+ núcleos, i5/i7/i9, Ryzen)
+// ---------------------------------------------------------------------------
+static NIVEL_HARDWARE: LazyLock<u8> = LazyLock::new(|| {
+    let nucleos = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(2);
+    match nucleos {
+        0..=2 => 1,
+        3..=4 => 2,
+        _     => 3,
+    }
+});
+
+/// Resolución de miniaturas (galería de imágenes/multimedia).
+fn resolucion_miniatura() -> u32 {
+    match *NIVEL_HARDWARE { 1 => 240, 2 => 360, _ => 480 }
+}
+
+/// Ancho de renderizado para páginas de PDF/PPTX importadas.
+fn resolucion_pdf() -> i32 {
+    match *NIVEL_HARDWARE { 1 => 1280, 2 => 1600, _ => 1920 }
+}
+
+/// Tamaño del LRU cache de capítulos bíblicos.
+fn tamano_cache_capitulos() -> usize {
+    match *NIVEL_HARDWARE { 1 => 100, 2 => 200, _ => 400 }
+}
+
+// ---------------------------------------------------------------------------
 // Funciones de utilidad — #[inline] en hot-paths cortos
 // ---------------------------------------------------------------------------
 #[inline]
@@ -217,12 +258,16 @@ fn load_image_cached(
             return Some(img.clone());
         }
     }
-    if let Ok(img) = slint::Image::load_from_path(std::path::Path::new(path)) {
-        cache.lock().unwrap().insert(path.to_string(), img.clone());
-        Some(img)
-    } else {
-        None
-    }
+    let tam = resolucion_miniatura();
+    let decoded = image::open(path).ok()?;
+    let thumb = decoded.thumbnail(tam, tam).to_rgba8();
+    let (w, h) = (thumb.width(), thumb.height());
+    let mut pixel_buffer = SharedPixelBuffer::<slint::Rgba8Pixel>::new(w, h);
+    pixel_buffer.make_mut_bytes().copy_from_slice(thumb.as_raw());
+    let img = slint::Image::from_rgba8(pixel_buffer);
+
+    cache.lock().unwrap().insert(path.to_string(), img.clone());
+    Some(img)
 }
 
 // ---------------------------------------------------------------------------
@@ -344,7 +389,7 @@ if !biblias_ok {
             biblias_db,
             versiones:           Vec::new(),
             current_version_id:  1,
-            chapter_cache:       LruCache::new(std::num::NonZeroUsize::new(150).unwrap()),
+            chapter_cache:       LruCache::new(std::num::NonZeroUsize::new(tamano_cache_capitulos()).unwrap()),
             biblias_image_paths: Vec::new(),
             cantos_image_paths:  Vec::new(),
             biblias_video_paths: Vec::new(),
@@ -1323,6 +1368,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ui.set_default_bg_type(SharedString::from(&cfg.default_bg_type));
     ui.set_default_bg_idx(cfg.default_bg_idx);
     ui.global::<Theme>().set_is_dark(cfg.tema_oscuro);
+    ui.set_auto_proyectar_inicio(cfg.auto_proyectar_inicio);
     ui.set_libreoffice_listo(libreoffice_disponible());
 
 
@@ -1421,6 +1467,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 default_bg_idx:   ui.get_default_bg_idx(),
                 tema_oscuro: ui.global::<Theme>().get_is_dark(),
                 pantallas_roles: roles_cfg.lock().unwrap().iter().map(|(k, v)| (*k, *v)).collect(),
+                auto_proyectar_inicio: ui.get_auto_proyectar_inicio(),
             };
             guardar_config(&udd, &cfg);
         }
@@ -2573,7 +2620,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 for (i, page) in document.pages().iter().enumerate() {
                     // 1280px es suficiente para proyección y ~2x más rápido que 1920px
-                    let config = PdfRenderConfig::new().set_target_width(1280);
+                    let config = PdfRenderConfig::new().set_target_width(resolucion_pdf());
 
                     match page.render_with_config(&config) {
                         Ok(bitmap) => {
@@ -3092,6 +3139,27 @@ _restore_timer.start(
             slint::CloseRequestResponse::HideWindow
         });
     }
+
+    // ── Auto-proyección en segunda pantalla al iniciar ───────────────────────
+    // Se dispara DESPUÉS de registrar todos los callbacks (incluido
+    // on_abrir_proyector), reutilizando exactamente la misma lógica que usa
+    // el botón LIVE — mismo código, mismo comportamiento en Windows y Linux.
+    if cfg.auto_proyectar_inicio && segunda_pantalla.lock().unwrap().is_some() {
+        let ui_auto = ui.as_weak();
+        // Pequeño respiro (300ms) para que la ventana principal termine de
+        // dibujarse antes de abrir la segunda ventana — evita parpadeos raros
+        // al iniciar todo de golpe en el mismo instante.
+        let timer_auto = slint::Timer::default();
+        timer_auto.start(slint::TimerMode::SingleShot, std::time::Duration::from_millis(300), move || {
+            if let Some(ui) = ui_auto.upgrade() {
+                ui.invoke_abrir_proyector();
+            }
+        });
+        // Evita que el Timer se destruya apenas termine este bloque
+        std::mem::forget(timer_auto);
+    }
+
+    
 
     ui.run()?;
     Ok(())

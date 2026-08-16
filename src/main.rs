@@ -11,6 +11,7 @@ use std::rc::Rc;
 use std::cell::RefCell;
 use std::thread;
 use regex::Regex;
+use rayon::prelude::*;
 use display_info::DisplayInfo;
 use lru::LruCache;
 use directories::ProjectDirs;
@@ -268,6 +269,46 @@ fn load_image_cached(
 
     cache.lock().unwrap().insert(path.to_string(), img.clone());
     Some(img)
+}
+
+/// Decodifica en paralelo (usando todos los núcleos disponibles) los
+/// thumbnails de una lista de rutas. Devuelve, en el mismo orden, los bytes
+/// RGBA crudos — NO crea slint::Image aquí porque ese tipo no es Send y no
+/// puede construirse dentro de los hilos de trabajo de rayon.
+fn decodificar_miniaturas_paralelo(paths: &[String]) -> Vec<Option<(u32, u32, Vec<u8>)>> {
+    let tam = resolucion_miniatura();
+    paths.par_iter()
+        .map(|p| {
+            image::open(p).ok().map(|decoded| {
+                let thumb = decoded.thumbnail(tam, tam).to_rgba8();
+                let (w, h) = (thumb.width(), thumb.height());
+                (w, h, thumb.into_raw())
+            })
+        })
+        .collect()
+}
+
+/// Precarga en el caché todas las rutas que aún no estén decodificadas,
+/// usando decodificación en paralelo. Los slint::Image finales se
+/// construyen aquí mismo, en el hilo que llama a esta función (rápido:
+/// solo copia de memoria, no hay decode de imagen en este paso).
+fn precargar_cache_paralelo(cache: &Arc<Mutex<HashMap<String, slint::Image>>>, paths: &[String]) {
+    let faltantes: Vec<String> = {
+        let lock = cache.lock().unwrap();
+        paths.iter().filter(|p| !lock.contains_key(*p)).cloned().collect()
+    };
+    if faltantes.is_empty() { return; }
+
+    let decodificadas = decodificar_miniaturas_paralelo(&faltantes);
+
+    let mut lock = cache.lock().unwrap();
+    for (path, resultado) in faltantes.iter().zip(decodificadas.into_iter()) {
+        if let Some((w, h, raw)) = resultado {
+            let mut buf = SharedPixelBuffer::<slint::Rgba8Pixel>::new(w, h);
+            buf.make_mut_bytes().copy_from_slice(&raw);
+            lock.insert(path.clone(), slint::Image::from_rgba8(buf));
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1376,6 +1417,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Restaurar galería de imágenes en la UI
     {
         let st = state.lock().unwrap();
+
+        // Decodifica en paralelo TODAS las imágenes de ambas galerías de una vez,
+        // en vez de una por una en el hilo principal al arrancar la app.
+        let todas_las_rutas: Vec<String> = st.biblias_image_paths.iter()
+            .chain(st.cantos_image_paths.iter())
+            .cloned()
+            .collect();
+        precargar_cache_paralelo(&image_cache, &todas_las_rutas);
+
         let images_b: Vec<slint::Image> = st.biblias_image_paths.iter()
             .filter_map(|p| load_image_cached(&image_cache, p))
             .collect();
@@ -2281,6 +2331,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         move || {
             let ui    = ui_handle.unwrap();
             let items = state_arc.read().unwrap();
+
+            // Decodifica en paralelo todo lo que aún no esté en caché
+            let paths: Vec<String> = items.iter().map(|i| i.path.clone()).collect();
+            precargar_cache_paralelo(&img_cache, &paths);
+
             let slint_items: Vec<MediaItem> = items.iter().enumerate()
                 .filter_map(|(i, item)| {
                     load_image_cached(&img_cache, &item.path).map(|img| MediaItem {
@@ -2602,7 +2657,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let total_pages = document.pages().len();
                 let safe_name   = file_name.replace(' ', "_").replace(".pdf", "");
 
-                // Guardar en user_data_dir/pdfs/ — funciona tanto en dev como en .deb
                 let out_dir = udd_clone.join("pdfs").join(&safe_name);
                 if let Err(e) = fs::create_dir_all(&out_dir) {
                     eprintln!("ERROR creando directorio {:?}: {}", out_dir, e);
@@ -2615,49 +2669,76 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     return;
                 }
 
-                let mut saved_pages_paths = Vec::new();
-                let mut thumb_path_str    = String::new();
+                // ── FASE 1: Renderizado (SECUENCIAL — obligatorio, pdfium no
+                //    es seguro para llamadas concurrentes sobre un documento).
+                //    Aquí solo generamos los bitmaps en memoria; el guardado
+                //    a disco (la parte codificable en paralelo) se hace después.
+                let mut bitmaps_en_memoria: Vec<(usize, image::DynamicImage)> = Vec::with_capacity(total_pages as usize);
 
                 for (i, page) in document.pages().iter().enumerate() {
-                    // 1280px es suficiente para proyección y ~2x más rápido que 1920px
                     let config = PdfRenderConfig::new().set_target_width(resolucion_pdf());
-
                     match page.render_with_config(&config) {
                         Ok(bitmap) => {
-                            let img       = bitmap.as_image();
-                            let page_path = out_dir.join(format!("page_{}.jpg", i));
-
-                            if let Err(e) = img.save(&page_path) {
-                                eprintln!("ERROR guardando página {}: {}", i, e);
-                                continue;
-                            }
-
-                            saved_pages_paths.push(page_path.to_string_lossy().to_string());
-
-                            if i == 0 {
-                                let t_path = out_dir.join("thumb.jpg");
-                                if let Ok(thumb_bmp) = page.render_with_config(
-                                    &PdfRenderConfig::new().set_target_width(200)
-                                ) {
-                                    let _ = thumb_bmp.as_image().save(&t_path);
-                                    thumb_path_str = t_path.to_string_lossy().to_string();
-                                }
-                            }
+                            bitmaps_en_memoria.push((i, bitmap.as_image()));
                         }
                         Err(e) => {
                             eprintln!("ERROR renderizando página {}: {}", i, e);
-                            continue;
                         }
                     }
 
-                    // Actualizar barra de progreso
-                    let progress = (i as f32 + 1.0) / total_pages as f32;
+                    // Progreso de la fase de renderizado (0% a 50% de la barra total)
+                    let progress = (i as f32 + 1.0) / total_pages as f32 * 0.5;
                     let ui_prog  = ui_t.clone();
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(ui) = ui_prog.upgrade() {
                             ui.set_pdf_import_progress(progress);
                         }
                     });
+                }
+
+                // ── FASE 2: Codificación JPEG + guardado a disco (PARALELO).
+                //    Esto SÍ es seguro de repartir entre núcleos: cada página
+                //    es independiente y solo usa el crate `image` (puro Rust).
+                let contador_progreso = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+                let total_bitmaps = bitmaps_en_memoria.len();
+                let ui_prog_par = ui_t.clone();
+
+                let mut saved_pages_paths: Vec<(usize, String)> = bitmaps_en_memoria
+                    .par_iter()
+                    .filter_map(|(i, img)| {
+                        let page_path = out_dir.join(format!("page_{}.jpg", i));
+                        if let Err(e) = img.save(&page_path) {
+                            eprintln!("ERROR guardando página {}: {}", i, e);
+                            return None;
+                        }
+
+                        let hechas = contador_progreso.fetch_add(1, Ordering::Relaxed) + 1;
+                        let progress = 0.5 + (hechas as f32 / total_bitmaps as f32 * 0.5);
+                        let ui_prog2 = ui_prog_par.clone();
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = ui_prog2.upgrade() {
+                                ui.set_pdf_import_progress(progress);
+                            }
+                        });
+
+                        Some((*i, page_path.to_string_lossy().to_string()))
+                    })
+                    .collect();
+
+                // Reordenar: rayon procesa en paralelo, así que el orden de
+                // finalización no coincide con el orden real de las páginas.
+                saved_pages_paths.sort_by_key(|(i, _)| *i);
+                let saved_pages_paths: Vec<String> = saved_pages_paths.into_iter().map(|(_, p)| p).collect();
+
+                // Miniatura: reutiliza el bitmap de la página 0 ya en memoria,
+                // solo la reescala — evita volver a renderizar con pdfium.
+                let mut thumb_path_str = String::new();
+                if let Some((_, primera_img)) = bitmaps_en_memoria.iter().find(|(i, _)| *i == 0) {
+                    let t_path = out_dir.join("thumb.jpg");
+                    let mini = primera_img.thumbnail(200, 200);
+                    if mini.save(&t_path).is_ok() {
+                        thumb_path_str = t_path.to_string_lossy().to_string();
+                    }
                 }
 
                 state_t.write().unwrap().push(PdfData {

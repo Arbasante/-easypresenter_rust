@@ -4,7 +4,7 @@
 ; ============================================================
 
 #define MyAppName "EasyPresenter"
-#define MyAppVersion "1.4.9"
+#define MyAppVersion "1.4.10"
 #define MyAppPublisher "Arbasante"
 #define MyAppExeName "easy-presenter-slint.exe"
 

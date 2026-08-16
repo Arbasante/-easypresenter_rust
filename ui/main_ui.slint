@@ -213,6 +213,12 @@ export component AppWindow inherits Window {
 
     in-out property <bool> mostrar_modal_margenes: false;
     in-out property <bool> mostrar_modal_pantallas: false;
+    in-out property <bool> mostrar_modal_overlay: false;
+    in-out property <bool> overlay_servidor_activo: false;
+    in-out property <int> overlay_puerto: 8090;
+    in-out property <string> overlay_ip_local: "";
+    callback abrir_modal_overlay();
+    callback toggle_servidor_overlay();
     in property <[ScreenInfo]> pantallas_detectadas: [];
     in-out property <bool> identificando_pantallas: false;
     in-out property <bool> cambios_pendientes: false;
@@ -1641,7 +1647,7 @@ if (root.mostrar_menu_configuracion) : Rectangle {
     TouchArea { clicked => { root.mostrar_menu_configuracion = false; } }
     Rectangle {
         x: root.menu_configuracion_x; y: root.menu_configuracion_y;
-        width: 160px; height: 102px;
+        width: 160px; height: 110px;
         background: Theme.bg_popup; border-radius: 8px; border-width: 1px; border-color: Theme.border_strong;
         drop-shadow-color: Theme.shadow; drop-shadow-blur: 16px;
         TouchArea {}
@@ -1679,7 +1685,7 @@ if (root.mostrar_menu_herramientas) : Rectangle {
     TouchArea { clicked => { root.mostrar_menu_herramientas = false; } }
     Rectangle {
         x: root.menu_herramientas_x; y: root.menu_herramientas_y;
-        width: 200px; height: 78px;
+        width: 200px; height: 110px;
         background: Theme.bg_popup; border-radius: 8px; border-width: 1px; border-color: Theme.border_strong;
         drop-shadow-color: Theme.shadow; drop-shadow-blur: 16px;
         TouchArea {}
@@ -1691,6 +1697,16 @@ if (root.mostrar_menu_herramientas) : Rectangle {
                     root.mostrar_menu_herramientas = false;
                 }
             }
+            
+            MenuItem {
+                text: "Salida por IP (OBS)"; icon: "📡";
+                clicked => {
+                    root.mostrar_menu_herramientas = false;
+                    root.mostrar_modal_overlay = true;
+                    root.abrir_modal_overlay();
+                }
+            }
+
             MenuItem {
                 text: root.libreoffice_listo ? "PPTX/ODP: Activado" : "Activar PPTX/ODP";
                 icon: root.libreoffice_listo ? "✓" : "⬇";
@@ -2050,6 +2066,79 @@ if (root.mostrar_menu_herramientas) : Rectangle {
                             color: white; font-size: 12px; font-weight: 800;
                             horizontal-alignment: center; vertical-alignment: center;
                         }
+                    }
+                }
+            }
+        }
+    }
+
+    if (root.mostrar_modal_overlay) : Rectangle {
+        width: 100%; height: 100%; background: Theme.overlay;
+        TouchArea { clicked => { root.mostrar_modal_overlay = false; } }
+
+        Rectangle {
+            width: 460px; height: 320px;
+            background: Theme.bg_popup; border-radius: 12px;
+            border-width: 1px; border-color: Theme.border_strong;
+            drop-shadow-color: Theme.shadow; drop-shadow-blur: 20px;
+            TouchArea {}
+
+            VerticalLayout {
+                padding: 24px; spacing: 14px;
+
+                HorizontalLayout {
+                    alignment: space-between; height: 30px;
+                    Text { text: "SALIDA POR IP (OBS)"; color: Theme.text_primary; font-size: 14px; font-weight: 900; vertical-alignment: center; }
+                    Rectangle {
+                        width: 28px; height: 28px; border-radius: 6px;
+                        background: touch-close-ov.has-hover ? Theme.bg_card_hover : transparent;
+                        touch-close-ov := TouchArea { clicked => { root.mostrar_modal_overlay = false; } }
+                        Text { text: "✕"; color: Theme.text_secondary; font-size: 13px; horizontal-alignment: center; vertical-alignment: center; }
+                    }
+                }
+
+                Text {
+                    text: "Agrega una fuente de \"Navegador\" en OBS con esta URL para mostrar el texto proyectado como overlay.";
+                    color: Theme.text_secondary; font-size: 10px; wrap: word-wrap;
+                }
+
+                Rectangle {
+                    height: 48px; border-radius: 8px; background: Theme.bg_list; border-width: 1px; border-color: Theme.border_subtle;
+                    Text {
+                        text: "http://" + root.overlay_ip_local + ":" + root.overlay_puerto;
+                        color: Theme.accent; font-size: 13px; font-weight: 800;
+                        horizontal-alignment: center; vertical-alignment: center; width: 100%; height: 100%;
+                    }
+                }
+
+                HorizontalLayout {
+                    spacing: 10px; height: 30px;
+                    Text { text: "Puerto:"; color: Theme.text_secondary; font-size: 11px; vertical-alignment: center; }
+                    Rectangle {
+                        width: 90px; height: 30px; border-radius: 6px; background: Theme.bg_input; border-width: 1px; border-color: Theme.border_input;
+                        TextInput {
+                            text: root.overlay_puerto;
+                            color: Theme.text_primary; font-size: 11px; horizontal-alignment: center; vertical-alignment: center;
+                            input-type: number;
+                            edited => {
+                                if (self.text.to-float() > 1024 && self.text.to-float() < 65535) {
+                                    root.overlay_puerto = self.text.to-float();
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Rectangle { vertical-stretch: 1; }
+
+                Rectangle {
+                    height: 42px; border-radius: 8px;
+                    background: root.overlay_servidor_activo ? #dc2626 : Theme.accent;
+                    TouchArea { clicked => { root.toggle_servidor_overlay(); } }
+                    Text {
+                        text: root.overlay_servidor_activo ? "Detener Servidor" : "Iniciar Servidor";
+                        color: white; font-size: 12px; font-weight: 800;
+                        horizontal-alignment: center; vertical-alignment: center;
                     }
                 }
             }

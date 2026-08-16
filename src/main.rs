@@ -1105,6 +1105,9 @@ fn configurar_ventana_proyector_linux(wid_store: Arc<Mutex<Option<String>>>) {
 struct MediaData { path: String, name: String, aspecto: String, is_loop: bool }
 struct PdfData   { name: String, thumb_path: String, pages: Vec<String>       }
 
+#[derive(Clone, Default)]
+struct EstadoOverlay { texto: String, referencia: String }
+
 // ---------------------------------------------------------------------------
 // Soporte PPTX/ODP vía LibreOffice
 // ---------------------------------------------------------------------------
@@ -1249,8 +1252,75 @@ fn instalar_libreoffice_linux(_ui_weak: &slint::Weak<AppWindow>) -> bool {
         return ok && encontrado;
     }
 
-    eprintln!("❌ No se encontró un gestor de paquetes compatible (apt-get, dnf, pacman, zypper).");
+    eprintln!("No se encontró un gestor de paquetes compatible (apt-get, dnf, pacman, zypper).");
     false
+}
+
+// ---------------------------------------------------------------------------
+// Servidor HTTP para salida por IP (overlay consumible desde OBS Browser Source)
+// ---------------------------------------------------------------------------
+fn iniciar_servidor_overlay(
+    puerto: u16,
+    estado: Arc<Mutex<EstadoOverlay>>,
+    activo: Arc<AtomicBool>,
+) {
+    let server = match tiny_http::Server::http(format!("0.0.0.0:{}", puerto)) {
+        Ok(s) => s,
+        Err(e) => { eprintln!("No se pudo iniciar servidor overlay en puerto {}: {}", puerto, e); return; }
+    };
+    activo.store(true, Ordering::Release);
+    println!("Servidor overlay OBS escuchando en puerto {}", puerto);
+
+    for request in server.incoming_requests() {
+        if !activo.load(Ordering::Acquire) { break; } // se pidió detener
+
+        let (status, content_type, body) = match request.url() {
+            "/status" => {
+                let e = estado.lock().unwrap();
+                let json = format!(
+                    r#"{{"texto":{},"referencia":{}}}"#,
+                    serde_json::to_string(&e.texto).unwrap_or("\"\"".into()),
+                    serde_json::to_string(&e.referencia).unwrap_or("\"\"".into()),
+                );
+                (200, "application/json", json)
+            }
+            _ => {
+                let html = r##"<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<style>
+  body { margin:0; background:transparent; font-family: sans-serif; }
+  #texto { color:white; font-size:48px; font-weight:900; text-align:center;
+           padding:40px; text-shadow: 2px 2px 6px rgba(0,0,0,0.8); }
+  #referencia { color:#38bdf8; font-size:24px; font-weight:700; text-align:center; }
+</style></head>
+<body>
+  <div id="texto"></div>
+  <div id="referencia"></div>
+  <script>
+    async function actualizar() {
+      try {
+        const r = await fetch('/status');
+        const d = await r.json();
+        document.getElementById('texto').innerText = d.texto || '';
+        document.getElementById('referencia').innerText = d.referencia || '';
+      } catch (e) {}
+    }
+    setInterval(actualizar, 500);
+    actualizar();
+  </script>
+</body></html>"##;
+                (200, "text/html; charset=utf-8", html.to_string())
+            }
+        };
+
+        let header = tiny_http::Header::from_bytes(&b"Content-Type"[..], content_type.as_bytes()).unwrap();
+        let response = tiny_http::Response::from_string(body)
+            .with_status_code(status)
+            .with_header(header);
+        let _ = request.respond(response);
+    }
+
+    println!("Servidor overlay OBS detenido.");
 }
 
 // ---------------------------------------------------------------------------
@@ -1303,6 +1373,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Roles de pantallas: id_pantalla -> rol (0=sin asignar, 1=operador, 2=proyector, 3=stage)
     let roles_pantallas: Arc<Mutex<HashMap<i32, i32>>> = Arc::new(Mutex::new(HashMap::new()));
+
+    // Estado compartido para la salida por IP (overlay para OBS)
+    
+    let overlay_estado: Arc<Mutex<EstadoOverlay>> = Arc::new(Mutex::new(EstadoOverlay::default()));
+    let overlay_servidor_activo: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
 
     // Ventanas de identificación activas + su temporizador de auto-cierre.
     // Rc<RefCell<>> porque las ventanas de Slint no son Send (no pueden
@@ -1791,22 +1866,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let last_modo   = Arc::clone(&modo_en_vivo); 
         let sp          = Arc::clone(&segunda_pantalla);
         let bloqueo     = Arc::clone(&bloqueo_estilos);
+        let overlay_e   = Arc::clone(&overlay_estado);
 
         ui.on_proyectar_estrofa(move |texto, referencia| {
             let p        = p_handle.unwrap();
             let ui_local = ui_h.unwrap();
 
             ui_local.set_is_video_projecting(false);
-            // OPT-3: store con Release para visibilidad cruzada de hilos
             bloqueo.store(false, Ordering::Release);
 
             p.set_texto_proyeccion(texto.clone());
+
+            {
+                let mut e = overlay_e.lock().unwrap();
+                e.texto = texto.to_string();
+            }
+
             let mut ref_str = referencia.to_string();
             if !ref_str.is_empty() {
                 let sigla = state_clone.lock().unwrap().get_sigla_actual();
                 if !sigla.is_empty() { ref_str = format!("{}  |  {}", ref_str, sigla); }
             }
             p.set_referencia(SharedString::from(ref_str.clone()));
+
+            {
+                let mut e = overlay_e.lock().unwrap();
+                e.referencia = ref_str.clone();
+            }
+
             let tiene_referencia = !ref_str.is_empty();
             let info = *sp.lock().unwrap();
             let (screen_w, screen_h) = if let Some((_, _, w, h)) = info { (w as f32, h as f32) } else { (1280.0, 720.0) };
@@ -2534,6 +2621,39 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             });
             *timer_holder.borrow_mut() = Some(timer);
+        });
+    }
+
+    // ── Salida por IP (overlay OBS) ───────────────────────────────────────────
+    {
+        let ui_h = ui.as_weak();
+        ui.on_abrir_modal_overlay(move || {
+            let ui = ui_h.unwrap();
+            let ip_local = local_ip_address::local_ip()
+                .map(|ip| ip.to_string())
+                .unwrap_or_else(|_| "127.0.0.1".to_string());
+            ui.set_overlay_ip_local(SharedString::from(ip_local));
+        });
+    }
+
+    {
+        let ui_h        = ui.as_weak();
+        let estado_ov   = Arc::clone(&overlay_estado);
+        let activo_ov   = Arc::clone(&overlay_servidor_activo);
+        ui.on_toggle_servidor_overlay(move || {
+            let ui = ui_h.unwrap();
+            if ui.get_overlay_servidor_activo() {
+                activo_ov.store(false, Ordering::Release);
+                ui.set_overlay_servidor_activo(false);
+            } else {
+                let puerto = ui.get_overlay_puerto() as u16;
+                let estado_t = Arc::clone(&estado_ov);
+                let activo_t = Arc::clone(&activo_ov);
+                thread::spawn(move || {
+                    iniciar_servidor_overlay(puerto, estado_t, activo_t);
+                });
+                ui.set_overlay_servidor_activo(true);
+            }
         });
     }
 

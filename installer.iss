@@ -4,7 +4,7 @@
 ; ============================================================
 
 #define MyAppName "EasyPresenter"
-#define MyAppVersion "1.4.6"
+#define MyAppVersion "1.4.7"
 #define MyAppPublisher "Arbasante"
 #define MyAppExeName "easy-presenter-slint.exe"
 
@@ -13,7 +13,7 @@
 
 [Setup]
 
-AppId={{B4B6A5B0-6E2F-4F2C-9A9D-EASYPRESENTER1}}
+AppId={{B4B6A5B0-6E2F-4F2C-9A9D-123456789ABC}}
 
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
@@ -112,15 +112,11 @@ Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 
 [Icons]
 
-Name: "{group}\{#MyAppName}";
-Filename: "{app}\{#MyAppExeName}"
+Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 
-Name: "{group}\Desinstalar {#MyAppName}";
-Filename: "{uninstallexe}"
+Name: "{group}\Desinstalar {#MyAppName}"; Filename: "{uninstallexe}"
 
-Name: "{autodesktop}\{#MyAppName}";
-Filename: "{app}\{#MyAppExeName}";
-Tasks: desktopicon
+Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 
 [Registry]

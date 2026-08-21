@@ -3,7 +3,6 @@ use rusqlite::{Connection, Result};
 use slint::{ModelRc, SharedString, VecModel, ComponentHandle, SharedPixelBuffer};
 use slint::Model;
 use std::collections::HashMap;
-use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex, RwLock};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::LazyLock;
@@ -1372,7 +1371,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let proyector_wid: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
 
     // Roles de pantallas: id_pantalla -> rol (0=sin asignar, 1=operador, 2=proyector, 3=stage)
-    let roles_pantallas: Arc<Mutex<HashMap<i32, i32>>> = Arc::new(Mutex::new(HashMap::new()));
+    let _roles_pantallas: Arc<Mutex<HashMap<i32, i32>>> = Arc::new(Mutex::new(HashMap::new()));
 
     // Estado compartido para la salida por IP (overlay para OBS)
     
@@ -2182,7 +2181,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let ui_h = ui.as_weak();
         let p_h  = proyector.as_weak();
         let sp   = Arc::clone(&segunda_pantalla);
-        let modo_vivo = Arc::clone(&modo_en_vivo); 
+        let _modo_vivo = Arc::clone(&modo_en_vivo); 
         let bsc_font = build_and_save_config.clone();
         ui.on_sync_font_scale(move || {
             let ui         = ui_h.unwrap();

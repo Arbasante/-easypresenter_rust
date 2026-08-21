@@ -448,7 +448,7 @@ export component AppWindow inherits Window {
                         HorizontalLayout {
                             TabButton {
                                 horizontal-stretch: 1; height: 34px;
-                                icon: "🎵"; text: "CANTOS";
+                                icon: ""; text: "CANTOS";
                                 active: root.active-tab == "cantos";
                                 clicked => { 
                                     root.active-tab = "cantos"; 
@@ -460,7 +460,7 @@ export component AppWindow inherits Window {
                             }
                             TabButton {
                                 horizontal-stretch: 1; height: 34px;
-                                icon: "📖"; text: "BIBLIA";
+                                icon: ""; text: "BIBLIA";
                                 active: root.active-tab == "biblias";
                                 clicked => { 
                                     root.active-tab = "biblias"; 
@@ -472,7 +472,7 @@ export component AppWindow inherits Window {
                             }
                             TabButton {
                                 horizontal-stretch: 1; height: 34px;
-                                icon: "🖼️"; text: "IMGS";
+                                icon: ""; text: "IMGS";
                                 active: root.active-tab == "imagenes";
                                 clicked => { 
                                     root.active-tab = "imagenes"; 
@@ -482,7 +482,7 @@ export component AppWindow inherits Window {
                             }
                             TabButton {
                                 horizontal-stretch: 1; height: 34px;
-                                icon: "🎞️"; text: "VIDEOS";
+                                icon: ""; text: "VIDEOS";
                                 active: root.active-tab == "videos";
                                 clicked => { 
                                     root.active-tab = "videos"; 
@@ -492,7 +492,7 @@ export component AppWindow inherits Window {
                             }
                             TabButton {
                                 horizontal-stretch: 1; height: 34px;
-                                icon: "📄"; text: "PDF/PPTX";
+                                icon: ""; text: "PDF/PPTX";
                                 active: root.active-tab == "pdf";
                                 clicked => { 
                                     root.active-tab = "pdf"; 
@@ -519,7 +519,7 @@ export component AppWindow inherits Window {
                                     border-radius: 4px; background: Theme.bg_input; border-width: 1px; border-color: Theme.border_input;
                                     HorizontalLayout {
                                         padding-left: 10px; spacing: 6px;
-                                        Text { text: "🔍"; font-size: 10px; color: Theme.text_muted; vertical-alignment: center; }
+                                        Text { text: ""; font-size: 10px; color: Theme.text_muted; vertical-alignment: center; }
                                         TextInput { text <=> root.buscador_texto; font-size: 10px; color: Theme.text_primary; vertical-alignment: center; horizontal-stretch: 1; edited => { root.buscador_pending = self.text; } }
                                     }
                                 }
@@ -578,7 +578,7 @@ export component AppWindow inherits Window {
                                 height: 32px; width: 100%; background: Theme.bg_input; border-radius: 4px; border-width: 1px; border-color: Theme.border_input;
                                 HorizontalLayout {
                                     padding-left: 8px; padding-right: 8px; spacing: 6px;
-                                    Text { text: "🔍"; font-size: 10px; color: Theme.text_muted; vertical-alignment: center; }
+                                    Text { text: ""; font-size: 10px; color: Theme.text_muted; vertical-alignment: center; }
                                     search_focus := FocusScope {
                                         horizontal-stretch: 1; forward-focus: search_input;
                                         key-pressed(event) => {
@@ -987,7 +987,7 @@ export component AppWindow inherits Window {
                                 padding-right: 16px;
 
                                 Text {
-                                    text: root.elemento_seleccionado == "" ? "SELECCIONA UN ELEMENTO" : "📖 " + root.elemento_seleccionado;
+                                    text: root.elemento_seleccionado == "" ? "SELECCIONA UN ELEMENTO" : " " + root.elemento_seleccionado;
                                     color: root.elemento_seleccionado == "" ? Theme.text_muted : Theme.accent;
                                     font-size: 12px;
                                     font-weight: 900;
@@ -1048,7 +1048,7 @@ export component AppWindow inherits Window {
                                 width: 100%; height: 100%;
                                 if (root.estrofas_actuales.length == 0) : VerticalLayout {
                                     alignment: center; spacing: 16px;
-                                    Text { text: "𝅘𝅥𝅮𝅘𝅥𝅮"; color: Theme.text_muted; font-size: 48px; horizontal-alignment: center; }
+                                    Text { text: ""; color: Theme.text_muted; font-size: 48px; horizontal-alignment: center; }
                                     Text { text: root.elemento_seleccionado == "" ? "SELECCIONA UN ARCHIVO DE LA BIBLIOTECA" : root.elemento_seleccionado; color: Theme.text_muted; font-size: 13px; font-weight: 700; horizontal-alignment: center; }
                                 }
                                 if (root.estrofas_actuales.length > 0) : ScrollView {
@@ -1194,7 +1194,7 @@ export component AppWindow inherits Window {
                                 }
                                 if (root.selected_media_idx == -1 || root.multimedia_items.length == 0) : VerticalLayout {
                                     alignment: center; spacing: 16px;
-                                    Text { text: "🖼️"; color: Theme.text_muted; font-size: 48px; horizontal-alignment: center; }
+                                    Text { text: ""; color: Theme.text_muted; font-size: 48px; horizontal-alignment: center; }
                                     Text { text: "SELECCIONA UNA IMAGEN DE LA BIBLIOTECA"; color: Theme.text_muted; font-size: 13px; font-weight: 700; horizontal-alignment: center; }
                                 }
                             }
@@ -1259,7 +1259,7 @@ export component AppWindow inherits Window {
                                 }
                                 if (root.selected_video_idx == -1 || root.video_items.length == 0) : VerticalLayout {
                                     alignment: center; spacing: 16px;
-                                    Text { text: "🎞️"; color: Theme.text_muted; font-size: 48px; horizontal-alignment: center; }
+                                    Text { text: ""; color: Theme.text_muted; font-size: 48px; horizontal-alignment: center; }
                                     Text { text: "SELECCIONA UN VIDEO DE LA BIBLIOTECA"; color: Theme.text_muted; font-size: 13px; font-weight: 700; horizontal-alignment: center; }
                                 }
                             }
@@ -1269,7 +1269,7 @@ export component AppWindow inherits Window {
                                 width: 100%; height: 100%; background: Theme.bg_main;
                                 if (root.pdf_pages.length == 0) : VerticalLayout {
                                     alignment: center; spacing: 16px;
-                                    Text { text: "📄"; color: Theme.text_muted; font-size: 48px; horizontal-alignment: center; }
+                                    Text { text: ""; color: Theme.text_muted; font-size: 48px; horizontal-alignment: center; }
                                     Text { text: "SELECCIONA O AGREGA UN PDF"; color: Theme.text_muted; font-size: 13px; font-weight: 700; horizontal-alignment: center; }
                                 }
                                 if (root.pdf_pages.length > 0) : ScrollView {
@@ -1385,7 +1385,7 @@ export component AppWindow inherits Window {
                     touch_rep := TouchArea { clicked => { root.mostrar_submenu_reproduccion = !root.mostrar_submenu_reproduccion; } }
                     HorizontalLayout {
                         padding-left: 8px; padding-right: 8px; alignment: space-between;
-                        Text { text: "🔁 Reproducción"; color: Theme.text_primary; font-size: 13px; vertical-alignment: center; }
+                        Text { text: " Reproducción"; color: Theme.text_primary; font-size: 13px; vertical-alignment: center; }
                         Text { text: "›"; color: Theme.accent; font-size: 16px; vertical-alignment: center; font-weight: 700; }
                     }
                 }
@@ -1654,7 +1654,7 @@ if (root.mostrar_menu_configuracion) : Rectangle {
         VerticalLayout {
             padding: 4px; spacing: 2px;
             MenuItem {
-                text: "Proyector"; icon: "🖥";
+                text: "Proyector"; icon: "";
                 clicked => { root.mostrar_menu_configuracion = false; root.mostrar_modal_margenes = true; }
             }
             MenuItem {
@@ -1666,7 +1666,7 @@ if (root.mostrar_menu_configuracion) : Rectangle {
                 }
             }
             MenuItem {
-                text: "Tema"; icon: "🎨";
+                text: "Tema"; icon: "";
                 clicked => {
                     root.mostrar_menu_configuracion = false;
                     Theme.is_dark = !Theme.is_dark;
@@ -1699,7 +1699,7 @@ if (root.mostrar_menu_herramientas) : Rectangle {
             }
             
             MenuItem {
-                text: "Salida por IP (OBS)"; icon: "📡";
+                text: "Salida por IP (OBS)"; icon: "";
                 clicked => {
                     root.mostrar_menu_herramientas = false;
                     root.mostrar_modal_overlay = true;
@@ -1761,7 +1761,7 @@ if (root.mostrar_menu_herramientas) : Rectangle {
             VerticalLayout {
                 padding: 16px; spacing: 16px;
                 HorizontalLayout {
-                    Text { text: "🎨  Seleccionar Color"; color: Theme.text_primary; font-weight: 800; font-size: 12px; vertical-alignment: center; horizontal-stretch: 1; }
+                    Text { text: "  Seleccionar Color"; color: Theme.text_primary; font-weight: 800; font-size: 12px; vertical-alignment: center; horizontal-stretch: 1; }
                     Rectangle { width: 24px; height: 24px; border-radius: 4px; background: touch-close-col.has-hover ? Theme.bg_card_hover : transparent; touch-close-col := TouchArea { clicked => { root.mostrar_selector_color = false; } } Text { text: "✕"; color: Theme.text_secondary; font-weight: 900; horizontal-alignment: center; vertical-alignment: center; } }
                 }
                 VerticalLayout {
@@ -1850,7 +1850,7 @@ if (root.mostrar_menu_herramientas) : Rectangle {
             drop-shadow-color: Theme.shadow; drop-shadow-blur: 16px; TouchArea {}
             VerticalLayout {
                 padding: 4px; spacing: 2px;
-                MenuItem { text: "Importar PDF..."; icon: "📄"; clicked => { root.mostrar_menu_pdf = false; root.agregar_pdf(); } }
+                MenuItem { text: "Importar PDF..."; icon: ""; clicked => { root.mostrar_menu_pdf = false; root.agregar_pdf(); } }
                 if (root.menu_pdf_idx != -1) : HorizontalLayout { padding-left: 6px; padding-right: 6px; padding-top: 2px; padding-bottom: 2px; Rectangle { height: 1px; background: Theme.separator; } }
                 if (root.menu_pdf_idx != -1) : MenuItem { text: "Eliminar PDF"; icon: "🗑"; text_color: #f87171; icon_color: #f87171; clicked => { root.mostrar_menu_pdf = false; root.eliminar_pdf(root.menu_pdf_idx); } }
             }
@@ -1858,7 +1858,7 @@ if (root.mostrar_menu_herramientas) : Rectangle {
     }
 
 
-    // 👇 MODAL DE MÁRGENES (adaptado al tema claro/oscuro)
+    //  MODAL DE MÁRGENES (adaptado al tema claro/oscuro)
     if (root.mostrar_modal_margenes) : Rectangle {
         width: 100%; height: 100%;
         background: Theme.overlay; // Capa de atenuación del tema
@@ -2155,7 +2155,7 @@ if (root.mostrar_menu_herramientas) : Rectangle {
         TouchArea {} // Bloquea clics traseros
         VerticalLayout {
             alignment: center; spacing: 16px;
-            Text { text: "⚙️ PROCESANDO PDF"; color: Theme.text_primary; font-size: 16px; font-weight: 900; horizontal-alignment: center; letter-spacing: 2px;}
+            Text { text: " PROCESANDO PDF"; color: Theme.text_primary; font-size: 16px; font-weight: 900; horizontal-alignment: center; letter-spacing: 2px;}
             Text { text: root.pdf_import_filename; color: Theme.accent; font-size: 13px; font-weight: 700; horizontal-alignment: center; }
             Text { text: "Convirtiendo páginas a imágenes de alta calidad para una proyección fluida..."; color: Theme.text_secondary; font-size: 11px; horizontal-alignment: center; }
             
@@ -2180,7 +2180,7 @@ if (root.mostrar_menu_herramientas) : Rectangle {
         TouchArea {}
         VerticalLayout {
             alignment: center; spacing: 16px;
-            Text { text: "⚙️ INSTALANDO SOPORTE PPTX/ODP"; color: Theme.text_primary; font-size: 16px; font-weight: 900; horizontal-alignment: center; letter-spacing: 2px; }
+            Text { text: " INSTALANDO SOPORTE PPTX/ODP"; color: Theme.text_primary; font-size: 16px; font-weight: 900; horizontal-alignment: center; letter-spacing: 2px; }
             Text { text: "Esto puede tardar unos minutos. No cierres la aplicación."; color: Theme.text_secondary; font-size: 11px; horizontal-alignment: center; }
             Rectangle { height: 16px; }
             HorizontalLayout {
@@ -2208,7 +2208,7 @@ if (root.mostrar_menu_herramientas) : Rectangle {
             TouchArea {}
             VerticalLayout {
                 padding: 24px; spacing: 12px;
-                Text { text: "⚠️ No se pudo instalar"; color: #f87171; font-size: 14px; font-weight: 900; horizontal-alignment: center; }
+                Text { text: " No se pudo instalar"; color: #f87171; font-size: 14px; font-weight: 900; horizontal-alignment: center; }
                 Text { text: root.libreoffice_error; color: Theme.text_secondary; font-size: 11px; horizontal-alignment: center; wrap: word-wrap; }
                 Rectangle {
                     height: 36px; border-radius: 6px; background: Theme.accent;

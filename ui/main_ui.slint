@@ -1311,8 +1311,7 @@ export component AppWindow inherits Window {
         Rectangle {
             x: root.menu_media_x; y: root.menu_media_y;
             width: 180px; height: root.menu_media_idx != -1 ? 150px : 40px;
-            background: Theme.bg_popup; border-radius: 8px; border-width: 1px; border-color: Theme.border_strong;
-            drop-shadow-color: Theme.shadow; drop-shadow-blur: 16px;
+            background: Theme.bg_popup; border-radius: 8px; border-width: 2px; border-color: Theme.border_strong;
             TouchArea {}
             VerticalLayout {
                 padding: 4px; spacing: 2px;
@@ -1333,8 +1332,7 @@ export component AppWindow inherits Window {
         if (root.mostrar_submenu_aspecto && root.menu_media_idx != -1) : Rectangle {
             x: root.menu_media_x + 178px; y: root.menu_media_y + 36px;
             width: 170px; height: 106px;
-            background: Theme.bg_popup; border-radius: 8px; border-width: 1px; border-color: Theme.border_strong;
-            drop-shadow-color: Theme.shadow; drop-shadow-blur: 16px;
+            background: Theme.bg_popup; border-radius: 8px; border-width: 2px; border-color: Theme.border_strong;
             TouchArea {}
             VerticalLayout {
                 padding: 4px; spacing: 2px;
@@ -1354,8 +1352,7 @@ export component AppWindow inherits Window {
         if (root.mostrar_submenu_reproduccion && root.menu_video_idx != -1) : Rectangle {
             x: root.menu_video_x + 178px; y: root.menu_video_y + 35px;
             width: 160px; height: 72px;
-            background: Theme.bg_popup; border-radius: 8px; border-width: 1px; border-color: Theme.border_strong;
-            drop-shadow-color: Theme.shadow; drop-shadow-blur: 16px;
+            background: Theme.bg_popup; border-radius: 8px; border-width: 2px; border-color: Theme.border_strong;
             VerticalLayout {
                 padding: 4px; spacing: 2px;
                 Rectangle {
@@ -1373,8 +1370,7 @@ export component AppWindow inherits Window {
         Rectangle {
             x: root.menu_video_x; y: root.menu_video_y;
             width: 180px; height: root.menu_video_idx != -1 ? 146px : 40px;
-            background: Theme.bg_popup; border-radius: 8px; border-width: 1px; border-color: Theme.border_strong;
-            drop-shadow-color: Theme.shadow; drop-shadow-blur: 16px;
+            background: Theme.bg_popup; border-radius: 8px; border-width: 2px; border-color: Theme.border_strong;
             TouchArea {}
             VerticalLayout {
                 padding: 4px; spacing: 2px;
@@ -1413,8 +1409,7 @@ export component AppWindow inherits Window {
             width: 620px; height: 498px;
             background: Theme.bg_popup;
             border-radius: 14px;
-            border-width: 1px; border-color: Theme.border_subtle;
-            drop-shadow-color: rgba(0,0,0,0.8); drop-shadow-blur: 40px;
+            border-width: 2px; border-color: Theme.border_strong;
             nm-blocker := TouchArea {}
 
             property <string> current_gal_tab: "imagenes";
@@ -1648,8 +1643,7 @@ if (root.mostrar_menu_configuracion) : Rectangle {
     Rectangle {
         x: root.menu_configuracion_x; y: root.menu_configuracion_y;
         width: 160px; height: 110px;
-        background: Theme.bg_popup; border-radius: 8px; border-width: 1px; border-color: Theme.border_strong;
-        drop-shadow-color: Theme.shadow; drop-shadow-blur: 16px;
+        background: Theme.bg_popup; border-radius: 8px; border-width: 2px; border-color: Theme.border_strong;
         TouchArea {}
         VerticalLayout {
             padding: 4px; spacing: 2px;
@@ -1686,8 +1680,7 @@ if (root.mostrar_menu_herramientas) : Rectangle {
     Rectangle {
         x: root.menu_herramientas_x; y: root.menu_herramientas_y;
         width: 200px; height: 110px;
-        background: Theme.bg_popup; border-radius: 8px; border-width: 1px; border-color: Theme.border_strong;
-        drop-shadow-color: Theme.shadow; drop-shadow-blur: 16px;
+        background: Theme.bg_popup; border-radius: 8px; border-width: 2px; border-color: Theme.border_strong;
         TouchArea {}
         VerticalLayout {
             padding: 4px; spacing: 2px;
@@ -1734,8 +1727,7 @@ if (root.mostrar_menu_herramientas) : Rectangle {
         Rectangle {
             x: root.menu_x; y: root.menu_y;
             width: 185px; height: 114px;
-            background: Theme.bg_popup; border-radius: 8px; border-width: 1px; border-color: Theme.border_strong;
-            drop-shadow-color: Theme.shadow; drop-shadow-blur: 16px;
+            background: Theme.bg_popup; border-radius: 8px; border-width: 2px; border-color: Theme.border_strong;
             touch-block := TouchArea {}
             VerticalLayout {
                 padding: 4px; spacing: 0px;
@@ -1755,8 +1747,7 @@ if (root.mostrar_menu_herramientas) : Rectangle {
         touch-bg-color := TouchArea { clicked => { root.mostrar_selector_color = false; } }
         Rectangle {
             width: 330px; height: 210px;
-            background: Theme.bg_popup; border-radius: 8px; border-width: 1px; border-color: Theme.border_strong;
-            drop-shadow-color: Theme.shadow; drop-shadow-blur: 20px;
+            background: Theme.bg_popup; border-radius: 8px; border-width: 2px; border-color: Theme.border_strong;
             touch-block-color := TouchArea {}
             VerticalLayout {
                 padding: 16px; spacing: 16px;
@@ -1793,8 +1784,7 @@ if (root.mostrar_menu_herramientas) : Rectangle {
         touch-bg-elim := TouchArea { clicked => { root.mostrar_confirmar_eliminar = false; } }
         Rectangle {
             width: 360px; height: 170px;
-            background: Theme.bg_popup; border-radius: 12px; border-width: 1px; border-color: Theme.border_strong;
-            drop-shadow-color: Theme.shadow; drop-shadow-blur: 20px;
+            background: Theme.bg_popup; border-radius: 12px; border-width: 2px; border-color: Theme.border_strong;
             touch-block-elim := TouchArea {}
             VerticalLayout {
                 padding: 28px; spacing: 14px;
@@ -1819,8 +1809,7 @@ if (root.mostrar_menu_herramientas) : Rectangle {
                 alignment: center;
                 Rectangle {
                     width: 520px; height: 500px;
-                    background: Theme.bg_popup; border-radius: 12px; border-width: 1px; border-color: Theme.border_strong;
-                    drop-shadow-color: Theme.shadow; drop-shadow-blur: 20px;
+                    background: Theme.bg_popup; border-radius: 12px; border-width: 2px; border-color: Theme.border_strong;
                     VerticalLayout {
                         padding: 24px; spacing: 14px;
                         HorizontalLayout { alignment: space-between; height: 32px; Text { text: root.form_id == -1 ? "AGREGAR CANTO" : "EDITAR CANTO"; color: Theme.accent; font-size: 13px; font-weight: 900; vertical-alignment: center; horizontal-stretch: 1; } Rectangle { width: 28px; height: 28px; border-radius: 6px; background: touch-close-form.has-hover ? Theme.bg_card_hover : transparent; touch-close-form := TouchArea { clicked => { root.mostrar_formulario = false; } } Text { text: "✕"; color: Theme.text_secondary; font-size: 13px; horizontal-alignment: center; vertical-alignment: center; } } }
@@ -1846,8 +1835,8 @@ if (root.mostrar_menu_herramientas) : Rectangle {
         Rectangle {
             x: root.menu_pdf_x; y: root.menu_pdf_y;
             width: 180px; height: root.menu_pdf_idx != -1 ? 76px : 40px;
-            background: Theme.bg_popup; border-radius: 8px; border-width: 1px; border-color: Theme.border_strong;
-            drop-shadow-color: Theme.shadow; drop-shadow-blur: 16px; TouchArea {}
+            background: Theme.bg_popup; border-radius: 8px; border-width: 2px; border-color: Theme.border_strong;
+            TouchArea {}
             VerticalLayout {
                 padding: 4px; spacing: 2px;
                 MenuItem { text: "Importar PDF..."; icon: ""; clicked => { root.mostrar_menu_pdf = false; root.agregar_pdf(); } }
@@ -1938,8 +1927,7 @@ if (root.mostrar_menu_herramientas) : Rectangle {
         Rectangle {
             width: 560px; height: 420px;
             background: Theme.bg_popup; border-radius: 12px;
-            border-width: 1px; border-color: Theme.border_strong;
-            drop-shadow-color: Theme.shadow; drop-shadow-blur: 20px;
+            border-width: 2px; border-color: Theme.border_strong;
             TouchArea {} // bloquea el clic hacia el backdrop
 
             VerticalLayout {
@@ -2079,8 +2067,7 @@ if (root.mostrar_menu_herramientas) : Rectangle {
         Rectangle {
             width: 460px; height: 320px;
             background: Theme.bg_popup; border-radius: 12px;
-            border-width: 1px; border-color: Theme.border_strong;
-            drop-shadow-color: Theme.shadow; drop-shadow-blur: 20px;
+            border-width: 2px; border-color: Theme.border_strong;
             TouchArea {}
 
             VerticalLayout {

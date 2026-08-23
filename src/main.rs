@@ -2099,7 +2099,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 })
                                 .collect();
                             ui.set_estrofas_actuales(ModelRc::from(Rc::new(VecModel::from(diapos))));
-                            ui.set_active_estrofa_index(target_index);
+                            //ui.set_active_estrofa_index(target_index);
                             let offset = target_index as f32 * 115.0;
                             ui.set_scroll_to_y(if offset > 150.0 { -(offset - 150.0) } else { 0.0 });
                             // ⚠️ SIN invoke_proyectar_estrofa → segunda pantalla intacta

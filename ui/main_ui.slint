@@ -910,6 +910,8 @@ Timer {
 
                                 Rectangle {
                                 width: 140px; height: 36px;
+                                border-radius: 4px;
+                                background: cfg-touch.has-hover ? Theme.bg_card_hover : transparent;
                                 cfg-touch := TouchArea {
                                     clicked => {
                                         root.menu_configuracion_x = self.absolute-position.x;
@@ -928,6 +930,8 @@ Timer {
 
                             Rectangle {
                                 width: 118px; height: 36px;
+                                border-radius: 4px;
+                                background: tools-touch.has-hover ? Theme.bg_card_hover : transparent;
                                 tools-touch := TouchArea {
                                     clicked => {
                                         root.menu_herramientas_x = self.absolute-position.x;

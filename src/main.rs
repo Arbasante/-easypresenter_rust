@@ -310,6 +310,28 @@ fn precargar_cache_paralelo(cache: &Arc<Mutex<HashMap<String, slint::Image>>>, p
     }
 }
 
+/// Verifica si un archivo sigue existiendo en disco. Úsalo SIEMPRE antes de
+/// proyectar/abrir un archivo de la biblioteca, porque el usuario pudo haber
+/// movido/borrado el archivo original desde fuera de la app.
+fn archivo_existe(path: &str) -> bool {
+    std::path::Path::new(path).exists()
+}
+
+/// Muestra un aviso breve (3s) en el banner inferior de la UI.
+fn mostrar_aviso(ui_weak: &slint::Weak<AppWindow>, mensaje: &str) {
+    if let Some(ui) = ui_weak.upgrade() {
+        ui.set_aviso_mensaje(SharedString::from(mensaje));
+    }
+    let ui_t = ui_weak.clone();
+    let timer = slint::Timer::default();
+    timer.start(slint::TimerMode::SingleShot, std::time::Duration::from_secs(3), move || {
+        if let Some(ui) = ui_t.upgrade() {
+            ui.set_aviso_mensaje(SharedString::from(""));
+        }
+    });
+    std::mem::forget(timer); // timer de un solo uso, vive lo justo para dispararse
+}
+
 // ---------------------------------------------------------------------------
 // AppState — DB + caché de capítulos con LRU acotado
 // ---------------------------------------------------------------------------
@@ -2994,24 +3016,45 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let vp        = Arc::clone(&video_player);
         let ui_h      = ui.as_weak();
         let bloqueo   = Arc::clone(&bloqueo_estilos);
+        let image_cache_mm   = Arc::clone(&image_cache);
+        let refresh_multimedia_mm = refresh_multimedia.clone();
+        let bsc_multi_mm      = build_and_save_config.clone();
         ui.on_proyectar_multimedia(move |idx| {
             let p        = p_handle.unwrap();
             let ui_local = ui_h.unwrap();
             bloqueo.store(true, Ordering::Release);
             ui_local.set_is_video_projecting(false);
-            let state = multi_state.read().unwrap();
-            if let Some(item) = state.get(idx as usize) {
-                if let Ok(img) = slint::Image::load_from_path(std::path::Path::new(&item.path)) {
-                    vp.lock().unwrap().detener();
-                    p.set_es_video(false);
-                    p.set_bg_color(slint::Color::from_rgb_u8(0, 0, 0));
-                    p.set_texto_proyeccion(slint::SharedString::from(""));
-                    p.set_referencia(slint::SharedString::from(""));
-                    p.set_fondo_opacity(0.0);
-                    p.set_fondo_imagen_aspecto(slint::SharedString::from(&item.aspecto));
-                    p.set_fondo_imagen(img);
-                    p.set_mostrar_imagen(true);
-                }
+
+            let ruta = {
+                let state = multi_state.read().unwrap();
+                state.get(idx as usize).map(|item| item.path.clone())
+            };
+
+            let Some(ruta) = ruta else { return };
+
+            if !archivo_existe(&ruta) {
+                // El archivo fue borrado/movido fuera de la app: lo quitamos
+                // de la biblioteca y avisamos, en vez de fallar en silencio.
+                multi_state.write().unwrap().retain(|item| item.path != ruta);
+                image_cache_mm.lock().unwrap().remove(&ruta);
+                ui_local.set_selected_media_idx(-1);
+                refresh_multimedia_mm();
+                bsc_multi_mm();
+                mostrar_aviso(&ui_h, "El archivo ya no existe y fue removido de la biblioteca.");
+                return;
+            }
+
+            if let Ok(img) = slint::Image::load_from_path(std::path::Path::new(&ruta)) {
+                vp.lock().unwrap().detener();
+                p.set_es_video(false);
+                p.set_bg_color(slint::Color::from_rgb_u8(0, 0, 0));
+                p.set_texto_proyeccion(slint::SharedString::from(""));
+                p.set_referencia(slint::SharedString::from(""));
+                p.set_fondo_opacity(0.0);
+                let aspecto = { let state = multi_state.read().unwrap(); state.iter().find(|i| i.path == ruta).map(|i| i.aspecto.clone()).unwrap_or_default() };
+                p.set_fondo_imagen_aspecto(slint::SharedString::from(&aspecto));
+                p.set_fondo_imagen(img);
+                p.set_mostrar_imagen(true);
             }
         });
     }
@@ -3113,27 +3156,58 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
-    {
+        {
         let p_handle    = proyector.as_weak();
         let vid_state   = Arc::clone(&video_state);
         let vp          = Arc::clone(&video_player);
         let ui_h        = ui.as_weak();
         let bloqueo     = Arc::clone(&bloqueo_estilos);
+        let bsc_video_vv = build_and_save_config.clone();
         ui.on_proyectar_video(move |idx| {
             let p  = p_handle.unwrap();
             let ui = ui_h.unwrap();
             bloqueo.store(true, Ordering::Release);
-            let state = vid_state.read().unwrap();
-            if let Some(item) = state.get(idx as usize) {
-                p.set_es_video(true);
-                p.set_bg_color(slint::Color::from_rgb_u8(0, 0, 0));
-                p.set_mostrar_imagen(false);
-                p.set_texto_proyeccion(slint::SharedString::from(""));
-                p.set_referencia(slint::SharedString::from(""));
-                vp.lock().unwrap().reproducir(&item.path, p.as_weak(), item.is_loop);
-                ui.set_is_video_projecting(true);
-                ui.set_is_proyector_playing(true);
+
+            let item_info = {
+                let state = vid_state.read().unwrap();
+                state.get(idx as usize).map(|i| (i.path.clone(), i.is_loop))
+            };
+            let Some((ruta, is_loop)) = item_info else { return };
+
+            if !archivo_existe(&ruta) {
+                vid_state.write().unwrap().retain(|item| item.path != ruta);
+
+                // Reconstruye la lista visible sin depender de refresh_videos
+                // (evita problemas de orden de declaración en el archivo).
+                let items = vid_state.read().unwrap();
+                let slint_items: Vec<MediaItem> = items.iter().enumerate().map(|(i, item)| {
+                    let pixel_buffer = SharedPixelBuffer::<slint::Rgba8Pixel>::new(80, 45);
+                    MediaItem {
+                        id:      i as i32,
+                        nombre:  SharedString::from(&item.name),
+                        path:    SharedString::from(&item.path),
+                        img:     slint::Image::from_rgba8(pixel_buffer),
+                        aspecto: SharedString::from("rellenar"),
+                        is_loop: item.is_loop,
+                    }
+                }).collect();
+                drop(items);
+                ui.set_video_items(ModelRc::from(Rc::new(VecModel::from(slint_items))));
+
+                ui.set_selected_video_idx(-1);
+                bsc_video_vv();
+                mostrar_aviso(&ui_h, "El video ya no existe y fue removido de la biblioteca.");
+                return;
             }
+
+            p.set_es_video(true);
+            p.set_bg_color(slint::Color::from_rgb_u8(0, 0, 0));
+            p.set_mostrar_imagen(false);
+            p.set_texto_proyeccion(slint::SharedString::from(""));
+            p.set_referencia(slint::SharedString::from(""));
+            vp.lock().unwrap().reproducir(&ruta, p.as_weak(), is_loop);
+            ui.set_is_video_projecting(true);
+            ui.set_is_proyector_playing(true);
         });
     }
 

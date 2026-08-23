@@ -244,13 +244,14 @@ export component AppWindow inherits Window {
     in-out property <string> buscador_texto: "";
 
     property <string> buscador_pending: "";
-    Timer {
+    property <bool> hay_busqueda_pendiente: false;
+Timer {
     interval: 200ms;
     running: true;
     triggered => {
-        if (root.buscador_pending != "" || root.buscador_texto == "") {
+        if (root.hay_busqueda_pendiente) {
             root.buscar_cantos(root.buscador_pending);
-            root.buscador_pending = "";
+            root.hay_busqueda_pendiente = false;
         }
     }
 }
@@ -520,8 +521,7 @@ export component AppWindow inherits Window {
                                     HorizontalLayout {
                                         padding-left: 10px; spacing: 6px;
                                         Text { text: ""; font-size: 10px; color: Theme.text_muted; vertical-alignment: center; }
-                                        TextInput { text <=> root.buscador_texto; font-size: 10px; color: Theme.text_primary; vertical-alignment: center; horizontal-stretch: 1; edited => { root.buscador_pending = self.text; } }
-                                    }
+                                        TextInput { text <=> root.buscador_texto; font-size: 10px; color: Theme.text_primary; vertical-alignment: center; horizontal-stretch: 1; edited => { root.buscador_pending = self.text; root.hay_busqueda_pendiente = true; } }                                    }
                                 }
                             }
                             // Lista de cantos
@@ -530,9 +530,10 @@ export component AppWindow inherits Window {
                                 ScrollView {
                                     VerticalLayout {
                                         padding-left: 4px; padding-right: 4px; padding-top: 4px; spacing: 0px;
-                                        for canto in root.cantos : Rectangle {
+                                                                                for canto in root.cantos : Rectangle {
                                             height: 36px;
-                                            background: touch-canto.has-hover ? rgba(63,111,115,0.18) : transparent;
+                                            property <bool> fila_resaltada: touch-canto.has-hover || star-touch.has-hover;
+                                            background: fila_resaltada ? rgba(63,111,115,0.18) : transparent;
                                             touch-canto := TouchArea {
                                                 clicked => { root.seleccionar_canto(canto.id); }
                                                 pointer-event(e) => {
@@ -549,7 +550,6 @@ export component AppWindow inherits Window {
         padding-left: 10px; padding-right: 4px; spacing: 4px;
         Text { text: canto.titulo; color: Theme.text_primary; font-size: 11px; font-weight: 700; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
         
-        // ── ESTA ES LA ESTRELLA A AGREGAR ──
         Rectangle {
             width: 28px; height: 28px; border-radius: 6px;
             background: star-touch.has-hover ? rgba(255,200,0,0.12) : transparent;
@@ -1633,6 +1633,7 @@ export component AppWindow inherits Window {
     in-out property <float> libreoffice_progreso: 0.0;
     in-out property <string> libreoffice_error: "";
     callback activar_soporte_pptx();
+    in-out property <string> aviso_mensaje: "";
 
     // ══════════════════════════════════════════════════════════════
 //  MENÚ DESPLEGABLE: CONFIGURACIÓN (Proyector + Tema)
@@ -2202,6 +2203,24 @@ if (root.mostrar_menu_herramientas) : Rectangle {
                     TouchArea { clicked => { root.libreoffice_error = ""; } }
                     Text { text: "Entendido"; color: white; font-size: 11px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
                 }
+            }
+        }
+    }
+
+        // ══════════════════════════════════════════════════════════════
+    //  BANNER: AVISO BREVE (archivo faltante, etc.) — ligero, sin blur
+    // ══════════════════════════════════════════════════════════════
+    if (root.aviso_mensaje != "") : Rectangle {
+        y: parent.height - 70px; x: (parent.width - 420px) / 2;
+        width: 420px; height: 46px;
+        background: Theme.bg_popup; border-radius: 8px;
+        border-width: 2px; border-color: #f87171;
+        HorizontalLayout {
+            padding-left: 16px; padding-right: 16px; spacing: 10px;
+            Text { text: "⚠"; color: #f87171; font-size: 16px; vertical-alignment: center; }
+            Text {
+                text: root.aviso_mensaje; color: Theme.text_primary; font-size: 10px; font-weight: 700;
+                vertical-alignment: center; horizontal-stretch: 1; wrap: word-wrap;
             }
         }
     }

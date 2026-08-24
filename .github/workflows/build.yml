@@ -216,18 +216,17 @@ jobs:
           $downloadOK = $false
 
           for ($i = 1; $i -le $maxRetries; $i++) {
-
             try {
-
               Write-Host ""
               Write-Host "Descargando GStreamer..."
               Write-Host "Intento $i de $maxRetries"
 
-              if (Test-Path $installer) {
-                Remove-Item $installer -Force
-              }
+              # curl.exe usará --http1.1 para evitar desconexiones de HTTP/2
+              # y -C - para reanudar la descarga si se interrumpió en un intento previo.
 
               curl.exe `
+                --http1.1 `
+                -C - `
                 -L `
                 --fail `
                 --retry 3 `
@@ -266,7 +265,6 @@ jobs:
 
             }
             catch {
-
               Write-Host ""
               Write-Host "ERROR:"
               Write-Host $_
@@ -284,7 +282,6 @@ jobs:
           if (-not $downloadOK) {
             throw "La descarga de GStreamer falló."
           }
-
 
           # ----------------------------------------------------
           # CREAR DIRECTORIO

@@ -2323,37 +2323,60 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let ui_h      = ui.as_weak();
         let state_sel = Arc::clone(&state);
         let img_cache = Arc::clone(&image_cache);
-        ui.on_seleccionar_galeria_item(move |tipo, idx| {
+                ui.on_seleccionar_galeria_item(move |tipo, idx| {
             let ui       = ui_h.unwrap();
-            let estado   = state_sel.lock().unwrap();
             let tipo_str = tipo.to_string();
             let idx_u    = idx as usize;
-            if tipo_str == "biblias-img" {
-                if let Some(p) = estado.biblias_image_paths.get(idx_u) {
-                    if let Some(img) = load_image_cached(&img_cache, p) {
+
+            // Extraemos solo lo necesario y soltamos el candado de `state`
+            // ANTES de llamar a invoke_sync_estilos, que internamente
+            // vuelve a intentar tomar ese mismo candado (bsc_estilos).
+            enum Accion {
+                ImgBiblias(String),
+                ImgCantos(String),
+                VidBiblias(String),
+                VidCantos(String),
+                Nada,
+            }
+            let accion = {
+                let estado = state_sel.lock().unwrap();
+                if tipo_str == "biblias-img" {
+                    estado.biblias_image_paths.get(idx_u).cloned().map(Accion::ImgBiblias).unwrap_or(Accion::Nada)
+                } else if tipo_str == "cantos-img" {
+                    estado.cantos_image_paths.get(idx_u).cloned().map(Accion::ImgCantos).unwrap_or(Accion::Nada)
+                } else if tipo_str == "biblias-vid" {
+                    estado.biblias_video_paths.get(idx_u).cloned().map(Accion::VidBiblias).unwrap_or(Accion::Nada)
+                } else if tipo_str == "cantos-vid" {
+                    estado.cantos_video_paths.get(idx_u).cloned().map(Accion::VidCantos).unwrap_or(Accion::Nada)
+                } else {
+                    Accion::Nada
+                }
+            }; // 🔓 candado liberado aquí
+
+            match accion {
+                Accion::ImgBiblias(p) => {
+                    if let Some(img) = load_image_cached(&img_cache, &p) {
                         ui.set_biblias_selected_img(idx); ui.set_biblias_bg_image(img);
                         ui.set_biblias_has_image(true); ui.set_biblias_bg_type(SharedString::from("imagen"));
                         ui.invoke_sync_estilos();
                     }
                 }
-            } else if tipo_str == "cantos-img" {
-                if let Some(p) = estado.cantos_image_paths.get(idx_u) {
-                    if let Some(img) = load_image_cached(&img_cache, p) {
+                Accion::ImgCantos(p) => {
+                    if let Some(img) = load_image_cached(&img_cache, &p) {
                         ui.set_cantos_selected_img(idx); ui.set_cantos_bg_image(img);
                         ui.set_cantos_has_image(true); ui.set_cantos_bg_type(SharedString::from("imagen"));
                         ui.invoke_sync_estilos();
                     }
                 }
-            } else if tipo_str == "biblias-vid" {
-                if let Some(p) = estado.biblias_video_paths.get(idx_u) {
+                Accion::VidBiblias(p) => {
                     ui.set_biblias_selected_vid(idx); ui.set_biblias_video_path(SharedString::from(p.as_str()));
                     ui.set_biblias_bg_type(SharedString::from("video")); ui.invoke_sync_estilos();
                 }
-            } else if tipo_str == "cantos-vid" {
-                if let Some(p) = estado.cantos_video_paths.get(idx_u) {
+                Accion::VidCantos(p) => {
                     ui.set_cantos_selected_vid(idx); ui.set_cantos_video_path(SharedString::from(p.as_str()));
                     ui.set_cantos_bg_type(SharedString::from("video")); ui.invoke_sync_estilos();
                 }
+                Accion::Nada => {}
             }
         });
     }
@@ -2432,7 +2455,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // ── Multimedia (imágenes proyectables) ───────────────────────────────────
-    let refresh_multimedia = {
+        let refresh_multimedia = {
         let ui_handle = ui.as_weak();
         let state_arc = Arc::clone(&multimedia_state);
         let img_cache = Arc::clone(&image_cache);
@@ -2440,20 +2463,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let ui    = ui_handle.unwrap();
             let items = state_arc.read().unwrap();
 
-            // Decodifica en paralelo todo lo que aún no esté en caché
             let paths: Vec<String> = items.iter().map(|i| i.path.clone()).collect();
             precargar_cache_paralelo(&img_cache, &paths);
 
+            // IMPORTANTE: usamos .map (no .filter_map). Si una imagen falla
+            // al cargar, mostramos un placeholder vacío en esa posición en
+            // vez de eliminarla de la lista visible — así el índice de cada
+            // elemento SIEMPRE coincide entre la UI y el Vec real en Rust.
+            // Antes, con filter_map, un archivo roto desplazaba los índices
+            // de todo lo que venía después, causando que se proyectara o
+            // reportara como "eliminado" el elemento equivocado.
             let slint_items: Vec<MediaItem> = items.iter().enumerate()
-                .filter_map(|(i, item)| {
-                    load_image_cached(&img_cache, &item.path).map(|img| MediaItem {
+                .map(|(i, item)| {
+                    let img = load_image_cached(&img_cache, &item.path).unwrap_or_default();
+                    MediaItem {
                         id:      i as i32,
                         nombre:  SharedString::from(&item.name),
                         path:    SharedString::from(&item.path),
                         img,
                         aspecto: SharedString::from(&item.aspecto),
                         is_loop: false,
-                    })
+                    }
                 })
                 .collect();
             ui.set_multimedia_items(ModelRc::from(Rc::new(VecModel::from(slint_items))));

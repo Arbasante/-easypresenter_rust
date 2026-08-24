@@ -212,7 +212,7 @@ jobs:
           # DESCARGA
           # ----------------------------------------------------
 
-          $maxRetries = 3
+          $maxRetries = 5
           $downloadOK = $false
 
           for ($i = 1; $i -le $maxRetries; $i++) {
@@ -223,10 +223,23 @@ jobs:
               Write-Host "Descargando GStreamer..."
               Write-Host "Intento $i de $maxRetries"
 
-              Invoke-WebRequest `
-                -Uri $url `
-                -OutFile $installer `
-                -TimeoutSec 600
+              if (Test-Path $installer) {
+                Remove-Item $installer -Force
+              }
+
+              curl.exe `
+                -L `
+                --fail `
+                --retry 3 `
+                --retry-delay 10 `
+                --connect-timeout 30 `
+                --max-time 1200 `
+                -o "$installer" `
+                "$url"
+
+              if ($LASTEXITCODE -ne 0) {
+                throw "curl terminó con código $LASTEXITCODE"
+              }
 
               if (-not (Test-Path $installer)) {
                 throw "No se encontró el instalador descargado."
@@ -249,7 +262,6 @@ jobs:
               }
 
               $downloadOK = $true
-
               break
 
             }
@@ -260,7 +272,7 @@ jobs:
               Write-Host $_
 
               if ($i -eq $maxRetries) {
-                throw "No se pudo descargar GStreamer."
+                throw "No se pudo descargar GStreamer después de $maxRetries intentos."
               }
 
               Write-Host ""
@@ -268,7 +280,6 @@ jobs:
               Start-Sleep -Seconds 20
             }
           }
-
 
           if (-not $downloadOK) {
             throw "La descarga de GStreamer falló."

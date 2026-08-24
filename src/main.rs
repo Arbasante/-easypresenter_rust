@@ -1352,6 +1352,16 @@ fn iniciar_servidor_overlay(
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     gst::init().expect("Error al inicializar GStreamer.");
 
+        // Limita el pool global de rayon para que NUNCA compita al 100% por
+    // todos los núcleos del CPU. GStreamer necesita al menos 1 núcleo
+    // libre para decodificar video sin tirones, incluso en equipos de
+    // solo 2 núcleos como el Celeron B815. Reservamos 1 núcleo siempre.
+    let nucleos_totales = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(2);
+    let hilos_rayon = (nucleos_totales.saturating_sub(1)).max(1);
+    let _ = rayon::ThreadPoolBuilder::new()
+        .num_threads(hilos_rayon)
+        .build_global();
+
     #[cfg(target_os = "linux")]
     {
         if std::env::var("WAYLAND_DISPLAY").is_ok() {

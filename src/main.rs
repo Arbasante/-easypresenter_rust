@@ -730,7 +730,7 @@ fn mover_proyector_a_pantalla(p_weak: slint::Weak<ProjectorWindow>, x: i32, y: i
 
 // Constantes que deben coincidir exactamente con los valores del .slint
 const PROJ_PADDING: f32 = 30.0;  // padding-* del VerticalLayout en ProjectorWindow
-const REF_ZONE_H:   f32 = 70.0;  // height del bloque "if referencia != """
+const REF_ZONE_H:   f32 = 90.0;  // height del bloque "if referencia != """
 const CHAR_W:       f32 = 0.48;  // calibrado para font-weight 900 + Google Sans
 const LINE_H:       f32 = 1.10;  // line-height efectivo del Text de Slint
 
@@ -777,19 +777,21 @@ fn _busqueda_binaria(texto: &str, ancho_util: f32, alto_util: f32) -> f32 {
 
     // Pequeño margen de seguridad (2%) para compensar aproximaciones del
     // word-wrap real de Slint frente a la estimación de este algoritmo.
-    (min_size * 0.99).clamp(24.0, alto_util)
+    (min_size * 0.97).clamp(24.0, alto_util)
 }
 
 /// Tamaño de fuente para CANTOS: usa todo el alto disponible de la
 /// segunda pantalla (sin zona de cita), restando los márgenes del
 /// proyector para no desbordar la zona de proyección real.
+const FONT_SIZE_MAXIMO: f32 = 150.0;
+
 fn calcular_font_size_canto(
     texto: &str, screen_w: f32, screen_h: f32, scale: f32,
     m_izq: f32, m_der: f32, m_sup: f32, m_inf: f32,
 ) -> f32 {
     let ancho_util = (screen_w - PROJ_PADDING * 2.0 - m_izq - m_der).max(10.0);
     let alto_util  = (screen_h - PROJ_PADDING * 2.0 - m_sup - m_inf).max(10.0);
-    let maximo = _busqueda_binaria(texto, ancho_util, alto_util);
+    let maximo = _busqueda_binaria(texto, ancho_util, alto_util).min(FONT_SIZE_MAXIMO);
     // El scale puede reducir el tamaño, pero nunca superar el máximo real.
     (maximo * scale).min(maximo)
 }
@@ -803,7 +805,7 @@ fn calcular_font_size_versiculo(
 ) -> f32 {
     let ancho_util = (screen_w - PROJ_PADDING * 2.0 - m_izq - m_der).max(10.0);
     let alto_util  = (screen_h - PROJ_PADDING * 2.0 - REF_ZONE_H - 8.0 - m_sup - m_inf).max(10.0);
-    let maximo = _busqueda_binaria(texto, ancho_util, alto_util);
+    let maximo = _busqueda_binaria(texto, ancho_util, alto_util).min(FONT_SIZE_MAXIMO);
     (maximo * scale).min(maximo)
 }
 

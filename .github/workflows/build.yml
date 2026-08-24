@@ -176,53 +176,38 @@ jobs:
       #   - plugins
       #
       # ========================================================
-      - name: Instalar GStreamer 1.28.5
+      # ========================================================
+      # GSTREAMER (DESCARGA CON CACHÉ E INSTALACIÓN)
+      # ========================================================
+
+      # 1. Configurar la caché de GitHub
+      - name: Caché del instalador de GStreamer
+        id: cache-gstreamer
+        uses: actions/cache@v4
+        with:
+          path: C:\gstreamer_cache
+          key: gstreamer-1.28.5-msvc-x86_64
+
+      # 2. Descargar SOLO si no se encontró en la caché
+      - name: Descargar GStreamer
+        if: steps.cache-gstreamer.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
-
           $version = "1.28.5"
-
           $baseUrl = "https://gstreamer.freedesktop.org/data/pkg/windows/$version/msvc"
-
           $url = "$baseUrl/gstreamer-1.0-msvc-x86_64-$version.exe"
+          $cacheDir = "C:\gstreamer_cache"
+          $installer = "$cacheDir\gstreamer-$version.exe"
 
-          $installer = "$env:TEMP\gstreamer-$version-x86_64.exe"
+          New-Item -ItemType Directory -Force -Path $cacheDir | Out-Null
 
-          $gstRoot = "C:\gstreamer\1.0\msvc_x86_64"
-
-
-          Write-Host "=================================================="
-          Write-Host "GSTREAMER"
-          Write-Host "=================================================="
-
-          Write-Host ""
-          Write-Host "Versión:"
-          Write-Host $version
-
-          Write-Host ""
-          Write-Host "URL:"
-          Write-Host $url
-
-          Write-Host ""
-          Write-Host "Destino:"
-          Write-Host $gstRoot
-
-
-          # ----------------------------------------------------
-          # DESCARGA
-          # ----------------------------------------------------
-
-          $maxRetries = 15 # Aumentamos de 5 a 15 intentos para lidiar con los cortes
+          $maxRetries = 15
           $downloadOK = $false
 
           for ($i = 1; $i -le $maxRetries; $i++) {
             try {
-              Write-Host ""
-              Write-Host "Descargando GStreamer..."
-              Write-Host "Intento $i de $maxRetries"
-
-              # Agregamos --retry-all-errors para que curl internamente 
-              # insista cuando el servidor arroje el error 503.
+              Write-Host "Descargando GStreamer (Intento $i de $maxRetries)..."
+              
               curl.exe `
                 --http1.1 `
                 -C - `
@@ -236,247 +221,62 @@ jobs:
                 -o "$installer" `
                 "$url"
 
-              if ($LASTEXITCODE -ne 0) {
-                throw "curl terminó con código $LASTEXITCODE"
-              }
-
-              if (-not (Test-Path $installer)) {
-                throw "No se encontró el instalador descargado."
-              }
+              if ($LASTEXITCODE -ne 0) { throw "curl terminó con código $LASTEXITCODE" }
+              if (-not (Test-Path $installer)) { throw "No se encontró el instalador." }
 
               $file = Get-Item $installer
+              $sizeMB = [math]::Round($file.Length / 1MB, 2)
+              
+              if ($sizeMB -lt 10) { throw "El archivo es demasiado pequeño." }
 
-              $sizeMB = [math]::Round(
-                $file.Length / 1MB,
-                2
-              )
-
-              Write-Host ""
-              Write-Host "Descarga completada."
-              Write-Host "Archivo: $installer"
-              Write-Host "Tamaño: $sizeMB MB"
-
-              if ($sizeMB -lt 10) {
-                throw "El archivo descargado es demasiado pequeño."
-              }
-
+              Write-Host "Descarga exitosa ($sizeMB MB)."
               $downloadOK = $true
               break
-
             }
             catch {
-              Write-Host ""
-              Write-Host "ERROR:"
-              Write-Host $_
-
-              if ($i -eq $maxRetries) {
-                throw "No se pudo descargar GStreamer después de $maxRetries intentos."
-              }
-
-              Write-Host ""
-              Write-Host "Esperando 15 segundos para no saturar al servidor..."
+              Write-Host "Error en intento $i: $_"
+              if ($i -eq $maxRetries) { throw "Fallo definitivo tras $maxRetries intentos." }
               Start-Sleep -Seconds 15
             }
           }
+          if (-not $downloadOK) { throw "La descarga falló." }
 
-          if (-not $downloadOK) {
-            throw "La descarga de GStreamer falló."
-          }
+      # 3. Instalar (Este paso se ejecuta siempre)
+      - name: Instalar GStreamer y configurar entorno
+        shell: pwsh
+        run: |
+          $version = "1.28.5"
+          $installer = "C:\gstreamer_cache\gstreamer-$version.exe"
+          $gstRoot = "C:\gstreamer\1.0\msvc_x86_64"
 
-          # ----------------------------------------------------
-          # CREAR DIRECTORIO
-          # ----------------------------------------------------
+          Write-Host "Instalando desde caché: $installer"
 
-          New-Item `
-            -ItemType Directory `
-            -Force `
-            -Path $gstRoot |
-            Out-Null
-
-
-          # ----------------------------------------------------
-          # INSTALAR DEVEL
-          #
-          # /TYPE=devel instala los componentes de desarrollo
-          # necesarios para compilar contra GStreamer.
-          #
-          # /VERYSILENT evita que el runner se quede esperando
-          # interacción gráfica.
-          # ----------------------------------------------------
-
-          Write-Host ""
-          Write-Host "=================================================="
-          Write-Host "INSTALANDO GSTREAMER"
-          Write-Host "=================================================="
-
-          $arguments = @(
-            "/VERYSILENT"
-            "/SUPPRESSMSGBOXES"
-            "/NORESTART"
-            "/ALLUSERS"
-            "/TYPE=devel"
-            "/DIR=$gstRoot"
-          )
-
-          Write-Host ""
-          Write-Host "Ejecutando:"
-          Write-Host $installer
-
-          Write-Host ""
-          Write-Host "Argumentos:"
-          Write-Host ($arguments -join " ")
-
-
-          $process = Start-Process `
-            -FilePath $installer `
-            -ArgumentList $arguments `
-            -Wait `
-            -PassThru
-
-
-          Write-Host ""
-          Write-Host "=================================================="
-          Write-Host "INSTALADOR FINALIZADO"
-          Write-Host "=================================================="
-
-          Write-Host "ExitCode = $($process.ExitCode)"
-
+          $arguments = @("/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/ALLUSERS", "/TYPE=devel", "/DIR=$gstRoot")
+          $process = Start-Process -FilePath $installer -ArgumentList $arguments -Wait -PassThru
 
           if ($process.ExitCode -ne 0) {
-            throw "GStreamer terminó con código $($process.ExitCode)"
-          }
-
-
-          # ----------------------------------------------------
-          # VERIFICAR DIRECTORIOS
-          # ----------------------------------------------------
-
-          Write-Host ""
-          Write-Host "Verificando instalación..."
-
-          if (-not (Test-Path $gstRoot)) {
-            throw "No existe GST_ROOT: $gstRoot"
+            throw "El instalador terminó con código $($process.ExitCode)"
           }
 
           $gstBin = "$gstRoot\bin"
           $gstLib = "$gstRoot\lib"
           $gstInclude = "$gstRoot\include"
 
-          if (-not (Test-Path $gstBin)) {
-            throw "No existe: $gstBin"
-          }
+          if (-not (Test-Path $gstBin)) { throw "No existe: $gstBin" }
 
-          if (-not (Test-Path $gstLib)) {
-            throw "No existe: $gstLib"
-          }
-
-          if (-not (Test-Path $gstInclude)) {
-            throw "No existe: $gstInclude"
-          }
-
-
-          Write-Host ""
-          Write-Host "GStreamer instalado correctamente."
-
-          Write-Host ""
-          Write-Host "GST_ROOT:"
-          Write-Host $gstRoot
-
-          Write-Host ""
-          Write-Host "BIN:"
-          Write-Host $gstBin
-
-          Write-Host ""
-          Write-Host "LIB:"
-          Write-Host $gstLib
-
-          Write-Host ""
-          Write-Host "INCLUDE:"
-          Write-Host $gstInclude
-
-
-          # ----------------------------------------------------
-          # BUSCAR glib-2.0.pc
-          # ----------------------------------------------------
-
-          Write-Host ""
           Write-Host "Buscando glib-2.0.pc..."
+          $pcFile = Get-ChildItem -Path $gstRoot -Recurse -Filter "glib-2.0.pc" -ErrorAction SilentlyContinue | Select-Object -First 1
 
-          $pcFile = Get-ChildItem `
-            -Path $gstRoot `
-            -Recurse `
-            -Filter "glib-2.0.pc" `
-            -ErrorAction SilentlyContinue |
-            Select-Object -First 1
-
-
-          if (-not $pcFile) {
-
-            Write-Host ""
-            Write-Host "ERROR: no se encontró glib-2.0.pc."
-
-            Write-Host ""
-            Write-Host "Contenido de GStreamer:"
-
-            Get-ChildItem `
-              $gstRoot `
-              -Recurse `
-              -ErrorAction SilentlyContinue |
-              Select-Object -First 200 FullName
-
-            throw "No se encontró glib-2.0.pc."
-          }
-
+          if (-not $pcFile) { throw "No se encontró glib-2.0.pc." }
 
           $pkgConfigDirWin = $pcFile.DirectoryName
+          $pkgConfigDirUnix = "/" + $pkgConfigDirWin.Substring(0, 1).ToLower() + $pkgConfigDirWin.Substring(2).Replace('\', '/')
 
+          "GST_ROOT_WIN=$gstRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "PKG_CONFIG_PATH=$pkgConfigDirUnix" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "$gstBin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
 
-          Write-Host ""
-          Write-Host "glib-2.0.pc:"
-          Write-Host $pcFile.FullName
-
-
-          # ----------------------------------------------------
-          # PKG_CONFIG_PATH
-          # ----------------------------------------------------
-
-          $pkgConfigDirUnix =
-            "/" +
-            $pkgConfigDirWin.Substring(0, 1).ToLower() +
-            $pkgConfigDirWin.Substring(2).Replace('\', '/')
-
-
-          Write-Host ""
-          Write-Host "PKG_CONFIG_PATH:"
-          Write-Host $pkgConfigDirUnix
-
-
-          # ----------------------------------------------------
-          # VARIABLES PARA LOS SIGUIENTES STEPS
-          # ----------------------------------------------------
-
-          "GST_ROOT_WIN=$gstRoot" |
-            Out-File `
-              -FilePath $env:GITHUB_ENV `
-              -Encoding utf8 `
-              -Append
-
-          "PKG_CONFIG_PATH=$pkgConfigDirUnix" |
-            Out-File `
-              -FilePath $env:GITHUB_ENV `
-              -Encoding utf8 `
-              -Append
-
-          "$gstBin" |
-            Out-File `
-              -FilePath $env:GITHUB_PATH `
-              -Encoding utf8 `
-              -Append
-
-
-          Write-Host ""
-          Write-Host "Variables de entorno configuradas."
-
+          Write-Host "GStreamer instalado y variables de entorno configuradas."
 
       # ========================================================
       # VERIFICAR GSTREAMER

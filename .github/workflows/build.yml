@@ -234,7 +234,7 @@ jobs:
               break
             }
             catch {
-              Write-Host "Error en intento $i: $_"
+              Write-Host "Error en intento ${i}: ${_}"
               if ($i -eq $maxRetries) { throw "Fallo definitivo tras $maxRetries intentos." }
               Start-Sleep -Seconds 15
             }

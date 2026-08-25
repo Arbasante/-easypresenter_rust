@@ -176,6 +176,10 @@ fn resolucion_miniatura() -> u32 {
     match *NIVEL_HARDWARE { 1 => 240, 2 => 360, _ => 480 }
 }
 
+fn resolucion_fondo_proyeccion() -> u32 {
+    match *NIVEL_HARDWARE { 1 => 1280, 2 => 1600, _ => 1920 }
+}
+
 /// Ancho de renderizado para páginas de PDF/PPTX importadas.
 fn resolucion_pdf() -> i32 {
     match *NIVEL_HARDWARE { 1 => 1280, 2 => 1600, _ => 1920 }
@@ -269,6 +273,28 @@ fn load_image_cached(
     cache.lock().unwrap().insert(path.to_string(), img.clone());
     Some(img)
 }
+
+fn load_image_fondo_cached(
+    cache: &Arc<Mutex<HashMap<String, slint::Image>>>,
+    path: &str,
+) -> Option<slint::Image> {
+    {
+        let lock = cache.lock().unwrap();
+        if let Some(img) = lock.get(path) {
+            return Some(img.clone());
+        }
+    }
+    let tam = resolucion_fondo_proyeccion();
+    let decoded = image::open(path).ok()?;
+    let thumb = decoded.thumbnail(tam, tam).to_rgba8();
+    let (w, h) = (thumb.width(), thumb.height());
+    let mut pixel_buffer = SharedPixelBuffer::<slint::Rgba8Pixel>::new(w, h);
+    pixel_buffer.make_mut_bytes().copy_from_slice(thumb.as_raw());
+    let img = slint::Image::from_rgba8(pixel_buffer);
+
+    cache.lock().unwrap().insert(path.to_string(), img.clone());
+    Some(img)
+}   
 
 /// Decodifica en paralelo (usando todos los núcleos disponibles) los
 /// thumbnails de una lista de rutas. Devuelve, en el mismo orden, los bytes
@@ -998,13 +1024,24 @@ impl Drop for NativeVideoPlayer {
 // ---------------------------------------------------------------------------
 // Estilos del proyector
 // ---------------------------------------------------------------------------
+
+fn limpiar_texto_proyeccion(p: &ProjectorWindow) {
+    p.set_texto_proyeccion(SharedString::from(""));
+    p.set_referencia(SharedString::from(""));
+}
+
 fn aplicar_estilos(
     ui: &AppWindow,
     p:  &ProjectorWindow,
     vp: &Arc<Mutex<NativeVideoPlayer>>,
     modo: &str,
     forzar_reinicio_video: bool,
-) {
+) 
+
+
+
+
+{
     let is_biblia  = modo == "biblias";
     let bg_type    = if is_biblia { ui.get_biblias_bg_type()      } else { ui.get_cantos_bg_type()      };
     let font_color = if is_biblia { ui.get_biblias_font_color()   } else { ui.get_cantos_font_color()   };
@@ -1396,6 +1433,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let image_cache: Arc<Mutex<HashMap<String, slint::Image>>> =
         Arc::new(Mutex::new(HashMap::new()));
 
+    let image_cache_fondo: Arc<Mutex<HashMap<String, slint::Image>>> =
+        Arc::new(Mutex::new(HashMap::new()));
+
     // OPT-3: AtomicBool — lecturas/escrituras sin lock del SO
     let bloqueo_estilos = Arc::new(AtomicBool::new(false));
     let modo_en_vivo: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
@@ -1550,7 +1590,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if !images_b.is_empty() {
             ui.set_biblias_image_data(ModelRc::from(Rc::new(VecModel::from(images_b))));
             ui.set_biblias_selected_img(cfg.biblias_selected_img);
-            if let Some(img) = load_image_cached(&image_cache, st.biblias_image_paths.get(cfg.biblias_selected_img as usize).map(|s| s.as_str()).unwrap_or("")) {
+            if let Some(img) = load_image_fondo_cached(&image_cache_fondo, st.biblias_image_paths.get(cfg.biblias_selected_img as usize).map(|s| s.as_str()).unwrap_or("")) {
                 ui.set_biblias_bg_image(img);
                 ui.set_biblias_has_image(true);
             }
@@ -1558,7 +1598,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if !images_c.is_empty() {
             ui.set_cantos_image_data(ModelRc::from(Rc::new(VecModel::from(images_c))));
             ui.set_cantos_selected_img(cfg.cantos_selected_img);
-            if let Some(img) = load_image_cached(&image_cache, st.cantos_image_paths.get(cfg.cantos_selected_img as usize).map(|s| s.as_str()).unwrap_or("")) {
+            if let Some(img) = load_image_fondo_cached(&image_cache_fondo, st.cantos_image_paths.get(cfg.cantos_selected_img as usize).map(|s| s.as_str()).unwrap_or("")) {
                 ui.set_cantos_bg_image(img);
                 ui.set_cantos_has_image(true);
             }
@@ -2253,6 +2293,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let ui_h        = ui.as_weak();
         let state_gal   = Arc::clone(&state);
         let img_cache   = Arc::clone(&image_cache);
+        let img_cache_fondo = Arc::clone(&image_cache_fondo);
         let bsc_galeria = build_and_save_config.clone();
         ui.on_agregar_a_galeria(move |tipo| {
             let ui       = ui_h.unwrap();
@@ -2266,8 +2307,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if let Some(path) = dialog {
                 let path_str = path.to_string_lossy().to_string();
                 let mut estado = state_gal.lock().unwrap();
-                if tipo_str == "biblias-img" {
-                    if let Some(img) = load_image_cached(&img_cache, &path_str) {
+                                if tipo_str == "biblias-img" {
+                    if let Some(img_fondo) = load_image_fondo_cached(&img_cache_fondo, &path_str) {
                         estado.biblias_image_paths.push(path_str.clone());
                         let idx          = estado.biblias_image_paths.len() as i32 - 1;
                         let paths_copia: Vec<String> = estado.biblias_image_paths.clone();
@@ -2277,14 +2318,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             .collect();
                         ui.set_biblias_image_data(ModelRc::from(Rc::new(VecModel::from(images))));
                         ui.set_biblias_selected_img(idx);
-                        ui.set_biblias_bg_image(img);
+                        ui.set_biblias_bg_image(img_fondo);
                         ui.set_biblias_has_image(true);
                         ui.set_biblias_bg_type(SharedString::from("imagen"));
                         ui.invoke_sync_estilos();
                         bsc_galeria();
                     }
                 } else if tipo_str == "cantos-img" {
-                    if let Some(img) = load_image_cached(&img_cache, &path_str) {
+                    if let Some(img_fondo) = load_image_fondo_cached(&img_cache_fondo, &path_str) {
                         estado.cantos_image_paths.push(path_str.clone());
                         let idx          = estado.cantos_image_paths.len() as i32 - 1;
                         let paths_copia: Vec<String> = estado.cantos_image_paths.clone();
@@ -2294,7 +2335,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             .collect();
                         ui.set_cantos_image_data(ModelRc::from(Rc::new(VecModel::from(images))));
                         ui.set_cantos_selected_img(idx);
-                        ui.set_cantos_bg_image(img);
+                        ui.set_cantos_bg_image(img_fondo);
                         ui.set_cantos_has_image(true);
                         ui.set_cantos_bg_type(SharedString::from("imagen"));
                         ui.invoke_sync_estilos();
@@ -2331,11 +2372,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
-    {
+   {
         let ui_h      = ui.as_weak();
         let state_sel = Arc::clone(&state);
         let img_cache = Arc::clone(&image_cache);
-                ui.on_seleccionar_galeria_item(move |tipo, idx| {
+        let img_cache_fondo = Arc::clone(&image_cache_fondo);
+        ui.on_seleccionar_galeria_item(move |tipo, idx| {
             let ui       = ui_h.unwrap();
             let tipo_str = tipo.to_string();
             let idx_u    = idx as usize;
@@ -2367,14 +2409,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             match accion {
                 Accion::ImgBiblias(p) => {
-                    if let Some(img) = load_image_cached(&img_cache, &p) {
+                    if let Some(img) = load_image_fondo_cached(&img_cache_fondo, &p) {
                         ui.set_biblias_selected_img(idx); ui.set_biblias_bg_image(img);
                         ui.set_biblias_has_image(true); ui.set_biblias_bg_type(SharedString::from("imagen"));
                         ui.invoke_sync_estilos();
                     }
                 }
                 Accion::ImgCantos(p) => {
-                    if let Some(img) = load_image_cached(&img_cache, &p) {
+                    if let Some(img) = load_image_fondo_cached(&img_cache_fondo, &p) {
                         ui.set_cantos_selected_img(idx); ui.set_cantos_bg_image(img);
                         ui.set_cantos_has_image(true); ui.set_cantos_bg_type(SharedString::from("imagen"));
                         ui.invoke_sync_estilos();
@@ -3014,6 +3056,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if let Some(img) = current_pages.row_data(page_idx as usize) {
                 vp_pdf.lock().unwrap().detener();
                 p.set_es_video(false);
+                limpiar_texto_proyeccion(&p);
                 p.set_fondo_imagen_aspecto(slint::SharedString::from("contain"));
                 p.set_fondo_imagen(img);
                 p.set_mostrar_imagen(true);
@@ -3090,8 +3133,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 vp.lock().unwrap().detener();
                 p.set_es_video(false);
                 p.set_bg_color(slint::Color::from_rgb_u8(0, 0, 0));
-                p.set_texto_proyeccion(slint::SharedString::from(""));
-                p.set_referencia(slint::SharedString::from(""));
+                limpiar_texto_proyeccion(&p);
                 p.set_fondo_opacity(0.0);
                 let aspecto = { let state = multi_state.read().unwrap(); state.iter().find(|i| i.path == ruta).map(|i| i.aspecto.clone()).unwrap_or_default() };
                 p.set_fondo_imagen_aspecto(slint::SharedString::from(&aspecto));
@@ -3245,8 +3287,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             p.set_es_video(true);
             p.set_bg_color(slint::Color::from_rgb_u8(0, 0, 0));
             p.set_mostrar_imagen(false);
-            p.set_texto_proyeccion(slint::SharedString::from(""));
-            p.set_referencia(slint::SharedString::from(""));
+            limpiar_texto_proyeccion(&p);
             vp.lock().unwrap().reproducir(&ruta, p.as_weak(), is_loop);
             ui.set_is_video_projecting(true);
             ui.set_is_proyector_playing(true);

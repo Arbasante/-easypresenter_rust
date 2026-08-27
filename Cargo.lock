@@ -1395,7 +1395,7 @@ checksum = "edf234dd1594d6dd434a8fb8cada51ddbbc593e40e4a01556a0b31c62da2775b"
 
 [[package]]
 name = "easy-presenter-slint"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
  "directories",
  "display-info",

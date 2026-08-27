@@ -1,7 +1,39 @@
+
+// ─────────────────────────────────────────────────────────────
+//  MEDIDOR DE TEXTO — no se muestra en pantalla, solo se usa
+//  para preguntarle al motor de layout de Slint cuánto espacio
+//  real ocuparía un texto a un tamaño de fuente dado. Esto
+//  reemplaza cualquier fórmula matemática de estimación (que
+//  varía entre sistemas operativos/fuentes) por una medición
+//  100% real, igual en cualquier hardware o distro.
+// ─────────────────────────────────────────────────────────────
+export component MedidorTexto inherits Text {
+    // Se posiciona fuera del área visible; no necesita layout real.
+    x: -10000px;
+    y: -10000px;
+
+    wrap: word-wrap;
+    overflow: clip;
+    font-family: "Google Sans";
+    font-weight: 900;
+
+    // Rust lee esta altura después de fijar `text`, `width` y `font-size`.
+    out property <length> altura_medida: self.preferred-height;
+}
+
 export component ProjectorWindow inherits Window {
     no-frame: true;
     always-on-top: true;
     title: "";
+
+    medidor := MedidorTexto { }
+
+    public function medir_altura(texto: string, ancho: length, tamano_fuente: length) -> length {
+        medidor.text = texto;
+        medidor.width = ancho;
+        medidor.font-size = tamano_fuente;
+        return medidor.altura_medida;
+    }
   
     
     // 1. El fondo real de la ventana de Windows siempre será negro

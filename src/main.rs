@@ -760,78 +760,78 @@ const REF_ZONE_H:   f32 = 90.0;  // height del bloque "if referencia != """
 const CHAR_W:       f32 = 0.48;  // calibrado para font-weight 900 + Google Sans
 const LINE_H:       f32 = 1.10;  // line-height efectivo del Text de Slint
 
-/// Búsqueda binaria: devuelve el tamaño de fuente MÁXIMO que cabe en el
-/// recuadro (ancho_util x alto_util) sin que el texto se desborde,
-/// considerando el ancho de la palabra más larga y el número de líneas
-/// que ocuparía cada tamaño candidato.
-fn _busqueda_binaria(texto: &str, ancho_util: f32, alto_util: f32) -> f32 {
-    if texto.is_empty() { return 60.0; }
+/// Búsqueda binaria basada en MEDICIÓN REAL del motor de layout de Slint,
+/// no en una fórmula matemática que estima el ancho de caracteres. Esto
+/// garantiza el mismo resultado visual sin importar el sistema operativo,
+/// distro, o fuente de reemplazo que termine usando el renderizador.
+fn buscar_tamano_optimo(
+    alto_util: f32,
+    max_size: f32,
+    mut medir_fn: impl FnMut(f32) -> f32,
+) -> f32 {
+    let mut min_size: f32 = 12.0;
+    let mut max_size = max_size.max(min_size + 1.0);
 
-    let max_word_chars = texto
-        .split_whitespace()
-        .map(|w| w.chars().count())
-        .max()
-        .unwrap_or(1) as f32;
-
-    let estimar_lineas = |font_size: f32| -> f32 {
-        let chars_por_linea = (ancho_util / (font_size * CHAR_W)).floor().max(1.0);
-        let mut total = 0.0f32;
-        for linea in texto.lines() {
-            let chars = linea.chars().count() as f32;
-            if chars == 0.0 {
-                total += 0.4;
-            } else {
-                total += (chars / chars_por_linea).ceil();
-            }
-        }
-        total.max(1.0)
-    };
-
-    let mut min_size: f32 = 24.0;
-    let mut max_size: f32 = alto_util.max(min_size + 1.0);
-
-    for _ in 0..48 { // más iteraciones = más precisión
-        let mid           = (min_size + max_size) / 2.0;
-        let alto_ocupado  = estimar_lineas(mid) * mid * LINE_H;
-        let ancho_palabra = max_word_chars * mid * CHAR_W;
-        if alto_ocupado <= alto_util && ancho_palabra <= ancho_util {
+    for _ in 0..14 {
+        let mid = (min_size + max_size) / 2.0;
+        let altura_real = medir_fn(mid);
+        if altura_real <= alto_util {
             min_size = mid;
         } else {
             max_size = mid;
         }
     }
 
-    // Pequeño margen de seguridad (2%) para compensar aproximaciones del
-    // word-wrap real de Slint frente a la estimación de este algoritmo.
-    (min_size * 0.97).clamp(24.0, alto_util)
+    min_size.clamp(12.0, alto_util)
 }
 
-/// Tamaño de fuente para CANTOS: usa todo el alto disponible de la
-/// segunda pantalla (sin zona de cita), restando los márgenes del
-/// proyector para no desbordar la zona de proyección real.
-const FONT_SIZE_MAXIMO: f32 = 150.0;
+const FONT_SIZE_MAXIMO: f32 = 110.0;
 
+/// Tamaño de fuente para CANTOS, usando medición real vía Slint.
+/// `p` es la ventana del proyector, que expone `invoke_medir_altura`
+/// (la función pública que agregamos en projector_ui.slint).
 fn calcular_font_size_canto(
+    p: &ProjectorWindow,
     texto: &str, screen_w: f32, screen_h: f32, scale: f32,
     m_izq: f32, m_der: f32, m_sup: f32, m_inf: f32,
 ) -> f32 {
     let ancho_util = (screen_w - PROJ_PADDING * 2.0 - m_izq - m_der).max(10.0);
     let alto_util  = (screen_h - PROJ_PADDING * 2.0 - m_sup - m_inf).max(10.0);
-    let maximo = _busqueda_binaria(texto, ancho_util, alto_util).min(FONT_SIZE_MAXIMO);
-    // El scale puede reducir el tamaño, pero nunca superar el máximo real.
+
+    //let ancho_logical = slint::LogicalLength::new(ancho_util);
+    let techo = FONT_SIZE_MAXIMO.min(alto_util);
+
+    let maximo = buscar_tamano_optimo(alto_util, techo, |candidato| {
+        p.invoke_medir_altura(
+            SharedString::from(texto),
+            ancho_util,
+            candidato,
+        )
+    });
+
     (maximo * scale).min(maximo)
 }
 
-/// Tamaño de fuente para VERSÍCULOS: mismo criterio de "máximo sin
-/// desborde" que los cantos, reservando únicamente el espacio de la
-/// zona de referencia (que tiene tamaño fijo y no se calcula aquí).
+/// Tamaño de fuente para VERSÍCULOS, usando medición real vía Slint.
 fn calcular_font_size_versiculo(
+    p: &ProjectorWindow,
     texto: &str, screen_w: f32, screen_h: f32, scale: f32,
     m_izq: f32, m_der: f32, m_sup: f32, m_inf: f32,
 ) -> f32 {
     let ancho_util = (screen_w - PROJ_PADDING * 2.0 - m_izq - m_der).max(10.0);
     let alto_util  = (screen_h - PROJ_PADDING * 2.0 - REF_ZONE_H - 8.0 - m_sup - m_inf).max(10.0);
-    let maximo = _busqueda_binaria(texto, ancho_util, alto_util).min(FONT_SIZE_MAXIMO);
+
+    //let ancho_logical = slint::LogicalLength::new(ancho_util);
+    let techo = FONT_SIZE_MAXIMO.min(alto_util);
+
+    let maximo = buscar_tamano_optimo(alto_util, techo, |candidato| {
+        p.invoke_medir_altura(
+            SharedString::from(texto),
+            ancho_util,
+            candidato,
+        )
+    });
+
     (maximo * scale).min(maximo)
 }
 
@@ -1399,12 +1399,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .num_threads(hilos_rayon)
         .build_global();
 
-    #[cfg(target_os = "linux")]
+     #[cfg(target_os = "linux")]
     {
         if std::env::var("WAYLAND_DISPLAY").is_ok() {
             println!("Detectado Wayland, forzando modo X11/XWayland...");
-            std::env::set_var("WAYLAND_DISPLAY", "");
-            std::env::set_var("GDK_BACKEND", "x11");
+            // SAFETY: esto se ejecuta al inicio de main(), antes de crear
+            // cualquier hilo adicional — no hay riesgo de lectura/escritura
+            // concurrente de variables de entorno en este punto.
+            unsafe {
+                std::env::set_var("WAYLAND_DISPLAY", "");
+                std::env::set_var("GDK_BACKEND", "x11");
+            }
         }
     }
 
@@ -1850,7 +1855,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     );
                     let texto_nuevo = diapos_slint[idx].texto.clone();
                     let scale       = ui.get_cantos_font_scale();
-                    let font_size   = calcular_font_size_canto(&texto_nuevo, screen_w, screen_h, scale, m_izq, m_der, m_sup, m_inf);
+                    let font_size   = calcular_font_size_canto(&p, &texto_nuevo, screen_w, screen_h, scale, m_izq, m_der, m_sup, m_inf);
                     p.set_texto_proyeccion(texto_nuevo);
                     p.set_tamano_letra(font_size);
                     p.set_referencia(SharedString::from(""));
@@ -1976,9 +1981,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 ui_local.get_margen_superior(),  ui_local.get_margen_inferior(),
             );
             let font_size = if tiene_referencia {
-                calcular_font_size_versiculo(&texto, screen_w, screen_h, scale, m_izq, m_der, m_sup, m_inf)
+                calcular_font_size_versiculo(&p, &texto, screen_w, screen_h, scale, m_izq, m_der, m_sup, m_inf)
             } else {
-                calcular_font_size_canto(&texto, screen_w, screen_h, scale, m_izq, m_der, m_sup, m_inf)
+                calcular_font_size_canto(&p, &texto, screen_w, screen_h, scale, m_izq, m_der, m_sup, m_inf)
             };
             p.set_tamano_letra(font_size);
             let modo_actual = if tiene_referencia { "biblias" } else { "cantos" };
@@ -2238,9 +2243,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             ui.get_margen_superior(),  ui.get_margen_inferior(),
                         );
                         let base_size  = if tiene_ref {
-                            calcular_font_size_versiculo(&texto, sw, sh, scale, m_izq, m_der, m_sup, m_inf)
+                            calcular_font_size_versiculo(&p, &texto, sw, sh, scale, m_izq, m_der, m_sup, m_inf)
                         } else {
-                            calcular_font_size_canto(&texto, sw, sh, scale, m_izq, m_der, m_sup, m_inf)
+                            calcular_font_size_canto(&p, &texto, sw, sh, scale, m_izq, m_der, m_sup, m_inf)
                         };
                         p.set_tamano_letra(base_size);
                     }
@@ -2278,9 +2283,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     ui.get_margen_superior(),  ui.get_margen_inferior(),
                 );
                 let base_size  = if tiene_ref {
-                    calcular_font_size_versiculo(&texto, sw, sh, scale, m_izq, m_der, m_sup, m_inf)
+                    calcular_font_size_versiculo(&p, &texto, sw, sh, scale, m_izq, m_der, m_sup, m_inf)
                 } else {
-                    calcular_font_size_canto(&texto, sw, sh, scale, m_izq, m_der, m_sup, m_inf)
+                    calcular_font_size_canto(&p, &texto, sw, sh, scale, m_izq, m_der, m_sup, m_inf)
                 };
                 p.set_tamano_letra(base_size);
             }

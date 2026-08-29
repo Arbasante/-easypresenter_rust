@@ -791,7 +791,7 @@ const FONT_SIZE_MAXIMO: f32 = 110.0;
 /// `p` es la ventana del proyector, que expone `invoke_medir_altura`
 /// (la función pública que agregamos en projector_ui.slint).
 fn calcular_font_size_canto(
-    p: &ProjectorWindow,
+    p: &MedidorWindow,
     texto: &str, screen_w: f32, screen_h: f32, scale: f32,
     m_izq: f32, m_der: f32, m_sup: f32, m_inf: f32,
 ) -> f32 {
@@ -814,7 +814,7 @@ fn calcular_font_size_canto(
 
 /// Tamaño de fuente para VERSÍCULOS, usando medición real vía Slint.
 fn calcular_font_size_versiculo(
-    p: &ProjectorWindow,
+    p: &MedidorWindow,
     texto: &str, screen_w: f32, screen_h: f32, scale: f32,
     m_izq: f32, m_der: f32, m_sup: f32, m_inf: f32,
 ) -> f32 {
@@ -1427,6 +1427,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let ui          = AppWindow::new()?;
     //ui.window().set_maximized(true); 
     let proyector   = ProjectorWindow::new()?;
+    let medidor_win = MedidorWindow::new()?;
     let video_player = Arc::new(Mutex::new(NativeVideoPlayer::new()));
 
     let multimedia_state = Arc::new(RwLock::new(Vec::<MediaData>::new()));
@@ -1823,6 +1824,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let ui_handle    = ui.as_weak();
         let p_handle     = proyector.as_weak();
         let sp_guardar   = Arc::clone(&segunda_pantalla);
+        let medidor_gc   = medidor_win.as_weak();
         ui.on_guardar_canto(move |id, titulo, letra| {
             {
                 let estado = state_clone.lock().unwrap();
@@ -1855,7 +1857,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     );
                     let texto_nuevo = diapos_slint[idx].texto.clone();
                     let scale       = ui.get_cantos_font_scale();
-                    let font_size   = calcular_font_size_canto(&p, &texto_nuevo, screen_w, screen_h, scale, m_izq, m_der, m_sup, m_inf);
+                    let medidor = medidor_gc.unwrap();
+                    let font_size   = calcular_font_size_canto(&medidor, &texto_nuevo, screen_w, screen_h, scale, m_izq, m_der, m_sup, m_inf);
                     p.set_texto_proyeccion(texto_nuevo);
                     p.set_tamano_letra(font_size);
                     p.set_referencia(SharedString::from(""));
@@ -1945,6 +1948,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let sp          = Arc::clone(&segunda_pantalla);
         let bloqueo     = Arc::clone(&bloqueo_estilos);
         let overlay_e   = Arc::clone(&overlay_estado);
+        let medidor_pe  = medidor_win.as_weak();
 
         ui.on_proyectar_estrofa(move |texto, referencia| {
             let p        = p_handle.unwrap();
@@ -1980,10 +1984,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 ui_local.get_margen_izquierdo(), ui_local.get_margen_derecho(),
                 ui_local.get_margen_superior(),  ui_local.get_margen_inferior(),
             );
+            let medidor = medidor_pe.unwrap();
             let font_size = if tiene_referencia {
-                calcular_font_size_versiculo(&p, &texto, screen_w, screen_h, scale, m_izq, m_der, m_sup, m_inf)
+                calcular_font_size_versiculo(&medidor, &texto, screen_w, screen_h, scale, m_izq, m_der, m_sup, m_inf)
             } else {
-                calcular_font_size_canto(&p, &texto, screen_w, screen_h, scale, m_izq, m_der, m_sup, m_inf)
+                calcular_font_size_canto(&medidor, &texto, screen_w, screen_h, scale, m_izq, m_der, m_sup, m_inf)
             };
             p.set_tamano_letra(font_size);
             let modo_actual = if tiene_referencia { "biblias" } else { "cantos" };
@@ -2215,6 +2220,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let bloqueo = Arc::clone(&bloqueo_estilos);
         let modo_vivo   = Arc::clone(&modo_en_vivo);
         let bsc_estilos = build_and_save_config.clone();
+        let medidor_se  = medidor_win.as_weak();
         ui.on_sync_estilos(move || {
             let ui = ui_h.unwrap();
             let p  = p_h.unwrap();
@@ -2242,10 +2248,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             ui.get_margen_izquierdo(), ui.get_margen_derecho(),
                             ui.get_margen_superior(),  ui.get_margen_inferior(),
                         );
+                        let medidor = medidor_se.unwrap();
                         let base_size  = if tiene_ref {
-                            calcular_font_size_versiculo(&p, &texto, sw, sh, scale, m_izq, m_der, m_sup, m_inf)
+                            calcular_font_size_versiculo(&medidor, &texto, sw, sh, scale, m_izq, m_der, m_sup, m_inf)
                         } else {
-                            calcular_font_size_canto(&p, &texto, sw, sh, scale, m_izq, m_der, m_sup, m_inf)
+                            calcular_font_size_canto(&medidor, &texto, sw, sh, scale, m_izq, m_der, m_sup, m_inf)
                         };
                         p.set_tamano_letra(base_size);
                     }
@@ -2262,6 +2269,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let sp   = Arc::clone(&segunda_pantalla);
         let _modo_vivo = Arc::clone(&modo_en_vivo); 
         let bsc_font = build_and_save_config.clone();
+        let medidor_sfs = medidor_win.as_weak();
         ui.on_sync_font_scale(move || {
             let ui         = ui_h.unwrap();
             let p          = p_h.unwrap();
@@ -2282,10 +2290,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     ui.get_margen_izquierdo(), ui.get_margen_derecho(),
                     ui.get_margen_superior(),  ui.get_margen_inferior(),
                 );
+                let medidor = medidor_sfs.unwrap();
                 let base_size  = if tiene_ref {
-                    calcular_font_size_versiculo(&p, &texto, sw, sh, scale, m_izq, m_der, m_sup, m_inf)
+                    calcular_font_size_versiculo(&medidor, &texto, sw, sh, scale, m_izq, m_der, m_sup, m_inf)
                 } else {
-                    calcular_font_size_canto(&p, &texto, sw, sh, scale, m_izq, m_der, m_sup, m_inf)
+                    calcular_font_size_canto(&medidor, &texto, sw, sh, scale, m_izq, m_der, m_sup, m_inf)
                 };
                 p.set_tamano_letra(base_size);
             }

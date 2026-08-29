@@ -21,10 +21,9 @@ export component MedidorTexto inherits Text {
     out property <length> altura_medida: self.preferred-height;
 }
 
-export component ProjectorWindow inherits Window {
-    no-frame: true;
-    always-on-top: true;
-    title: "";
+export component MedidorWindow inherits Window {
+    width: 4px;
+    height: 4px;
 
     medidor := MedidorTexto { }
 
@@ -34,8 +33,13 @@ export component ProjectorWindow inherits Window {
         medidor.font-size = tamano_fuente;
         return medidor.altura_medida;
     }
-  
-    
+}
+
+export component ProjectorWindow inherits Window {
+    no-frame: true;
+    always-on-top: true;
+    title: "";
+
     // 1. El fondo real de la ventana de Windows siempre será negro
     background: black;
 

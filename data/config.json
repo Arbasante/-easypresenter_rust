@@ -1,16 +1,18 @@
 {
-  "biblias_image_paths": [],
+  "biblias_image_paths": [
+    "/home/basanteriano/Descargas/Gemini_Generated_Image_amvqcsamvqcsamvq.jpeg"
+  ],
   "cantos_image_paths": [],
   "biblias_video_paths": [],
   "cantos_video_paths": [],
   "tema_oscuro": false,
-  "biblias_selected_img": -1,
+  "biblias_selected_img": 0,
   "cantos_selected_img": -1,
   "biblias_selected_vid": -1,
   "cantos_selected_vid": -1,
   "biblias_video_path": "",
   "cantos_video_path": "",
-  "biblias_bg_type": "blanco",
+  "biblias_bg_type": "imagen",
   "cantos_bg_type": "blanco",
   "biblias_font_color": [
     254,
@@ -40,12 +42,12 @@
   "default_bg_idx": 0,
   "pantallas_roles": [
     [
-      1,
-      2
-    ],
-    [
       0,
       1
+    ],
+    [
+      1,
+      2
     ]
   ],
   "auto_proyectar_inicio": true

@@ -1,0 +1,65 @@
+export component SplashWindow inherits Window {
+    width: 600px;
+    height: 350px;
+    no-frame: true; // Quita los bordes de la ventana del sistema operativo
+    always-on-top: true; // Se mantiene por encima de otras ventanas mientras carga
+    background: transparent;
+
+    in property <string> app-version: "v0.0.0";
+    in property <string> loading-status: "Inicializando sistema...";
+
+    Rectangle {
+        border-radius: 8px;
+        clip: true;
+        background: #1e1e2e; // Fondo oscuro por si no carga la imagen
+
+        // Imagen de fondo (la que generaste)
+         Image {
+             source: @image-url("assets/readyshow.jpg");
+             width: 100%;
+            height: 100%;
+             image-fit: cover;
+         }
+
+        // Un degradado superpuesto para asegurar que el texto sea legible
+        Rectangle {
+            background: @linear-gradient(180deg, transparent 0%, #000000c0 100%);
+        }
+
+        VerticalLayout {
+            padding: 30px;
+            alignment: space-between;
+
+          
+
+            // Parte Inferior: Versión y Estado de Carga
+            VerticalLayout {
+                spacing: 10px;
+                Text {
+                    text: "Versión " + root.app-version;
+                    font-size: 14px;
+                    color: #cdd6f4;
+                    font-weight: 600;
+                }
+                Text {
+                    text: root.loading-status;
+                    font-size: 12px;
+                    color: #89b4fa; // Color azul claro para el estado
+                }
+                
+                // Barra de progreso simulada o indeterminada
+                Rectangle {
+                    height: 2px;
+                    width: 100%;
+                    background: #313244;
+                    Rectangle {
+                        x: 0;
+                        width: 40%; // Puedes animar esto si quieres
+                        height: 100%;
+                        background: #89b4fa;
+                    }
+                }
+            }
+        }
+    }
+}

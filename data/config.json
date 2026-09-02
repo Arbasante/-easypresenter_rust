@@ -40,12 +40,15 @@
     "centro"
   ],
   "video_paths": [
-    "/home/basanteriano/Descargas/BIENVENIDOS A LA CASA DE DIOS _ LOOPS _.mp4"
+    "/home/basanteriano/Descargas/BIENVENIDOS A LA CASA DE DIOS _ LOOPS _.mp4",
+    "/home/basanteriano/2026-08-22 12-02-01.mp4"
   ],
   "video_names": [
-    "BIENVENIDOS A LA CASA DE DIOS _ LOOPS _.mp4"
+    "BIENVENIDOS A LA CASA DE DIOS _ LOOPS _.mp4",
+    "2026-08-22 12-02-01.mp4"
   ],
   "video_loops": [
+    false,
     false
   ],
   "margen_izquierdo": 0.0,

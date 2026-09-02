@@ -1,5 +1,5 @@
 [package]
-name = "easy-presenter-slint"
+name = "ReadyShow"
 version = "0.1.11"
 edition = "2024"
 build = "build.rs"        
@@ -33,7 +33,7 @@ embed-manifest = "1"
 
 # --- CONFIGURACIÓN PARA EL INSTALADOR DE LINUX (.deb) ---
 [package.metadata.deb]
-name = "easy-presenter"
+name = "ReadyShow "
 maintainer = "Arbasante"
 copyright = "2026, MIT LICENSE"
 extended-description = """
@@ -42,9 +42,9 @@ con soporte de video nativo mediante GStreamer.
 """
 depends = "$auto, libgstreamer1.0-0, gstreamer1.0-plugins-base, gstreamer1.0-plugins-good, gstreamer1.0-plugins-bad, gstreamer1.0-plugins-ugly, gstreamer1.0-libav"
 assets = [
-    ["target/release/easy-presenter-slint", "usr/bin/easy-presenter", "755"],
-    ["data/*.db", "usr/share/easy-presenter/data/", "644"],
-    ["assets/easy-presenter.desktop", "usr/share/applications/", "644"],
-    ["assets/icon.png", "usr/share/icons/hicolor/256x256/apps/easy-presenter.png", "644"],
-    ["libpdfium.so", "usr/share/easy-presenter/", "755"]
+    ["target/release/ReadyShow -slint", "usr/bin/ReadyShow ", "755"],
+    ["data/*.db", "usr/share/ReadyShow /data/", "644"],
+    ["assets/ReadyShow .desktop", "usr/share/applications/", "644"],
+    ["assets/icon.png", "usr/share/icons/hicolor/256x256/apps/ReadyShow .png", "644"],
+    ["libpdfium.so", "usr/share/ReadyShow /", "755"]
 ]

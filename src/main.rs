@@ -2241,6 +2241,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         SharedString::from(format!("{}:{}", titulo, orden)),
                     );
                 }
+                ui.invoke_focus_panel();
             }
         });
     }

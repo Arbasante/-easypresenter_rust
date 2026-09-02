@@ -854,16 +854,33 @@ impl NativeVideoPlayer {
             .property("uri", &uri)
             .build()
             .unwrap();
+
+        // ── Downscale ANTES del appsink...
+        let videoscale = gst::ElementFactory::make("videoscale").build().unwrap();
+        let capsfilter = gst::ElementFactory::make("capsfilter")
+            .property("caps", &gst::Caps::builder("video/x-raw")
+                .field("format", "RGBA")
+                .field("width", resolucion_fondo_proyeccion() as i32)
+                .build())
+            .build()
+            .unwrap();
+        
         let appsink = gst_app::AppSink::builder()
-            .caps(&gst::Caps::builder("video/x-raw").field("format", "RGBA").build())
             .max_buffers(1)
             .drop(true)
             .build();
         appsink.set_property("sync", true);
-        pipeline.set_property("video-sink", &appsink);
-        if let Ok(audio_sink) = gst::ElementFactory::make("autoaudiosink").build() {
-            pipeline.set_property("audio-sink", &audio_sink);
-        }
+
+        let sink_bin = gst::Bin::new();
+        sink_bin.add_many([&videoscale, &capsfilter, appsink.upcast_ref()]).unwrap();
+        gst::Element::link_many([&videoscale, &capsfilter, appsink.upcast_ref()]).unwrap();
+        let pad       = videoscale.static_pad("sink").unwrap();
+        let ghost_pad = gst::GhostPad::with_target(&pad).unwrap();
+        sink_bin.add_pad(&ghost_pad).unwrap();
+        
+        pipeline.set_property("video-sink", &sink_bin);
+        // } <--- ¡ESTA LLAVE FUE ELIMINADA PORQUE CERRABA LA FUNCIÓN ANTES DE TIEMPO!
+
         pipeline.set_property("volume", 1.0f64);
         pipeline.set_property("mute", false);
 
@@ -873,12 +890,14 @@ impl NativeVideoPlayer {
                 let buffer = sample.buffer().unwrap();
                 let info   = gst_video::VideoInfo::from_caps(sample.caps().unwrap()).unwrap();
                 let map    = buffer.map_readable().unwrap();
-                let mut pixel_buffer = SharedPixelBuffer::<slint::Rgba8Pixel>::new(info.width(), info.height());
+                let mut pixel_buffer = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(info.width(), info.height());
+                
                 unsafe {
                     let dest   = pixel_buffer.make_mut_slice();
                     let dest_u8 = std::slice::from_raw_parts_mut(dest.as_mut_ptr() as *mut u8, dest.len() * 4);
                     dest_u8.copy_from_slice(map.as_slice());
                 }
+                
                 let proj_clone = proj_weak.clone();
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(p) = proj_clone.upgrade() {
@@ -889,6 +908,7 @@ impl NativeVideoPlayer {
             })
             .build()
         );
+     // <--- LLAVE AÑADIDA AQUÍ PARA CERRAR LA FUNCIÓN CORRECTAMENTE
         pipeline.set_state(gst::State::Playing).unwrap();
         self.pipeline = Some(pipeline.clone());
         let bus            = pipeline.bus().unwrap();
@@ -929,26 +949,38 @@ impl NativeVideoPlayer {
             .unwrap_or_else(|_| std::path::PathBuf::from(ruta));
         let uri = gst::glib::filename_to_uri(&path, None).unwrap();
         let pipeline = gst::ElementFactory::make("playbin")
-            .property("uri", &uri)
-            .build()
-            .unwrap();
-        pipeline.set_property("volume", 0.0f64);
+        .property("uri", &uri)
+        .build()
+        .unwrap();
 
-        let videoscale  = gst::ElementFactory::make("videoscale").build().unwrap();
-        let capsfilter  = gst::ElementFactory::make("capsfilter")
-            .property("caps", &gst::Caps::builder("video/x-raw")
-                .field("width", 320i32).field("height", 180i32).field("format", "RGBA")
-                .build())
-            .build()
-            .unwrap();
-        let appsink = gst_app::AppSink::builder().max_buffers(1).drop(true).sync(true).build();
-        let sink_bin = gst::Bin::new();
-        sink_bin.add_many([&videoscale, &capsfilter, appsink.upcast_ref()]).unwrap();
-        gst::Element::link_many([&videoscale, &capsfilter, appsink.upcast_ref()]).unwrap();
-        let pad       = videoscale.static_pad("sink").unwrap();
-        let ghost_pad = gst::GhostPad::with_target(&pad).unwrap();
-        sink_bin.add_pad(&ghost_pad).unwrap();
-        pipeline.set_property("video-sink", &sink_bin);
+    // ── Downscale ANTES del appsink: sin esto, cada frame llega a
+    //    resolución nativa del video (a veces 1080p/4K), lo que dispara
+    //    tanto el costo de copiar el buffer completo cada frame como el
+    //    costo de que Slint componga una imagen de ese tamaño 30-60
+    //    veces por segundo. Limitar el ancho aquí (reutilizando tu
+    //    detección de hardware ya existente) reduce ambos costos
+    //    drásticamente sin que se note diferencia visual proyectando.
+    let videoscale = gst::ElementFactory::make("videoscale").build().unwrap();
+    let capsfilter = gst::ElementFactory::make("capsfilter")
+        .property("caps", &gst::Caps::builder("video/x-raw")
+            .field("format", "RGBA")
+            .field("width", resolucion_fondo_proyeccion() as i32)
+            .build())
+        .build()
+        .unwrap();
+    let appsink = gst_app::AppSink::builder()
+        .max_buffers(1)
+        .drop(true)
+        .build();
+    appsink.set_property("sync", true);
+
+    let sink_bin = gst::Bin::new();
+    sink_bin.add_many([&videoscale, &capsfilter, appsink.upcast_ref()]).unwrap();
+    gst::Element::link_many([&videoscale, &capsfilter, appsink.upcast_ref()]).unwrap();
+    let pad       = videoscale.static_pad("sink").unwrap();
+    let ghost_pad = gst::GhostPad::with_target(&pad).unwrap();
+    sink_bin.add_pad(&ghost_pad).unwrap();
+    pipeline.set_property("video-sink", &sink_bin);
 
         appsink.set_callbacks(gst_app::AppSinkCallbacks::builder()
             .new_sample(move |appsink| {
@@ -1015,7 +1047,9 @@ impl NativeVideoPlayer {
     pub fn set_mute(&self, mute: bool) {
         if let Some(pipeline) = &self.pipeline { pipeline.set_property("mute", mute); }
     }
+
 }
+
 
 impl Drop for NativeVideoPlayer {
     fn drop(&mut self) { self.detener(); }

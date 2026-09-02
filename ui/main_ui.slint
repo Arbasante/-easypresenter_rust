@@ -20,6 +20,60 @@ export struct ChapterRow { caps: [int] }
 export struct MediaItem { id: int, nombre: string, path: string, img: image, aspecto: string, is_loop: bool, }
 export struct PdfItem { id: int, nombre: string, miniatura: image, total_paginas: int }
 
+export component SplashWindow inherits Window {
+    width: 500px;
+    height: 300px;
+    no-frame: true;
+    always-on-top: true;
+    
+    in property <string> loading_status: "Iniciando...";
+    in property <string> app_version: "0.0.0";
+
+    // Contenedor principal con esquinas redondeadas
+    Rectangle {
+        background: #1e1e2e;
+        border-radius: 12px;
+        clip: true; // IMPORTANTE: Esto recorta la imagen para que respete los bordes redondeados
+
+        // Imagen de fondo
+        Image {
+            source: @image-url("../assets/readyshow.jpg");
+            width: 100%;
+            height: 100%;
+            image-fit: cover;
+        }
+
+        // Degradado oscuro superpuesto para que el texto de la versión se lea bien
+        Rectangle {
+            background: @linear-gradient(0deg, #000000dd 0%, transparent 60%);
+        }
+
+        // Capa de textos superpuesta sobre la imagen
+        VerticalLayout {
+            padding: 20px;
+            alignment: end; // Manda todo hacia abajo
+
+            VerticalLayout {
+                spacing: 4px;
+
+                // Estado de carga actual
+                Text {
+                    text: root.loading_status;
+                    font-size: 13px;
+                    color: #a6e3a1; // Verde suave
+                }
+
+                // Versión de la app
+                Text {
+                    text: "Versión " + root.app_version;
+                    font-size: 11px;
+                    color: #a6adc8;
+                }
+            }
+        }
+    }
+}
+
 export struct ScreenInfo {
     id: int,
     nombre: string,
@@ -208,7 +262,7 @@ export component IdentifyWindow inherits Window {
 //  APP WINDOW
 // ─────────────────────────────────────────────────────────────
 export component AppWindow inherits Window {
-    title: "Easy Presenter";
+    title: "ReadyShow";
     min-width: 800px; min-height: 600px; background: Theme.bg_main; default-font-family: "Google Sans";
 
     in-out property <bool> mostrar_modal_margenes: false;

@@ -112,7 +112,7 @@ jobs:
       - name: Subir artefacto Linux
         uses: actions/upload-artifact@v4
         with:
-          name: easy-presenter-linux-deb
+          name: ReadyShow -linux-deb
           path: target/debian/*.deb
           if-no-files-found: error
 
@@ -372,7 +372,7 @@ jobs:
         run: |
 
           Write-Host "=================================================="
-          Write-Host "COMPILANDO EASY PRESENTER"
+          Write-Host "COMPILANDO ReadyShow"
           Write-Host "=================================================="
 
           cargo build `
@@ -540,7 +540,7 @@ jobs:
           Write-Host "--- Ejecutable ---"
 
           Get-Item `
-            "$out\easy-presenter-slint.exe" `
+            "$out\ReadyShow -slint.exe" `
             -ErrorAction Stop
 
 
@@ -647,7 +647,7 @@ jobs:
       - name: Subir instalador Windows
         uses: actions/upload-artifact@v4
         with:
-          name: easy-presenter-windows-installer
+          name: ReadyShow -windows-installer
           path: Output\*.exe
           if-no-files-found: error
 
@@ -699,8 +699,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            artifacts/easy-presenter-linux-deb/*.deb
-            artifacts/easy-presenter-windows-installer/*.exe
+            artifacts/ReadyShow -linux-deb/*.deb
+            artifacts/ReadyShow -windows-installer/*.exe
 
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

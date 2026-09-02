@@ -1,12 +1,12 @@
 ; ============================================================
-; Instalador de EasyPresenter para Windows
+; Instalador de ReadyShow para Windows
 ; Inno Setup 6
 ; ============================================================
 
-#define MyAppName "EasyPresenter"
-#define MyAppVersion "0.1.11"
+#define MyAppName "ReadyShow "
+#define MyAppVersion "0.2.0"
 #define MyAppPublisher "Arbasante"
-#define MyAppExeName "easy-presenter-slint.exe"
+#define MyAppExeName "ReadyShow .exe"
 
 #define BuildDir "target\x86_64-pc-windows-msvc\release"
 
@@ -20,7 +20,7 @@ DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 OutputDir=Output
-OutputBaseFilename=EasyPresenter-Setup-{#MyAppVersion}
+OutputBaseFilename=ReadyShow-Setup-{#MyAppVersion}
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern

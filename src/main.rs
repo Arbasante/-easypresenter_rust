@@ -1421,47 +1421,56 @@ fn iniciar_servidor_overlay(
 // main()
 // ---------------------------------------------------------------------------
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    gst::init().expect("Error al inicializar GStreamer.");
+    
+     // --- 1. CREAR EL SPLASH SCREEN Y MOSTRARLO DE INMEDIATO ---
+    let splash = SplashWindow::new()?;
+    splash.set_app_version(env!("CARGO_PKG_VERSION").into());
+    let splash_handle = splash.as_weak();
+    splash.window().set_position(slint::LogicalPosition::new(
+        (1366.0 - 500.0) / 2.0,
+        (768.0 - 300.0) / 2.0
+    ));
+    splash.window().show()?;
+    let splash_handle_clon = splash_handle.clone();
 
-        // Limita el pool global de rayon para que NUNCA compita al 100% por
-    // todos los núcleos del CPU. GStreamer necesita al menos 1 núcleo
-    // libre para decodificar video sin tirones, incluso en equipos de
-    // solo 2 núcleos como el Celeron B815. Reservamos 1 núcleo siempre.
-    let nucleos_totales = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(2);
-    let hilos_rayon = (nucleos_totales.saturating_sub(1)).max(1);
-    let _ = rayon::ThreadPoolBuilder::new()
-        .num_threads(hilos_rayon)
-        .build_global();
+    // --- 2. HILO SECUNDARIO PARA CARGA PESADA (SQLite + GStreamer) ---
+    std::thread::spawn(move || {
+        gst::init().expect("Error al inicializar GStreamer.");
 
-     #[cfg(target_os = "linux")]
-    {
-        if std::env::var("WAYLAND_DISPLAY").is_ok() {
-            println!("Detectado Wayland, forzando modo X11/XWayland...");
-            // SAFETY: esto se ejecuta al inicio de main(), antes de crear
-            // cualquier hilo adicional — no hay riesgo de lectura/escritura
-            // concurrente de variables de entorno en este punto.
-            unsafe {
-                std::env::set_var("WAYLAND_DISPLAY", "");
-                std::env::set_var("GDK_BACKEND", "x11");
+        let nucleos_totales = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(2);
+        let hilos_rayon = (nucleos_totales.saturating_sub(1)).max(1);
+        let _ = rayon::ThreadPoolBuilder::new()
+            .num_threads(hilos_rayon)
+            .build_global();
+
+        #[cfg(target_os = "linux")]
+        {
+            if std::env::var("WAYLAND_DISPLAY").is_ok() {
+                println!("Detectado Wayland, forzando modo X11/XWayland...");
+                unsafe {
+                    std::env::set_var("WAYLAND_DISPLAY", "");
+                    std::env::set_var("GDK_BACKEND", "x11");
+                }
             }
         }
-    }
 
-    // Forzar inicialización de las tablas estáticas al arranque, no bajo demanda.
-    // En el E1-6015 esto hace que el primer keystroke sea igual de rápido que los siguientes.
-    let _ = &*LIBROS_NORMALIZADOS;
-    let _ = &*RE_BUSQUEDA;
-    let _ = &*RE_FAV;
+        let _ = &*LIBROS_NORMALIZADOS;
+        let _ = &*RE_BUSQUEDA;
+        let _ = &*RE_FAV;
 
-    let current_biblia_libro   = Arc::new(Mutex::new(-1i32));
-    let current_biblia_capitulo = Arc::new(Mutex::new(-1i32));
-    let segunda_pantalla: Arc<Mutex<Option<(i32, i32, u32, u32)>>> = Arc::new(Mutex::new(None));
+        let app_state = AppState::new().expect("Error iniciando AppState");
+        std::thread::sleep(std::time::Duration::from_secs(2));
 
-    let state       = Arc::new(Mutex::new(AppState::new()?));
-    let ui          = AppWindow::new()?;
-    //ui.window().set_maximized(true); 
-    let proyector   = ProjectorWindow::new()?;
-    let medidor_win = MedidorWindow::new()?;
+        // --- 3. CONSTRUIR LA UI PRINCIPAL DENTRO DEL HILO DE EVENTOS ---
+        let _ = slint::invoke_from_event_loop(move || {
+            let current_biblia_libro   = Arc::new(Mutex::new(-1i32));
+            let current_biblia_capitulo = Arc::new(Mutex::new(-1i32));
+            let segunda_pantalla: Arc<Mutex<Option<(i32, i32, u32, u32)>>> = Arc::new(Mutex::new(None));
+
+            let state       = Arc::new(Mutex::new(app_state));
+            let ui          = AppWindow::new().unwrap();
+            let proyector   = ProjectorWindow::new().unwrap();
+            let medidor_win = MedidorWindow::new().unwrap();
     let video_player = Arc::new(Mutex::new(NativeVideoPlayer::new()));
 
     let multimedia_state = Arc::new(RwLock::new(Vec::<MediaData>::new()));
@@ -3552,21 +3561,37 @@ _restore_timer.start(
     // el botón LIVE — mismo código, mismo comportamiento en Windows y Linux.
     if cfg.auto_proyectar_inicio && segunda_pantalla.lock().unwrap().is_some() {
         let ui_auto = ui.as_weak();
-        // Pequeño respiro (300ms) para que la ventana principal termine de
-        // dibujarse antes de abrir la segunda ventana — evita parpadeos raros
-        // al iniciar todo de golpe en el mismo instante.
         let timer_auto = slint::Timer::default();
         timer_auto.start(slint::TimerMode::SingleShot, std::time::Duration::from_millis(300), move || {
             if let Some(ui) = ui_auto.upgrade() {
                 ui.invoke_abrir_proyector();
             }
         });
-        // Evita que el Timer se destruya apenas termine este bloque
         std::mem::forget(timer_auto);
     }
+// Primero mostramos la ventana principal ya creada
+            ui.window().show().unwrap();
 
-    
+            // Inmediatamente después ocultamos el splash (cero espacios vacíos ni parpadeos)
+            if let Some(s) = splash_handle_clon.upgrade() {
+                let _ = s.window().hide();
+            }
 
-    ui.run()?;
+            // ==========================================================
+            // --- ¡NUEVO! EVITAR QUE RUST DESTRUYA LAS VENTANAS ---
+            // Mantenemos vivas las referencias fuertes de las ventanas 
+            // para que los botones (como el de Live) las encuentren al hacer clic.
+            // ==========================================================
+            std::mem::forget(proyector);
+            std::mem::forget(medidor_win);
+            std::mem::forget(ui);
+
+        }); // <- Aquí termina el bloque invoke_from_event_loop
+    }); // <- Aquí termina el hilo secundario
+
+    // --- 5. BUCLE DE EVENTOS GLOBAL ---
+    // Mantiene la aplicación corriendo de forma continua sin reiniciar ciclos de ventanas
+    slint::run_event_loop()?;
+
     Ok(())
 }

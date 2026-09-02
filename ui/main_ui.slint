@@ -1329,7 +1329,7 @@ Timer {
                     MenuItem { text: "Fondo Predeterminado"; icon: "★"; text_color: #eab308; icon_color: #eab308; clicked => { root.default_bg_type = "imagen"; root.default_bg_idx = root.menu_media_idx; root.mostrar_menu_media = false; } }
                     
                     HorizontalLayout { padding-left: 6px; padding-right: 6px; padding-top: 2px; padding-bottom: 2px; Rectangle { height: 1px; background: Theme.separator; } }
-                    MenuItem { text: "Eliminar Imagen"; icon: "🗑"; text_color: #f87171; icon_color: #f87171; clicked => { root.mostrar_menu_media = false; root.mostrar_submenu_aspecto = false; root.eliminar_multimedia(root.menu_media_idx); } }
+                    MenuItem { text: "Eliminar Imagen"; icon: ""; text_color: #f87171; icon_color: #f87171; clicked => { root.mostrar_menu_media = false; root.mostrar_submenu_aspecto = false; root.eliminar_multimedia(root.menu_media_idx); } }
                 }
             }
         }
@@ -1394,7 +1394,7 @@ Timer {
                 if (root.menu_video_idx != -1) : MenuItem { text: "Fondo Predeterminado"; icon: "★"; text_color: #eab308; icon_color: #eab308; clicked => { root.default_bg_type = "video"; root.default_bg_idx = root.menu_video_idx; root.mostrar_menu_video = false; } }
                 
                 if (root.menu_video_idx != -1) : HorizontalLayout { padding-left: 6px; padding-right: 6px; padding-top: 2px; padding-bottom: 2px; Rectangle { height: 1px; background: Theme.separator; } }
-                if (root.menu_video_idx != -1) : MenuItem { text: "Eliminar Video"; icon: "🗑"; text_color: #f87171; icon_color: #f87171; clicked => { root.mostrar_menu_video = false; root.mostrar_submenu_reproduccion = false; root.eliminar_video(root.menu_video_idx); } }
+                if (root.menu_video_idx != -1) : MenuItem { text: "Eliminar Video"; icon: ""; text_color: #f87171; icon_color: #f87171; clicked => { root.mostrar_menu_video = false; root.mostrar_submenu_reproduccion = false; root.eliminar_video(root.menu_video_idx); } }
             }
         }
     }
@@ -1657,7 +1657,7 @@ if (root.mostrar_menu_configuracion) : Rectangle {
                 clicked => { root.mostrar_menu_configuracion = false; root.mostrar_modal_margenes = true; }
             }
             MenuItem {
-                text: "Pantallas"; icon: "🖵";
+                text: "Pantallas"; icon: "";
                 clicked => {
                     root.mostrar_menu_configuracion = false;
                     root.mostrar_modal_pantallas = true;
@@ -1690,7 +1690,7 @@ if (root.mostrar_menu_herramientas) : Rectangle {
         VerticalLayout {
             padding: 4px; spacing: 2px;
             MenuItem {
-                text: "Importar/Exportar"; icon: "⇅";
+                text: "Importar/Exportar"; icon: "";
                 clicked => {
                     root.mostrar_menu_herramientas = false;
                 }
@@ -1707,7 +1707,7 @@ if (root.mostrar_menu_herramientas) : Rectangle {
 
             MenuItem {
                 text: root.libreoffice_listo ? "PPTX/ODP: Activado" : "Activar PPTX/ODP";
-                icon: root.libreoffice_listo ? "✓" : "⬇";
+                icon: root.libreoffice_listo ? "" : "";
                 text_color: root.libreoffice_listo ? #22c55e : Theme.menu_text;
                 icon_color: root.libreoffice_listo ? #22c55e : Theme.menu_icon;
                 clicked => {
@@ -1846,7 +1846,7 @@ if (root.mostrar_menu_herramientas) : Rectangle {
                 padding: 4px; spacing: 2px;
                 MenuItem { text: "Importar PDF..."; icon: ""; clicked => { root.mostrar_menu_pdf = false; root.agregar_pdf(); } }
                 if (root.menu_pdf_idx != -1) : HorizontalLayout { padding-left: 6px; padding-right: 6px; padding-top: 2px; padding-bottom: 2px; Rectangle { height: 1px; background: Theme.separator; } }
-                if (root.menu_pdf_idx != -1) : MenuItem { text: "Eliminar PDF"; icon: "🗑"; text_color: #f87171; icon_color: #f87171; clicked => { root.mostrar_menu_pdf = false; root.eliminar_pdf(root.menu_pdf_idx); } }
+                if (root.menu_pdf_idx != -1) : MenuItem { text: "Eliminar PDF"; icon: ""; text_color: #f87171; icon_color: #f87171; clicked => { root.mostrar_menu_pdf = false; root.eliminar_pdf(root.menu_pdf_idx); } }
             }
         }
     }

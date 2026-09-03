@@ -540,7 +540,7 @@ jobs:
           Write-Host "--- Ejecutable ---"
 
           Get-Item `
-            "$out\ReadyShow -slint.exe" `
+            "$out\ReadyShow.exe" `
             -ErrorAction Stop
 
 

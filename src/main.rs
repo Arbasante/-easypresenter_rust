@@ -900,29 +900,30 @@ impl NativeVideoPlayer {
         }
 
         // ── Downscale ANTES del appsink...
-        let videoscale = gst::ElementFactory::make("videoscale").build().unwrap();
-        let capsfilter = gst::ElementFactory::make("capsfilter")
-            .property("caps", &gst::Caps::builder("video/x-raw")
-                .field("format", "RGBA")
-                .field("width", resolucion_fondo_proyeccion() as i32)
-                .build())
-            .build()
-            .unwrap();
-        
-        let appsink = gst_app::AppSink::builder()
-            .max_buffers(1)
-            .drop(true)
-            .build();
-        appsink.set_property("sync", true);
+        let videoconvert = gst::ElementFactory::make("videoconvert").build().unwrap();
+let videoscale   = gst::ElementFactory::make("videoscale").build().unwrap();
+let capsfilter = gst::ElementFactory::make("capsfilter")
+    .property("caps", &gst::Caps::builder("video/x-raw")
+        .field("format", "RGBA")
+        .field("width", resolucion_fondo_proyeccion() as i32)
+        .build())
+    .build()
+    .unwrap();
 
-        let sink_bin = gst::Bin::new();
-        sink_bin.add_many([&videoscale, &capsfilter, appsink.upcast_ref()]).unwrap();
-        gst::Element::link_many([&videoscale, &capsfilter, appsink.upcast_ref()]).unwrap();
-        let pad       = videoscale.static_pad("sink").unwrap();
-        let ghost_pad = gst::GhostPad::with_target(&pad).unwrap();
-        sink_bin.add_pad(&ghost_pad).unwrap();
-        
-        pipeline.set_property("video-sink", &sink_bin);
+let appsink = gst_app::AppSink::builder()
+    .max_buffers(1)
+    .drop(true)
+    .build();
+appsink.set_property("sync", true);
+
+let sink_bin = gst::Bin::new();
+sink_bin.add_many([&videoconvert, &videoscale, &capsfilter, appsink.upcast_ref()]).unwrap();
+gst::Element::link_many([&videoconvert, &videoscale, &capsfilter, appsink.upcast_ref()]).unwrap();
+let pad       = videoconvert.static_pad("sink").unwrap();
+let ghost_pad = gst::GhostPad::with_target(&pad).unwrap();
+sink_bin.add_pad(&ghost_pad).unwrap();
+
+pipeline.set_property("video-sink", &sink_bin);
         // } <--- ¡ESTA LLAVE FUE ELIMINADA PORQUE CERRABA LA FUNCIÓN ANTES DE TIEMPO!
 
         pipeline.set_property("volume", 1.0f64);
@@ -953,7 +954,10 @@ impl NativeVideoPlayer {
             .build()
         );
      // <--- LLAVE AÑADIDA AQUÍ PARA CERRAR LA FUNCIÓN CORRECTAMENTE
-        pipeline.set_state(gst::State::Playing).unwrap();
+        if let Err(e) = pipeline.set_state(gst::State::Playing) {
+    eprintln!("Error al iniciar el pipeline de video: {:?}", e);
+    return; // no reproduce, pero no tumba el programa
+}
         self.pipeline = Some(pipeline.clone());
         let bus            = pipeline.bus().unwrap();
         let pipeline_clone = pipeline.clone();
@@ -1010,27 +1014,30 @@ impl NativeVideoPlayer {
     //    veces por segundo. Limitar el ancho aquí (reutilizando tu
     //    detección de hardware ya existente) reduce ambos costos
     //    drásticamente sin que se note diferencia visual proyectando.
-    let videoscale = gst::ElementFactory::make("videoscale").build().unwrap();
-    let capsfilter = gst::ElementFactory::make("capsfilter")
-        .property("caps", &gst::Caps::builder("video/x-raw")
-            .field("format", "RGBA")
-            .field("width", resolucion_fondo_proyeccion() as i32)
-            .build())
-        .build()
-        .unwrap();
-    let appsink = gst_app::AppSink::builder()
-        .max_buffers(1)
-        .drop(true)
-        .build();
-    appsink.set_property("sync", true);
+    let videoconvert = gst::ElementFactory::make("videoconvert").build().unwrap();
+let videoscale   = gst::ElementFactory::make("videoscale").build().unwrap();
+let capsfilter = gst::ElementFactory::make("capsfilter")
+    .property("caps", &gst::Caps::builder("video/x-raw")
+        .field("format", "RGBA")
+        .field("width", resolucion_fondo_proyeccion() as i32)
+        .build())
+    .build()
+    .unwrap();
 
-    let sink_bin = gst::Bin::new();
-    sink_bin.add_many([&videoscale, &capsfilter, appsink.upcast_ref()]).unwrap();
-    gst::Element::link_many([&videoscale, &capsfilter, appsink.upcast_ref()]).unwrap();
-    let pad       = videoscale.static_pad("sink").unwrap();
-    let ghost_pad = gst::GhostPad::with_target(&pad).unwrap();
-    sink_bin.add_pad(&ghost_pad).unwrap();
-    pipeline.set_property("video-sink", &sink_bin);
+let appsink = gst_app::AppSink::builder()
+    .max_buffers(1)
+    .drop(true)
+    .build();
+appsink.set_property("sync", true);
+
+let sink_bin = gst::Bin::new();
+sink_bin.add_many([&videoconvert, &videoscale, &capsfilter, appsink.upcast_ref()]).unwrap();
+gst::Element::link_many([&videoconvert, &videoscale, &capsfilter, appsink.upcast_ref()]).unwrap();
+let pad       = videoconvert.static_pad("sink").unwrap();
+let ghost_pad = gst::GhostPad::with_target(&pad).unwrap();
+sink_bin.add_pad(&ghost_pad).unwrap();
+
+pipeline.set_property("video-sink", &sink_bin);
 
         appsink.set_callbacks(gst_app::AppSinkCallbacks::builder()
             .new_sample(move |appsink| {
@@ -1054,7 +1061,10 @@ impl NativeVideoPlayer {
             })
             .build()
         );
-        pipeline.set_state(gst::State::Playing).unwrap();
+        if let Err(e) = pipeline.set_state(gst::State::Playing) {
+    eprintln!("Error al iniciar el pipeline de video: {:?}", e);
+    return; // no reproduce, pero no tumba el programa
+}
         self.pipeline = Some(pipeline);
     }
 

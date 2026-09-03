@@ -1,11 +1,11 @@
 [Desktop Entry]
-Version=1.1.6
+Version=0.2.3
 Type=Application
-Name=Easy Presenter
+Name=ReadyShow
 GenericName=Presentation Software
 Comment=Presentación multimedia, letras y Biblias
-Exec=easy-presenter
-Icon=easy-presenter
+Exec=ReadyShow
+Icon=ReadyShow
 Terminal=false
 Categories=Office;Presentation;
 Keywords=presentacion;biblia;cantos;slides;

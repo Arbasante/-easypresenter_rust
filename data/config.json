@@ -14,12 +14,12 @@
   "cantos_selected_vid": -1,
   "biblias_video_path": "/home/basanteriano/Descargas/Proyektor - Linux/fondos/Videos/AmazonSwamp   FREE Video Background Loops HD 1080p.webm",
   "cantos_video_path": "",
-  "biblias_bg_type": "video",
+  "biblias_bg_type": "blanco",
   "cantos_bg_type": "blanco",
   "biblias_font_color": [
-    254,
-    240,
-    138
+    0,
+    0,
+    0
   ],
   "cantos_font_color": [
     0,
@@ -44,12 +44,12 @@
   "default_bg_idx": 0,
   "pantallas_roles": [
     [
-      0,
-      1
-    ],
-    [
       1,
       2
+    ],
+    [
+      0,
+      1
     ]
   ],
   "auto_proyectar_inicio": true

@@ -1,6 +1,6 @@
 [package]
 name = "ReadyShow"
-version = "0.2.3"
+version = "0.2.4"
 edition = "2024"
 build = "build.rs"        
 
@@ -33,7 +33,7 @@ embed-manifest = "1"
 
 # --- CONFIGURACIÓN PARA EL INSTALADOR DE LINUX (.deb) ---
 [package.metadata.deb]
-name = "ReadyShow "
+name = "ReadyShow"
 maintainer = "Arbasante"
 copyright = "2026, MIT LICENSE"
 extended-description = """

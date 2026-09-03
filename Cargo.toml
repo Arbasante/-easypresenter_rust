@@ -1,6 +1,6 @@
 [package]
 name = "ReadyShow"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2024"
 build = "build.rs"        
 
@@ -42,9 +42,9 @@ con soporte de video nativo mediante GStreamer.
 """
 depends = "$auto, libgstreamer1.0-0, gstreamer1.0-plugins-base, gstreamer1.0-plugins-good, gstreamer1.0-plugins-bad, gstreamer1.0-plugins-ugly, gstreamer1.0-libav"
 assets = [
-    ["target/release/ReadyShow -slint", "usr/bin/ReadyShow ", "755"],
+    ["target/release/ReadyShow", "usr/bin/ReadyShow ", "755"],
     ["data/*.db", "usr/share/ReadyShow /data/", "644"],
-    ["assets/ReadyShow .desktop", "usr/share/applications/", "644"],
-    ["assets/icon.png", "usr/share/icons/hicolor/256x256/apps/ReadyShow .png", "644"],
-    ["libpdfium.so", "usr/share/ReadyShow /", "755"]
+    ["assets/ReadyShow.desktop", "usr/share/applications/", "644"],
+    ["assets/icon.png", "usr/share/icons/hicolor/256x256/apps/ReadyShow.png", "644"],
+    ["libpdfium.so", "usr/share/ReadyShow/", "755"]
 ]

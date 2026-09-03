@@ -4,7 +4,7 @@
 ; ============================================================
 
 #define MyAppName "ReadyShow "
-#define MyAppVersion "0.2.1"
+#define MyAppVersion "0.2.2"
 #define MyAppPublisher "Arbasante"
 #define MyAppExeName "ReadyShow.exe"
 

@@ -171,6 +171,35 @@ static NIVEL_HARDWARE: LazyLock<u8> = LazyLock::new(|| {
     }
 });
 
+/// Detecta, UNA SOLA VEZ al arrancar, qué decodificador de video acelerado
+/// por hardware está disponible en este sistema específico. Se probó una
+/// lista de candidatos conocidos, en orden de preferencia:
+///   - Linux con Intel/AMD: VA-API (vaapih264dec / vah264dec según versión)
+///   - Linux con NVIDIA: NVDEC (nvh264dec)
+///   - Windows: Direct3D11 (d3d11h264dec)
+///   - macOS: VideoToolbox (vtdec) — por si algún día se porta
+/// Si ninguno existe, devuelve None y el pipeline cae a decodificación por
+/// software automáticamente (comportamiento actual, sin cambios).
+static DECODIFICADOR_HW: LazyLock<Option<String>> = LazyLock::new(|| {
+    let candidatos = [
+        "vah264dec",       // VA-API moderno (GStreamer 1.20+)
+        "vaapih264dec",    // VA-API clásico (nombre anterior)
+        "nvh264dec",       // NVIDIA NVDEC
+        "d3d11h264dec",    // Windows Direct3D11
+        "vtdec",           // macOS VideoToolbox
+    ];
+
+    for nombre in candidatos {
+        if gst::ElementFactory::find(nombre).is_some() {
+            println!("Decodificador acelerado por hardware detectado: {}", nombre);
+            return Some(nombre.to_string());
+        }
+    }
+
+    println!("No se detectó decodificador acelerado; se usará decodificación por software.");
+    None
+});
+
 /// Resolución de miniaturas (galería de imágenes/multimedia).
 fn resolucion_miniatura() -> u32 {
     match *NIVEL_HARDWARE { 1 => 240, 2 => 360, _ => 480 }
@@ -855,6 +884,21 @@ impl NativeVideoPlayer {
             .build()
             .unwrap();
 
+        // Si detectamos un decodificador acelerado por hardware disponible,
+        // lo insertamos en la lista de elementos preferidos de playbin.
+        // Esto NO rompe nada si el decodificador falla con un archivo en
+        // particular: GStreamer sigue teniendo el decodificador de software
+        // como respaldo, playbin elige el que mejor funcione para ese stream.
+        if let Some(nombre_hw) = DECODIFICADOR_HW.as_deref() {
+            if let Some(factory) = gst::ElementFactory::find(nombre_hw) {
+                // element-factories con rank alto tienen prioridad; al marcar
+                // explícitamente este factory con un rank máximo temporal,
+                // le indicamos a playbin que lo prefiera sobre el de software
+                // para esta sesión, sin desinstalar ni bloquear el de software.
+                factory.set_rank(gst::Rank::from(<i32>::from(gst::Rank::PRIMARY) + 100));
+            }
+        }
+
         // ── Downscale ANTES del appsink...
         let videoscale = gst::ElementFactory::make("videoscale").build().unwrap();
         let capsfilter = gst::ElementFactory::make("capsfilter")
@@ -949,10 +993,16 @@ impl NativeVideoPlayer {
             .unwrap_or_else(|_| std::path::PathBuf::from(ruta));
         let uri = gst::glib::filename_to_uri(&path, None).unwrap();
         let pipeline = gst::ElementFactory::make("playbin")
-        .property("uri", &uri)
-        .build()
-        .unwrap();
+            .property("uri", &uri)
+            .build()
+            .unwrap();
+        pipeline.set_property("volume", 0.0f64);
 
+        if let Some(nombre_hw) = DECODIFICADOR_HW.as_deref() {
+            if let Some(factory) = gst::ElementFactory::find(nombre_hw) {
+                factory.set_rank(gst::Rank::from(<i32>::from(gst::Rank::PRIMARY) + 100));
+            }
+        }
     // ── Downscale ANTES del appsink: sin esto, cada frame llega a
     //    resolución nativa del video (a veces 1080p/4K), lo que dispara
     //    tanto el costo de copiar el buffer completo cada frame como el
@@ -1457,6 +1507,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let _ = &*LIBROS_NORMALIZADOS;
         let _ = &*RE_BUSQUEDA;
         let _ = &*RE_FAV;
+        let _ = &*DECODIFICADOR_HW;
 
         let app_state = AppState::new().expect("Error iniciando AppState");
         std::thread::sleep(std::time::Duration::from_secs(2));

@@ -93,6 +93,52 @@ fn cargar_config(user_data_dir: &std::path::Path) -> ConfigApp {
     }
 }
 
+fn verificar_integridad_db(conn: &Connection) -> bool {
+    // 1. Vuelca cualquier dato pendiente en el WAL hacia el archivo principal.
+    //    Si esto falla, es una señal fuerte de que el archivo está dañado.
+    let checkpoint_ok = conn
+        .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
+        .is_ok();
+
+    // 2. Integrity check real de SQLite (recorre todas las páginas del archivo).
+    let integridad: String = conn
+        .query_row("PRAGMA integrity_check", [], |row| row.get(0))
+        .unwrap_or_else(|_| "error".to_string());
+
+    checkpoint_ok && integridad == "ok"
+}
+
+/// Verifica específicamente que la base de cantos tenga datos coherentes:
+/// no solo que la tabla `cantos` exista, sino que además tenga registros
+/// en `diapositivas` (que es justo lo que fallaba: lista cargaba pero al
+/// abrir un canto no había letra).
+fn verificar_datos_cantos(conn: &Connection) -> bool {
+    let total_cantos: i64 = conn
+        .query_row("SELECT COUNT(*) FROM cantos", [], |r| r.get(0))
+        .unwrap_or(0);
+    if total_cantos == 0 { return false; }
+
+    let total_diapositivas: i64 = conn
+        .query_row("SELECT COUNT(*) FROM diapositivas", [], |r| r.get(0))
+        .unwrap_or(0);
+    if total_diapositivas == 0 { return false; }
+
+    // Chequeo de coherencia: al menos el primer canto debe tener estrofas.
+    // Si esto da 0, es exactamente el síntoma reportado: la lista carga
+    // pero al hacer clic no aparece nada.
+    let primer_canto_id: Option<i32> = conn
+        .query_row("SELECT id FROM cantos ORDER BY id LIMIT 1", [], |r| r.get(0))
+        .ok();
+    if let Some(id) = primer_canto_id {
+        let estrofas_primero: i64 = conn
+            .query_row("SELECT COUNT(*) FROM diapositivas WHERE canto_id = ?", [id], |r| r.get(0))
+            .unwrap_or(0);
+        if estrofas_primero == 0 { return false; }
+    }
+
+    true
+}
+
 fn guardar_config(user_data_dir: &std::path::Path, cfg: &ConfigApp) {
     if let Ok(data) = serde_json::to_string_pretty(cfg) {
         let _ = std::fs::write(config_path(user_data_dir), data);
@@ -419,7 +465,7 @@ impl AppState {
         //     Windows, que resuelve a una carpeta 100% del usuario, sin admin:
         //     C:\Users\<usuario>\AppData\Roaming\Arbasante\EasyPresenter\data
         let (user_data_dir, system_data_dir) = if std::path::Path::new("data/cantos.db").exists() {
-            // 🟢 MODO DESARROLLADOR: Si corres 'cargo run', usa la carpeta local
+            //  MODO DESARROLLADOR: Si corres 'cargo run', usa la carpeta local
             let base = std::env::current_dir().unwrap().join("data");
             (base.clone(), base)
         } else {
@@ -428,15 +474,15 @@ impl AppState {
             let user_dir = proj_dirs.data_dir().to_path_buf();
 
             let sys_dir = if cfg!(target_os = "windows") {
-                // 🔵 WINDOWS: los datos "semilla" de instalación viven junto al .exe
+                //  WINDOWS: los datos "semilla" de instalación viven junto al .exe
                 let mut path = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("."));
                 path.pop();
                 path.join("data")
             } else if let Ok(appdir) = std::env::var("APPDIR") {
-                // 🟣 LINUX (AppImage): $APPDIR apunta a la raíz del bundle
+                //  LINUX (AppImage): $APPDIR apunta a la raíz del bundle
                 std::path::PathBuf::from(appdir).join("usr/share/easy-presenter/data")
             } else {
-                // 🟠 LINUX (.deb): ruta nueva, con fallback a la antigua por compatibilidad
+                //  LINUX (.deb): ruta nueva, con fallback a la antigua por compatibilidad
                 let nueva   = std::path::PathBuf::from("/usr/share/easy-presenter/data");
                 let antigua = std::path::PathBuf::from("/usr/share/easy-presenter-slint/data");
                 if nueva.exists() { nueva } else { antigua }
@@ -445,7 +491,7 @@ impl AppState {
             (user_dir, sys_dir)
         };
 
-        println!("📂 DIRECTORIO DE BASES DE DATOS: {:?}", user_data_dir);
+        println!(" DIRECTORIO DE BASES DE DATOS: {:?}", user_data_dir);
 
         // 2. Crear la carpeta si no existe
         std::fs::create_dir_all(&user_data_dir).ok();
@@ -455,17 +501,47 @@ impl AppState {
 
         // 3. PRIMERA EJECUCIÓN (Solo copia si estamos en Linux/Windows instalado y faltan archivos)
         let cantos_ok = Connection::open(&cantos_path)
-    .ok()
-    .and_then(|c| c.query_row("SELECT 1 FROM cantos LIMIT 1", [], |_| Ok(())).ok())
-    .is_some();
+            .ok()
+            .map(|c| {
+                let _ = c.execute_batch("PRAGMA journal_mode = WAL;");
+                verificar_integridad_db(&c) && verificar_datos_cantos(&c)
+            })
+            .unwrap_or(false);
 
-if !cantos_ok {
-    let sys_cantos = system_data_dir.join("cantos.db");
-    if sys_cantos.exists() {
-        std::fs::copy(&sys_cantos, &cantos_path)
-            .unwrap_or_else(|e| panic!("No se pudo copiar cantos.db: {}", e));
-    }
-}
+        if !cantos_ok {
+            println!("cantos.db ausente, corrupta o incompleta. Restaurando desde la copia de instalación...");
+
+            // Limpia también los archivos -wal / -shm que puedan haber
+            // quedado a medias de un cierre abrupto anterior.
+            let _ = std::fs::remove_file(&cantos_path);
+            let _ = std::fs::remove_file(user_data_dir.join("cantos.db-wal"));
+            let _ = std::fs::remove_file(user_data_dir.join("cantos.db-shm"));
+
+            let sys_cantos = system_data_dir.join("cantos.db");
+            if sys_cantos.exists() {
+                std::fs::copy(&sys_cantos, &cantos_path)
+                    .unwrap_or_else(|e| panic!("No se pudo copiar cantos.db: {}", e));
+
+                // Verifica que la copia restaurada también esté sana.
+                // Si la copia "semilla" en sí misma está dañada (caso raro
+                // pero posible), es mejor fallar con un mensaje claro que
+                // dejar que la app arranque con datos inconsistentes.
+                let copia_ok = Connection::open(&cantos_path)
+                    .ok()
+                    .map(|c| verificar_integridad_db(&c) && verificar_datos_cantos(&c))
+                    .unwrap_or(false);
+
+                if !copia_ok {
+                    panic!(
+                        "La base de datos de cantos sigue inválida incluso después de \
+                         restaurarla desde la instalación. Reinstala la aplicación."
+                    );
+                }
+                println!("cantos.db restaurada correctamente.");
+            } else {
+                panic!("No se encontró la base de datos semilla en {:?}", sys_cantos);
+            }
+        }
 
         let biblias_ok = Connection::open(&biblias_path)
     .ok()
@@ -874,7 +950,8 @@ struct NativeVideoPlayer {
 impl NativeVideoPlayer {
     fn new() -> Self { Self { pipeline: None } }
 
-    pub fn reproducir(&mut self, ruta: &str, proj_weak: slint::Weak<ProjectorWindow>, is_loop: bool) {
+    pub fn reproducir(&mut self, ruta: &str, proj_weak: slint::Weak<ProjectorWindow>, is_loop: bool, es_biblioteca: bool) {
+        self.detener();
         self.detener();
         let path = std::path::Path::new(ruta).canonicalize()
             .unwrap_or_else(|_| std::path::PathBuf::from(ruta));
@@ -944,9 +1021,15 @@ pipeline.set_property("video-sink", &sink_bin);
                 }
                 
                 let proj_clone = proj_weak.clone();
+                let es_bib = es_biblioteca;
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(p) = proj_clone.upgrade() {
-                        p.set_fondo_video_frame(slint::Image::from_rgba8(pixel_buffer));
+                        let img = slint::Image::from_rgba8(pixel_buffer);
+                        if es_bib {
+                            p.set_biblioteca_video_frame(img);
+                        } else {
+                            p.set_fondo_video_frame(img);
+                        }
                     }
                 });
                 Ok(gst::FlowSuccess::Ok)
@@ -1170,10 +1253,10 @@ fn aplicar_estilos(
         p.set_bg_color(slint::Color::from_rgb_u8(0, 0, 0));
         p.set_mostrar_imagen(false);
         p.set_es_video(true);
-        if forzar_reinicio_video {
+          if forzar_reinicio_video {
             let ruta = if is_biblia { ui.get_biblias_video_path() } else { ui.get_cantos_video_path() };
             if !ruta.is_empty() {
-                vp.lock().unwrap().reproducir(ruta.as_str(), p.as_weak(), true);
+                vp.lock().unwrap().reproducir(ruta.as_str(), p.as_weak(), true, false);
             } else {
                 vp.lock().unwrap().detener();
             }
@@ -1533,6 +1616,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let proyector   = ProjectorWindow::new().unwrap();
             let medidor_win = MedidorWindow::new().unwrap();
     let video_player = Arc::new(Mutex::new(NativeVideoPlayer::new()));
+    let biblioteca_video_player = Arc::new(Mutex::new(NativeVideoPlayer::new()));
 
     let multimedia_state = Arc::new(RwLock::new(Vec::<MediaData>::new()));
     let video_state      = Arc::new(RwLock::new(Vec::<MediaData>::new()));
@@ -2047,6 +2131,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let state_clone = Arc::clone(&state);
         let ui_h        = ui.as_weak();
         let vp          = Arc::clone(&video_player);
+        let vp_lib_estrofa = Arc::clone(&biblioteca_video_player);
 
         let last_modo   = Arc::clone(&modo_en_vivo); 
         let sp          = Arc::clone(&segunda_pantalla);
@@ -2059,6 +2144,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let ui_local = ui_h.unwrap();
 
             ui_local.set_is_video_projecting(false);
+            p.set_mostrar_video_biblioteca(false);
+            p.set_biblioteca_video_frame(slint::Image::default());
+            vp_lib_estrofa.lock().unwrap().detener();
             bloqueo.store(false, Ordering::Release);
 
             p.set_texto_proyeccion(texto.clone());
@@ -3175,6 +3263,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if let Some(img) = current_pages.row_data(page_idx as usize) {
                 vp_pdf.lock().unwrap().detener();
                 p.set_es_video(false);
+                p.set_mostrar_video_biblioteca(false);
+                p.set_biblioteca_video_frame(slint::Image::default());
                 limpiar_texto_proyeccion(&p);
                 p.set_fondo_imagen_aspecto(slint::SharedString::from("contain"));
                 p.set_fondo_imagen(img);
@@ -3251,6 +3341,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if let Ok(img) = slint::Image::load_from_path(std::path::Path::new(&ruta)) {
                 vp.lock().unwrap().detener();
                 p.set_es_video(false);
+                p.set_mostrar_video_biblioteca(false);
+                p.set_biblioteca_video_frame(slint::Image::default());
                 p.set_bg_color(slint::Color::from_rgb_u8(0, 0, 0));
                 limpiar_texto_proyeccion(&p);
                 p.set_fondo_opacity(0.0);
@@ -3359,10 +3451,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
-        {
+         {
         let p_handle    = proyector.as_weak();
         let vid_state   = Arc::clone(&video_state);
-        let vp          = Arc::clone(&video_player);
+        let vp_lib      = Arc::clone(&biblioteca_video_player);
         let ui_h        = ui.as_weak();
         let bloqueo     = Arc::clone(&bloqueo_estilos);
         let bsc_video_vv = build_and_save_config.clone();
@@ -3403,18 +3495,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 return;
             }
 
-            p.set_es_video(true);
-            p.set_bg_color(slint::Color::from_rgb_u8(0, 0, 0));
-            p.set_mostrar_imagen(false);
-            limpiar_texto_proyeccion(&p);
-            vp.lock().unwrap().reproducir(&ruta, p.as_weak(), is_loop);
+            // NOTA: no tocamos p.set_es_video / p.set_bg_color / p.set_fondo_imagen / etc.
+            // Esas propiedades siguen describiendo el FONDO de biblias/cantos intacto.
+            p.set_mostrar_video_biblioteca(true);
+            vp_lib.lock().unwrap().reproducir(&ruta, p.as_weak(), is_loop, true);
             ui.set_is_video_projecting(true);
             ui.set_is_proyector_playing(true);
         });
     }
 
-    {
-        let vp_controls = Arc::clone(&video_player);
+     {
+        let vp_controls = Arc::clone(&biblioteca_video_player);
         let ui_h        = ui.as_weak();
         ui.on_toggle_proyector_play(move || {
             let ui        = ui_h.unwrap();
@@ -3424,7 +3515,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     {
-        let vp_mute = Arc::clone(&video_player);
+        let vp_mute = Arc::clone(&biblioteca_video_player);
         let ui_h    = ui.as_weak();
         ui.on_toggle_proyector_mute(move || {
             let ui            = ui_h.unwrap();
@@ -3434,8 +3525,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     }
 
-    {
-        let vp_seek = Arc::clone(&video_player);
+     {
+        let vp_seek = Arc::clone(&biblioteca_video_player);
         ui.on_seek_proyector_video(move |percent| { vp_seek.lock().unwrap().seek_percentage(percent); });
     }
 
@@ -3459,7 +3550,7 @@ _restore_timer.start(
 
     // OPT-8: Timer declarado como variable local — vive hasta el final de main().
     //        El Box::leak original era un memory leak innecesario.
-    let vp_timer       = Arc::clone(&video_player);
+    let vp_timer       = Arc::clone(&biblioteca_video_player);
     let ui_timer_handle = ui.as_weak();
     let _video_timer   = slint::Timer::default(); // '_' evita unused-variable warning
     _video_timer.start(slint::TimerMode::Repeated, std::time::Duration::from_millis(750), move || {

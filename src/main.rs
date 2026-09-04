@@ -280,6 +280,26 @@ fn normalizar(texto: &str) -> String {
     }).collect()
 }
 
+
+#[inline]
+fn color_a_hex(c: slint::Color) -> String {
+    format!("#{:02x}{:02x}{:02x}", c.red(), c.green(), c.blue())
+}
+
+fn content_type_desde_extension(path: &str) -> &'static str {
+    let ext = std::path::Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    match ext.as_str() {
+        "png"  => "image/png",
+        "webp" => "image/webp",
+        "gif"  => "image/gif",
+        _      => "image/jpeg",
+    }
+}
+
 // OPT-2 aplicado: cero allocations por búsqueda de libro
 fn buscar_libro_inteligente(query: &str) -> Option<(i32, String)> {
     let q = normalizar(&trim(query));
@@ -952,7 +972,7 @@ impl NativeVideoPlayer {
 
     pub fn reproducir(&mut self, ruta: &str, proj_weak: slint::Weak<ProjectorWindow>, is_loop: bool, es_biblioteca: bool) {
         self.detener();
-        self.detener();
+        
         let path = std::path::Path::new(ruta).canonicalize()
             .unwrap_or_else(|_| std::path::PathBuf::from(ruta));
         let uri = gst::glib::filename_to_uri(&path, None).unwrap();
@@ -1214,10 +1234,6 @@ fn aplicar_estilos(
     modo: &str,
     forzar_reinicio_video: bool,
 ) 
-
-
-
-
 {
     let is_biblia  = modo == "biblias";
     let bg_type    = if is_biblia { ui.get_biblias_bg_type()      } else { ui.get_cantos_bg_type()      };
@@ -1263,6 +1279,76 @@ fn aplicar_estilos(
         }
     }
 }
+
+
+
+fn actualizar_overlay_estilos(
+    ui: &AppWindow,
+    state: &Arc<Mutex<AppState>>,
+    overlay: &Arc<Mutex<EstadoOverlay>>,
+    modo: &str,
+) {
+    let is_biblia  = modo == "biblias";
+    let bg_type    = if is_biblia { ui.get_biblias_bg_type()      } else { ui.get_cantos_bg_type()      };
+    let font_color = if is_biblia { ui.get_biblias_font_color()   } else { ui.get_cantos_font_color()   };
+    let opacity    = if is_biblia { ui.get_biblias_fondo_opacity() } else { ui.get_cantos_fondo_opacity() };
+
+    let mut e = overlay.lock().unwrap();
+
+    if bg_type == "video" {
+        // Sin soporte de video en el overlay: fondo blanco, letra negra.
+        e.fondo_tipo   = "color".to_string();
+        e.fondo_color  = "#ffffff".to_string();
+        e.color_texto  = "#000000".to_string();
+        e.fondo_opacity = 0.0;
+        e.fondo_ajuste  = "cover".to_string();
+        e.fondo_imagen_bytes.clear();
+        e.fondo_version += 1;
+        return;
+    }
+
+    if bg_type == "imagen" {
+        let idx = if is_biblia { ui.get_biblias_selected_img() } else { ui.get_cantos_selected_img() };
+        let ruta = {
+            let st = state.lock().unwrap();
+            let paths = if is_biblia { &st.biblias_image_paths } else { &st.cantos_image_paths };
+            if idx >= 0 { paths.get(idx as usize).cloned() } else { None }
+        };
+        if let Some(ruta) = ruta {
+            if let Ok(bytes) = std::fs::read(&ruta) {
+                e.fondo_tipo    = "imagen".to_string();
+                e.fondo_imagen_content_type = content_type_desde_extension(&ruta).to_string();
+                e.fondo_imagen_bytes = bytes;
+                e.fondo_opacity = opacity;
+                e.fondo_ajuste  = "cover".to_string();
+                e.color_texto   = color_a_hex(font_color);
+                e.fondo_version += 1;
+                return;
+            }
+        }
+        // Ruta inválida/borrada: cae a negro para no dejar el overlay roto.
+        e.fondo_tipo   = "color".to_string();
+        e.fondo_color  = "#000000".to_string();
+        e.color_texto  = color_a_hex(font_color);
+        e.fondo_imagen_bytes.clear();
+        e.fondo_version += 1;
+        return;
+    }
+
+    // "negro" o "blanco"
+    e.fondo_tipo   = "color".to_string();
+    e.fondo_color  = if bg_type == "blanco" { "#ffffff".to_string() } else { "#000000".to_string() };
+    e.color_texto  = color_a_hex(font_color);
+    e.fondo_opacity = 0.0;
+    e.fondo_ajuste  = "cover".to_string();
+    e.fondo_imagen_bytes.clear();
+    e.fondo_version += 1;
+}
+
+
+
+
+
 
 fn configurar_ventana_proyector_linux(wid_store: Arc<Mutex<Option<String>>>) {
     #[cfg(target_os = "linux")]
@@ -1343,7 +1429,18 @@ struct MediaData { path: String, name: String, aspecto: String, is_loop: bool }
 struct PdfData   { name: String, thumb_path: String, pages: Vec<String>       }
 
 #[derive(Clone, Default)]
-struct EstadoOverlay { texto: String, referencia: String }
+struct EstadoOverlay {
+    texto: String,
+    referencia: String,
+    color_texto: String,               // hex "#rrggbb"
+    fondo_tipo: String,                // "color" | "imagen"
+    fondo_color: String,               // hex, usado si fondo_tipo == "color"
+    fondo_opacity: f32,                // scrim oscuro sobre la imagen (0.0-1.0)
+    fondo_ajuste: String,               // "cover" | "contain" | "fill"
+    fondo_imagen_bytes: Vec<u8>,       // bytes crudos del archivo (jpg/png/webp)
+    fondo_imagen_content_type: String, // "image/jpeg", "image/png", etc.
+    fondo_version: u64,                // se incrementa cada vez que cambia la imagen
+}
 
 // ---------------------------------------------------------------------------
 // Soporte PPTX/ODP vía LibreOffice
@@ -1511,13 +1608,45 @@ fn iniciar_servidor_overlay(
     for request in server.incoming_requests() {
         if !activo.load(Ordering::Acquire) { break; } // se pidió detener
 
-        let (status, content_type, body) = match request.url() {
+        // Quitamos el query string ("?v=123") para el match de rutas.
+        let ruta = request.url().splitn(2, '?').next().unwrap_or("").to_string();
+
+        // ── /fondo: sirve los bytes crudos de la imagen actual ─────────────
+        if ruta == "/fondo" {
+            let (bytes, content_type, hay_imagen) = {
+                let e = estado.lock().unwrap();
+                (
+                    e.fondo_imagen_bytes.clone(),
+                    e.fondo_imagen_content_type.clone(),
+                    e.fondo_tipo == "imagen" && !e.fondo_imagen_bytes.is_empty(),
+                )
+            };
+            if hay_imagen {
+                let header = tiny_http::Header::from_bytes(&b"Content-Type"[..], content_type.as_bytes()).unwrap();
+                let response = tiny_http::Response::from_data(bytes)
+                    .with_status_code(200)
+                    .with_header(header);
+                let _ = request.respond(response);
+            } else {
+                let response = tiny_http::Response::from_string("").with_status_code(404);
+                let _ = request.respond(response);
+            }
+            continue;
+        }
+
+        let (status, content_type, body) = match ruta.as_str() {
             "/status" => {
                 let e = estado.lock().unwrap();
                 let json = format!(
-                    r#"{{"texto":{},"referencia":{}}}"#,
+                    r#"{{"texto":{},"referencia":{},"color_texto":{},"fondo_tipo":{},"fondo_color":{},"fondo_opacity":{},"fondo_ajuste":{},"fondo_version":{}}}"#,
                     serde_json::to_string(&e.texto).unwrap_or("\"\"".into()),
                     serde_json::to_string(&e.referencia).unwrap_or("\"\"".into()),
+                    serde_json::to_string(&e.color_texto).unwrap_or("\"#ffffff\"".into()),
+                    serde_json::to_string(&e.fondo_tipo).unwrap_or("\"color\"".into()),
+                    serde_json::to_string(&e.fondo_color).unwrap_or("\"#000000\"".into()),
+                    e.fondo_opacity,
+                    serde_json::to_string(&e.fondo_ajuste).unwrap_or("\"cover\"".into()),
+                    e.fondo_version,
                 );
                 (200, "application/json", json)
             }
@@ -1525,21 +1654,53 @@ fn iniciar_servidor_overlay(
                 let html = r##"<!DOCTYPE html>
 <html><head><meta charset="utf-8">
 <style>
-  body { margin:0; background:transparent; font-family: sans-serif; }
-  #texto { color:white; font-size:48px; font-weight:900; text-align:center;
-           padding:40px; text-shadow: 2px 2px 6px rgba(0,0,0,0.8); }
-  #referencia { color:#38bdf8; font-size:24px; font-weight:700; text-align:center; }
+  html, body { margin:0; padding:0; width:100%; height:100%; overflow:hidden; background:transparent; font-family: sans-serif; }
+  #contenedor { position:relative; width:100vw; height:100vh; }
+  #fondo { position:absolute; top:0; left:0; width:100%; height:100%; display:none; }
+  #scrim { position:absolute; top:0; left:0; width:100%; height:100%; background:#000; opacity:0; }
+  #capa-texto { position:absolute; top:0; left:0; width:100%; height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:40px; box-sizing:border-box; }
+  #texto { font-size:48px; font-weight:900; text-align:center; text-shadow: 2px 2px 6px rgba(0,0,0,0.6); white-space:pre-wrap; }
+  #referencia { font-size:24px; font-weight:700; text-align:center; margin-top:16px; text-shadow: 2px 2px 6px rgba(0,0,0,0.6); }
 </style></head>
 <body>
-  <div id="texto"></div>
-  <div id="referencia"></div>
+  <div id="contenedor">
+    <img id="fondo">
+    <div id="scrim"></div>
+    <div id="capa-texto">
+      <div id="texto"></div>
+      <div id="referencia"></div>
+    </div>
+  </div>
   <script>
+    let ultimaVersion = -1;
     async function actualizar() {
       try {
         const r = await fetch('/status');
         const d = await r.json();
+
         document.getElementById('texto').innerText = d.texto || '';
         document.getElementById('referencia').innerText = d.referencia || '';
+        document.getElementById('texto').style.color = d.color_texto || '#ffffff';
+        document.getElementById('referencia').style.color = d.color_texto || '#ffffff';
+
+        const fondoImg   = document.getElementById('fondo');
+        const scrim      = document.getElementById('scrim');
+        const contenedor = document.getElementById('contenedor');
+
+        if (d.fondo_tipo === 'imagen') {
+          if (d.fondo_version !== ultimaVersion) {
+            fondoImg.src = '/fondo?v=' + d.fondo_version;
+            ultimaVersion = d.fondo_version;
+          }
+          fondoImg.style.display = 'block';
+          fondoImg.style.objectFit = d.fondo_ajuste || 'cover';
+          contenedor.style.background = 'transparent';
+          scrim.style.opacity = d.fondo_opacity || 0;
+        } else {
+          fondoImg.style.display = 'none';
+          contenedor.style.background = d.fondo_color || '#000000';
+          scrim.style.opacity = 0;
+        }
       } catch (e) {}
     }
     setInterval(actualizar, 500);
@@ -2188,6 +2349,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let forzar_video  = *l_modo != modo_actual;
             *l_modo = modo_actual.to_string();
             aplicar_estilos(&ui_local, &p, &vp, modo_actual, forzar_video);
+            actualizar_overlay_estilos(&ui_local, &state_clone, &overlay_e, modo_actual);
         });
     }
 
@@ -2414,6 +2576,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let modo_vivo   = Arc::clone(&modo_en_vivo);
         let bsc_estilos = build_and_save_config.clone();
         let medidor_se  = medidor_win.as_weak();
+        let state_sync   = Arc::clone(&state);
+        let overlay_sync = Arc::clone(&overlay_estado);
         ui.on_sync_estilos(move || {
             let ui = ui_h.unwrap();
             let p  = p_h.unwrap();
@@ -2425,6 +2589,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             return;
         }
             aplicar_estilos(&ui, &p, &vp, modo.as_str(), true);
+            actualizar_overlay_estilos(&ui, &state_sync, &overlay_sync, modo.as_str());
             let active_idx = ui.get_active_estrofa_index();
             if active_idx >= 0 {
                 let estrofas = ui.get_estrofas_actuales();
@@ -3253,6 +3418,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let p_pdf       = proyector.as_weak();
         let vp_pdf      = Arc::clone(&video_player);
         let bloqueo     = Arc::clone(&bloqueo_estilos);
+        let pdf_state_proj = Arc::clone(&pdf_state);
+        let overlay_pdf     = Arc::clone(&overlay_estado);
         ui.on_proyectar_pdf_pagina(move |page_idx| {
             let ui = ui_pdf_proj.unwrap();
             let p  = p_pdf.unwrap();
@@ -3261,15 +3428,36 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ui.set_active_pdf_page(page_idx);
             let current_pages = ui.get_pdf_pages();
             if let Some(img) = current_pages.row_data(page_idx as usize) {
-                vp_pdf.lock().unwrap().detener();
-                p.set_es_video(false);
-                p.set_mostrar_video_biblioteca(false);
-                p.set_biblioteca_video_frame(slint::Image::default());
-                limpiar_texto_proyeccion(&p);
-                p.set_fondo_imagen_aspecto(slint::SharedString::from("contain"));
-                p.set_fondo_imagen(img);
-                p.set_mostrar_imagen(true);
-            }
+    vp_pdf.lock().unwrap().detener();
+    p.set_es_video(false);
+    p.set_mostrar_video_biblioteca(false);
+    p.set_biblioteca_video_frame(slint::Image::default());
+    limpiar_texto_proyeccion(&p);
+    p.set_fondo_imagen_aspecto(slint::SharedString::from("contain"));
+    p.set_fondo_imagen(img);
+    p.set_mostrar_imagen(true);
+
+    // ── AGREGAR: Notificar a OBS ──
+    let idx_pdf = ui.get_selected_pdf_idx();
+    let ruta_pagina = {
+        let lista = pdf_state_proj.read().unwrap();
+        lista.get(idx_pdf as usize)
+            .and_then(|pdf| pdf.pages.get(page_idx as usize).cloned())
+    };
+    if let Some(ruta_pagina) = ruta_pagina {
+        let mut e = overlay_pdf.lock().unwrap();
+        e.texto.clear();
+        e.referencia.clear();
+        e.fondo_tipo    = "imagen".to_string();
+        e.fondo_opacity = 0.0;
+        e.fondo_ajuste  = "contain".to_string();
+        if let Ok(bytes) = std::fs::read(&ruta_pagina) {
+            e.fondo_imagen_content_type = content_type_desde_extension(&ruta_pagina).to_string();
+            e.fondo_imagen_bytes = bytes;
+        }
+        e.fondo_version += 1;
+    }
+}
         });
     }
 
@@ -3313,6 +3501,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let image_cache_mm   = Arc::clone(&image_cache);
         let refresh_multimedia_mm = refresh_multimedia.clone();
         let bsc_multi_mm      = build_and_save_config.clone();
+        let overlay_mm = Arc::clone(&overlay_estado);
         ui.on_proyectar_multimedia(move |idx| {
             let p        = p_handle.unwrap();
             let ui_local = ui_h.unwrap();
@@ -3339,18 +3528,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             if let Ok(img) = slint::Image::load_from_path(std::path::Path::new(&ruta)) {
-                vp.lock().unwrap().detener();
-                p.set_es_video(false);
-                p.set_mostrar_video_biblioteca(false);
-                p.set_biblioteca_video_frame(slint::Image::default());
-                p.set_bg_color(slint::Color::from_rgb_u8(0, 0, 0));
-                limpiar_texto_proyeccion(&p);
-                p.set_fondo_opacity(0.0);
-                let aspecto = { let state = multi_state.read().unwrap(); state.iter().find(|i| i.path == ruta).map(|i| i.aspecto.clone()).unwrap_or_default() };
-                p.set_fondo_imagen_aspecto(slint::SharedString::from(&aspecto));
-                p.set_fondo_imagen(img);
-                p.set_mostrar_imagen(true);
-            }
+    vp.lock().unwrap().detener();
+    p.set_es_video(false);
+    p.set_mostrar_video_biblioteca(false);
+    p.set_biblioteca_video_frame(slint::Image::default());
+    p.set_bg_color(slint::Color::from_rgb_u8(0, 0, 0));
+    limpiar_texto_proyeccion(&p);
+    p.set_fondo_opacity(0.0);
+    let aspecto = { let state = multi_state.read().unwrap(); state.iter().find(|i| i.path == ruta).map(|i| i.aspecto.clone()).unwrap_or_default() };
+    p.set_fondo_imagen_aspecto(slint::SharedString::from(&aspecto));
+    p.set_fondo_imagen(img);
+    p.set_mostrar_imagen(true);
+
+    // ── AGREGAR: Notificar a OBS ──
+    let mut e = overlay_mm.lock().unwrap();
+    e.texto.clear();
+    e.referencia.clear();
+    e.fondo_tipo    = "imagen".to_string();
+    e.fondo_opacity = 0.0;
+    e.fondo_ajuste  = match aspecto.as_str() {
+        "rellenar" => "cover".to_string(),
+        "estirar"  => "fill".to_string(),
+        _          => "contain".to_string(),
+    };
+    if let Ok(bytes) = std::fs::read(&ruta) {
+        e.fondo_imagen_content_type = content_type_desde_extension(&ruta).to_string();
+        e.fondo_imagen_bytes = bytes;
+    }
+    e.fondo_version += 1;
+}
         });
     }
 

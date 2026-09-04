@@ -9,6 +9,7 @@ slint = "1.17.1" # VERSIÓN ACTUALIZADA
 rusqlite = { version = "0.31.0", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+arboard = "3"
 pdfium-render = "0.8.20"
 rayon = "1.10"
 image = "0.25"

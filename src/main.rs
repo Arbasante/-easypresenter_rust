@@ -1287,6 +1287,7 @@ fn actualizar_overlay_estilos(
     state: &Arc<Mutex<AppState>>,
     overlay: &Arc<Mutex<EstadoOverlay>>,
     modo: &str,
+    solo_texto: bool,
 ) {
     let is_biblia  = modo == "biblias";
     let bg_type    = if is_biblia { ui.get_biblias_bg_type()      } else { ui.get_cantos_bg_type()      };
@@ -1294,6 +1295,17 @@ fn actualizar_overlay_estilos(
     let opacity    = if is_biblia { ui.get_biblias_fondo_opacity() } else { ui.get_cantos_fondo_opacity() };
 
     let mut e = overlay.lock().unwrap();
+
+     if solo_texto {
+        e.fondo_tipo    = "transparente".to_string();
+        e.fondo_color.clear();
+        e.fondo_opacity = 0.0;
+        e.fondo_ajuste  = "cover".to_string();
+        e.fondo_imagen_bytes.clear();
+        e.color_texto   = color_a_hex(font_color);
+        e.fondo_version += 1;
+        return;
+    }
 
     if bg_type == "video" {
         // Sin soporte de video en el overlay: fondo blanco, letra negra.
@@ -1696,6 +1708,10 @@ fn iniciar_servidor_overlay(
           fondoImg.style.objectFit = d.fondo_ajuste || 'cover';
           contenedor.style.background = 'transparent';
           scrim.style.opacity = d.fondo_opacity || 0;
+        } else if (d.fondo_tipo === 'transparente') {
+          fondoImg.style.display = 'none';
+          contenedor.style.background = 'transparent';
+          scrim.style.opacity = 0;
         } else {
           fondoImg.style.display = 'none';
           contenedor.style.background = d.fondo_color || '#000000';
@@ -2349,7 +2365,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let forzar_video  = *l_modo != modo_actual;
             *l_modo = modo_actual.to_string();
             aplicar_estilos(&ui_local, &p, &vp, modo_actual, forzar_video);
-            actualizar_overlay_estilos(&ui_local, &state_clone, &overlay_e, modo_actual);
+            actualizar_overlay_estilos(&ui_local, &state_clone, &overlay_e, modo_actual, ui_local.get_overlay_solo_texto());
         });
     }
 
@@ -2589,7 +2605,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             return;
         }
             aplicar_estilos(&ui, &p, &vp, modo.as_str(), true);
-            actualizar_overlay_estilos(&ui, &state_sync, &overlay_sync, modo.as_str());
+            actualizar_overlay_estilos(&ui, &state_sync, &overlay_sync, modo.as_str(), ui.get_overlay_solo_texto());
             let active_idx = ui.get_active_estrofa_index();
             if active_idx >= 0 {
                 let estrofas = ui.get_estrofas_actuales();
@@ -3130,6 +3146,47 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     iniciar_servidor_overlay(puerto, estado_t, activo_t);
                 });
                 ui.set_overlay_servidor_activo(true);
+            }
+        });
+    }
+
+    // ── Copiar la URL del overlay al portapapeles (multiplataforma) ─────────
+    // Usa `arboard`, que habla directamente con el portapapeles del sistema
+    // (Win32/AppKit/X11/Wayland) sin depender de binarios externos como
+    // xclip o wl-copy, que pueden no estar instalados en el equipo del usuario.
+    {
+        let ui_h = ui.as_weak();
+        ui.on_copiar_url_overlay(move || {
+            let ui  = ui_h.unwrap();
+            let url = format!("http://{}:{}", ui.get_overlay_ip_local(), ui.get_overlay_puerto());
+            match arboard::Clipboard::new() {
+                Ok(mut cb) => {
+                    if cb.set_text(url).is_ok() {
+                        mostrar_aviso(&ui_h, "URL copiada al portapapeles");
+                    } else {
+                        mostrar_aviso(&ui_h, "No se pudo copiar la URL");
+                    }
+                }
+                Err(_) => mostrar_aviso(&ui_h, "No se pudo acceder al portapapeles"),
+            }
+        });
+    }
+
+    // ── Toggle "Solo texto (sin fondo)" para el overlay de OBS ──────────────
+    // Refresca inmediatamente el overlay activo (si hay algo proyectado)
+    // para que el cambio se vea al instante en OBS, sin esperar al próximo
+    // clic sobre una estrofa.
+    {
+        let ui_h       = ui.as_weak();
+        let state_ov   = Arc::clone(&state);
+        let overlay_ov = Arc::clone(&overlay_estado);
+        let modo_ov    = Arc::clone(&modo_en_vivo);
+        ui.on_toggle_overlay_solo_texto(move |valor| {
+            let ui = ui_h.unwrap();
+            ui.set_overlay_solo_texto(valor);
+            let modo_actual = modo_ov.lock().unwrap().clone();
+            if !modo_actual.is_empty() {
+                actualizar_overlay_estilos(&ui, &state_ov, &overlay_ov, &modo_actual, valor);
             }
         });
     }

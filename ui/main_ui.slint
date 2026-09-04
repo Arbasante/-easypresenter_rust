@@ -271,8 +271,11 @@ export component AppWindow inherits Window {
     in-out property <bool> overlay_servidor_activo: false;
     in-out property <int> overlay_puerto: 8090;
     in-out property <string> overlay_ip_local: "";
+    in-out property <bool> overlay_solo_texto: false;
     callback abrir_modal_overlay();
     callback toggle_servidor_overlay();
+    callback copiar_url_overlay();
+    callback toggle_overlay_solo_texto(bool);
     in property <[ScreenInfo]> pantallas_detectadas: [];
     in-out property <bool> identificando_pantallas: false;
     in-out property <bool> cambios_pendientes: false;
@@ -2119,12 +2122,12 @@ if (root.mostrar_menu_herramientas) : Rectangle {
         }
     }
 
-    if (root.mostrar_modal_overlay) : Rectangle {
+        if (root.mostrar_modal_overlay) : Rectangle {
         width: 100%; height: 100%; background: Theme.overlay;
         TouchArea { clicked => { root.mostrar_modal_overlay = false; } }
 
         Rectangle {
-            width: 460px; height: 320px;
+            width: 460px; height: 380px;
             background: Theme.bg_popup; border-radius: 12px;
             border-width: 2px; border-color: Theme.border_strong;
             TouchArea {}
@@ -2148,12 +2151,29 @@ if (root.mostrar_menu_herramientas) : Rectangle {
                     color: Theme.text_secondary; font-size: 10px; wrap: word-wrap;
                 }
 
+                // ── URL + botón copiar ────────────────────────────────────
                 Rectangle {
                     height: 48px; border-radius: 8px; background: Theme.bg_list; border-width: 1px; border-color: Theme.border_subtle;
-                    Text {
-                        text: "http://" + root.overlay_ip_local + ":" + root.overlay_puerto;
-                        color: Theme.accent; font-size: 13px; font-weight: 800;
-                        horizontal-alignment: center; vertical-alignment: center; width: 100%; height: 100%;
+                    HorizontalLayout {
+                        padding-left: 14px; padding-right: 6px; spacing: 8px;
+                        Text {
+                            text: "http://" + root.overlay_ip_local + ":" + root.overlay_puerto;
+                            color: Theme.accent; font-size: 13px; font-weight: 800;
+                            vertical-alignment: center; horizontal-stretch: 1;
+                            overflow: elide;
+                        }
+                        Rectangle {
+                            width: 36px; height: 36px; border-radius: 6px;
+                            background: touch-copiar-url.has-hover ? Theme.accent_soft : rgba(0,0,0,0.04);
+                            touch-copiar-url := TouchArea { clicked => { root.copiar_url_overlay(); } }
+                            Text {
+                                text: "⧉";
+                                color: touch-copiar-url.has-hover ? Theme.accent : Theme.text_secondary;
+                                font-size: 15px; font-weight: 900;
+                                horizontal-alignment: center; vertical-alignment: center;
+                                width: 100%; height: 100%;
+                            }
+                        }
                     }
                 }
 
@@ -2171,6 +2191,34 @@ if (root.mostrar_menu_herramientas) : Rectangle {
                                     root.overlay_puerto = self.text.to-float();
                                 }
                             }
+                        }
+                    }
+                }
+
+                // ── Checkbox: Solo texto (sin fondo) ─────────────────────
+                Rectangle {
+                    height: 30px;
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Rectangle {
+                            width: 18px; height: 18px; border-radius: 4px;
+                            background: root.overlay_solo_texto ? Theme.accent : Theme.bg_input;
+                            border-width: 1px; border-color: Theme.border_input;
+                            TouchArea {
+                                clicked => {
+                                    root.toggle_overlay_solo_texto(!root.overlay_solo_texto);
+                                }
+                            }
+                            if (root.overlay_solo_texto) : Text {
+                                text: "✓"; color: white; font-size: 12px; font-weight: 900;
+                                horizontal-alignment: center; vertical-alignment: center;
+                                width: 100%; height: 100%;
+                            }
+                        }
+                        Text {
+                            text: "Solo texto (sin fondo)";
+                            color: Theme.text_secondary; font-size: 10px; font-weight: 600;
+                            vertical-alignment: center;
                         }
                     }
                 }

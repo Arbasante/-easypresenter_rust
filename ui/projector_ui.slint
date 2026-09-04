@@ -57,6 +57,9 @@ export component ProjectorWindow inherits Window {
     in property <bool>   es_video: false;
     in property <float>  fondo_opacity: 0.0;
 
+     in property <image>  biblioteca_video_frame;
+    in property <bool>   mostrar_video_biblioteca: false;
+
     in property <float> margen_izquierdo: 0;
     in property <float> margen_derecho: 0;
     in property <float> margen_superior: 0;
@@ -147,5 +150,21 @@ export component ProjectorWindow inherits Window {
                 }
             }
         }
+        if (root.mostrar_video_biblioteca) : Rectangle {
+            width: 100%; height: 100%;
+            background: black;
+
+            Image {
+                source: root.biblioteca_video_frame;
+                width: 100%; height: 100%;
+                image-fit: contain;
+            }
+        }
+
+
+
     }
+
+
+
 }

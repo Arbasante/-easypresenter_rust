@@ -2065,6 +2065,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ui.set_margen_derecho(cfg.margen_derecho);
     ui.set_margen_superior(cfg.margen_superior);
     ui.set_margen_inferior(cfg.margen_inferior);
+
+    proyector.set_margen_izquierdo(cfg.margen_izquierdo);
+    proyector.set_margen_derecho(cfg.margen_derecho);
+    proyector.set_margen_superior(cfg.margen_superior);
+    proyector.set_margen_inferior(cfg.margen_inferior);
+
     ui.set_default_bg_type(SharedString::from(&cfg.default_bg_type));
     ui.set_default_bg_idx(cfg.default_bg_idx);
     ui.global::<Theme>().set_is_dark(cfg.tema_oscuro);

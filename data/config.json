@@ -7,8 +7,8 @@
     "/home/basanteriano/Descargas/Proyektor - Linux/fondos/Videos/AmazonSwamp   FREE Video Background Loops HD 1080p.webm"
   ],
   "cantos_video_paths": [],
-  "tema_oscuro": false,
-  "biblias_selected_img": -1,
+  "tema_oscuro": true,
+  "biblias_selected_img": 0,
   "cantos_selected_img": -1,
   "biblias_selected_vid": 0,
   "cantos_selected_vid": -1,
@@ -17,25 +17,40 @@
   "biblias_bg_type": "blanco",
   "cantos_bg_type": "blanco",
   "biblias_font_color": [
-    254,
-    240,
-    138
+    0,
+    0,
+    0
   ],
   "cantos_font_color": [
     0,
     0,
     0
   ],
-  "biblias_fondo_opacity": 0.6545971,
+  "biblias_fondo_opacity": 0.0,
   "cantos_fondo_opacity": 0.0,
   "biblias_font_scale": 0.99999976,
   "cantos_font_scale": 2.0,
-  "multimedia_paths": [],
-  "multimedia_names": [],
-  "multimedia_aspectos": [],
-  "video_paths": [],
-  "video_names": [],
-  "video_loops": [],
+  "multimedia_paths": [
+    "/home/basanteriano/Descargas/video.png"
+  ],
+  "multimedia_names": [
+    "video.png"
+  ],
+  "multimedia_aspectos": [
+    "centro"
+  ],
+  "video_paths": [
+    "/home/basanteriano/Descargas/BIENVENIDOS A LA CASA DE DIOS _ LOOPS _.mp4",
+    "/home/basanteriano/Descargas/Comp.avi"
+  ],
+  "video_names": [
+    "BIENVENIDOS A LA CASA DE DIOS _ LOOPS _.mp4",
+    "Comp.avi"
+  ],
+  "video_loops": [
+    true,
+    true
+  ],
   "margen_izquierdo": 0.0,
   "margen_derecho": 0.0,
   "margen_superior": 0.0,

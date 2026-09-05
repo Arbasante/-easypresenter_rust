@@ -2071,6 +2071,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ui.set_auto_proyectar_inicio(cfg.auto_proyectar_inicio);
     ui.set_libreoffice_listo(libreoffice_disponible());
 
+    ui.set_acerca_version(SharedString::from(env!("CARGO_PKG_VERSION")));
+    let accel_texto = match DECODIFICADOR_HW.as_deref() {
+        Some(nombre) => format!("Aceleración por hardware activa ({})", nombre),
+        None => "Decodificación por software (sin aceleración de hardware)".to_string(),
+    };
+    ui.set_acerca_aceleracion(SharedString::from(accel_texto));
+
 
 
     // Restaurar galería de imágenes en la UI

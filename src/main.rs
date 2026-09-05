@@ -300,6 +300,20 @@ fn content_type_desde_extension(path: &str) -> &'static str {
     }
 }
 
+fn video_content_type_desde_extension(path: &str) -> &'static str {
+    let ext = std::path::Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+    match ext.as_str() {
+        "webm" => "video/webm",
+        "mov"  => "video/quicktime",
+        "mkv"  => "video/x-matroska",
+        _      => "video/mp4",
+    }
+}
+
 // OPT-2 aplicado: cero allocations por búsqueda de libro
 fn buscar_libro_inteligente(query: &str) -> Option<(i32, String)> {
     let q = normalizar(&trim(query));
@@ -1452,6 +1466,15 @@ struct EstadoOverlay {
     fondo_imagen_bytes: Vec<u8>,       // bytes crudos del archivo (jpg/png/webp)
     fondo_imagen_content_type: String, // "image/jpeg", "image/png", etc.
     fondo_version: u64,                // se incrementa cada vez que cambia la imagen
+
+    // ── Video con audio para OBS ──────────────────────────────────────
+    // No transcodificamos nada: el navegador de OBS (Chromium) descarga
+    // y decodifica el archivo original vía <video>, igual que en una
+    // pestaña normal. Cero costo extra de CPU en esta app.
+    video_activo: bool,
+    video_ruta: String,   // ruta local del archivo en disco (solo servidor)
+    video_loop: bool,
+    video_token: u64,     // se incrementa cada vez que cambia el video, para forzar reload
 }
 
 // ---------------------------------------------------------------------------
@@ -1623,6 +1646,92 @@ fn iniciar_servidor_overlay(
         // Quitamos el query string ("?v=123") para el match de rutas.
         let ruta = request.url().splitn(2, '?').next().unwrap_or("").to_string();
 
+        // ── /video: sirve el archivo de video CRUDO, con soporte de Range.
+        //    El navegador de OBS lo descarga y decodifica él mismo (igual
+        //    que un <video> en cualquier pestaña de Chrome). No hay ningún
+        //    encode/decode adicional en esta app: solo lectura de disco.
+        if ruta == "/video" {
+            let (video_path, hay_video) = {
+                let e = estado.lock().unwrap();
+                (e.video_ruta.clone(), e.video_activo && !e.video_ruta.is_empty())
+            };
+
+            if !hay_video || !std::path::Path::new(&video_path).exists() {
+                let _ = request.respond(tiny_http::Response::from_string("").with_status_code(404));
+                continue;
+            }
+
+            let content_type = video_content_type_desde_extension(&video_path);
+            let file_len = match std::fs::metadata(&video_path) {
+                Ok(m) => m.len(),
+                Err(_) => {
+                    let _ = request.respond(tiny_http::Response::from_string("").with_status_code(500));
+                    continue;
+                }
+            };
+
+            // Parseamos "Range: bytes=inicio-fin" si viene. Es necesario
+            // para que el <video> del navegador pueda hacer seek y para
+            // que empiece a reproducir sin esperar a descargar todo.
+            let range_header = request.headers().iter()
+                .find(|h| h.field.equiv("Range"))
+                .map(|h| h.value.as_str().to_string());
+
+            let (start, end) = match &range_header {
+                Some(r) if r.starts_with("bytes=") => {
+                    let rango = &r[6..];
+                    let partes: Vec<&str> = rango.splitn(2, '-').collect();
+                    let start: u64 = partes.get(0).and_then(|s| s.parse().ok()).unwrap_or(0);
+                    let end: u64 = partes.get(1).filter(|s| !s.is_empty())
+                        .and_then(|s| s.parse().ok())
+                        .unwrap_or(file_len.saturating_sub(1));
+                    (start, end.min(file_len.saturating_sub(1)))
+                }
+                _ => (0, file_len.saturating_sub(1)),
+            };
+
+            let mut file = match std::fs::File::open(&video_path) {
+                Ok(f) => f,
+                Err(_) => {
+                    let _ = request.respond(tiny_http::Response::from_string("").with_status_code(500));
+                    continue;
+                }
+            };
+            if std::io::Seek::seek(&mut file, std::io::SeekFrom::Start(start)).is_err() {
+                let _ = request.respond(tiny_http::Response::from_string("").with_status_code(500));
+                continue;
+            }
+
+            let largo = end.saturating_sub(start) + 1;
+            let lector = std::io::Read::take(file, largo);
+
+            let mut headers = vec![
+                tiny_http::Header::from_bytes(&b"Content-Type"[..], content_type.as_bytes()).unwrap(),
+                tiny_http::Header::from_bytes(&b"Accept-Ranges"[..], &b"bytes"[..]).unwrap(),
+                tiny_http::Header::from_bytes(&b"Content-Length"[..], largo.to_string().as_bytes()).unwrap(),
+            ];
+
+            let status_code = if range_header.is_some() {
+                headers.push(tiny_http::Header::from_bytes(
+                    &b"Content-Range"[..],
+                    format!("bytes {}-{}/{}", start, end, file_len).as_bytes(),
+                ).unwrap());
+                206
+            } else {
+                200
+            };
+
+            let response = tiny_http::Response::new(
+                tiny_http::StatusCode(status_code),
+                headers,
+                lector,
+                Some(largo as usize),
+                None,
+            );
+            let _ = request.respond(response);
+            continue;
+        }
+
         // ── /fondo: sirve los bytes crudos de la imagen actual ─────────────
         if ruta == "/fondo" {
             let (bytes, content_type, hay_imagen) = {
@@ -1650,7 +1759,7 @@ fn iniciar_servidor_overlay(
             "/status" => {
                 let e = estado.lock().unwrap();
                 let json = format!(
-                    r#"{{"texto":{},"referencia":{},"color_texto":{},"fondo_tipo":{},"fondo_color":{},"fondo_opacity":{},"fondo_ajuste":{},"fondo_version":{}}}"#,
+                    r#"{{"texto":{},"referencia":{},"color_texto":{},"fondo_tipo":{},"fondo_color":{},"fondo_opacity":{},"fondo_ajuste":{},"fondo_version":{},"video_activo":{},"video_loop":{},"video_token":{}}}"#,
                     serde_json::to_string(&e.texto).unwrap_or("\"\"".into()),
                     serde_json::to_string(&e.referencia).unwrap_or("\"\"".into()),
                     serde_json::to_string(&e.color_texto).unwrap_or("\"#ffffff\"".into()),
@@ -1659,11 +1768,14 @@ fn iniciar_servidor_overlay(
                     e.fondo_opacity,
                     serde_json::to_string(&e.fondo_ajuste).unwrap_or("\"cover\"".into()),
                     e.fondo_version,
+                    e.video_activo,
+                    e.video_loop,
+                    e.video_token,
                 );
                 (200, "application/json", json)
             }
             _ => {
-                let html = r##"<!DOCTYPE html>
+                                let html = r##"<!DOCTYPE html>
 <html><head><meta charset="utf-8">
 <style>
   html, body { margin:0; padding:0; width:100%; height:100%; overflow:hidden; background:transparent; font-family: sans-serif; }
@@ -1673,6 +1785,7 @@ fn iniciar_servidor_overlay(
   #capa-texto { position:absolute; top:0; left:0; width:100%; height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:40px; box-sizing:border-box; }
   #texto { font-size:48px; font-weight:900; text-align:center; text-shadow: 2px 2px 6px rgba(0,0,0,0.6); white-space:pre-wrap; }
   #referencia { font-size:24px; font-weight:700; text-align:center; margin-top:16px; text-shadow: 2px 2px 6px rgba(0,0,0,0.6); }
+  #video { position:absolute; top:0; left:0; width:100%; height:100%; display:none; background:#000; object-fit:contain; z-index:5; }
 </style></head>
 <body>
   <div id="contenedor">
@@ -1682,9 +1795,12 @@ fn iniciar_servidor_overlay(
       <div id="texto"></div>
       <div id="referencia"></div>
     </div>
+    <video id="video" playsinline></video>
   </div>
   <script>
     let ultimaVersion = -1;
+    let ultimoVideoToken = -1;
+
     async function actualizar() {
       try {
         const r = await fetch('/status');
@@ -1698,24 +1814,48 @@ fn iniciar_servidor_overlay(
         const fondoImg   = document.getElementById('fondo');
         const scrim      = document.getElementById('scrim');
         const contenedor = document.getElementById('contenedor');
+        const capaTexto  = document.getElementById('capa-texto');
+        const video      = document.getElementById('video');
 
-        if (d.fondo_tipo === 'imagen') {
-          if (d.fondo_version !== ultimaVersion) {
-            fondoImg.src = '/fondo?v=' + d.fondo_version;
-            ultimaVersion = d.fondo_version;
+        if (d.video_activo) {
+          // ── Video con audio: tapa todo lo demás. El navegador de OBS
+          //    lo descarga y decodifica solo, sin costo extra en la app.
+          if (d.video_token !== ultimoVideoToken) {
+            video.pause();
+            video.src = '/video?v=' + d.video_token;
+            video.loop = !!d.video_loop;
+            video.muted = false;
+            video.play().catch(() => {});
+            ultimoVideoToken = d.video_token;
           }
-          fondoImg.style.display = 'block';
-          fondoImg.style.objectFit = d.fondo_ajuste || 'cover';
-          contenedor.style.background = 'transparent';
-          scrim.style.opacity = d.fondo_opacity || 0;
-        } else if (d.fondo_tipo === 'transparente') {
+          video.style.display = 'block';
+          capaTexto.style.display = 'none';
           fondoImg.style.display = 'none';
-          contenedor.style.background = 'transparent';
           scrim.style.opacity = 0;
+          contenedor.style.background = '#000';
         } else {
-          fondoImg.style.display = 'none';
-          contenedor.style.background = d.fondo_color || '#000000';
-          scrim.style.opacity = 0;
+          if (!video.paused) { video.pause(); }
+          video.style.display = 'none';
+          capaTexto.style.display = 'flex';
+
+          if (d.fondo_tipo === 'imagen') {
+            if (d.fondo_version !== ultimaVersion) {
+              fondoImg.src = '/fondo?v=' + d.fondo_version;
+              ultimaVersion = d.fondo_version;
+            }
+            fondoImg.style.display = 'block';
+            fondoImg.style.objectFit = d.fondo_ajuste || 'cover';
+            contenedor.style.background = 'transparent';
+            scrim.style.opacity = d.fondo_opacity || 0;
+          } else if (d.fondo_tipo === 'transparente') {
+            fondoImg.style.display = 'none';
+            contenedor.style.background = 'transparent';
+            scrim.style.opacity = 0;
+          } else {
+            fondoImg.style.display = 'none';
+            contenedor.style.background = d.fondo_color || '#000000';
+            scrim.style.opacity = 0;
+          }
         }
       } catch (e) {}
     }
@@ -2320,7 +2460,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let p        = p_handle.unwrap();
             let ui_local = ui_h.unwrap();
 
-            ui_local.set_is_video_projecting(false);
+                        ui_local.set_is_video_projecting(false);
             p.set_mostrar_video_biblioteca(false);
             p.set_biblioteca_video_frame(slint::Image::default());
             vp_lib_estrofa.lock().unwrap().detener();
@@ -2330,6 +2470,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             {
                 let mut e = overlay_e.lock().unwrap();
+                e.video_activo = false;
                 e.texto = texto.to_string();
             }
 
@@ -3485,36 +3626,49 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ui.set_active_pdf_page(page_idx);
             let current_pages = ui.get_pdf_pages();
             if let Some(img) = current_pages.row_data(page_idx as usize) {
-    vp_pdf.lock().unwrap().detener();
-    p.set_es_video(false);
-    p.set_mostrar_video_biblioteca(false);
-    p.set_biblioteca_video_frame(slint::Image::default());
-    limpiar_texto_proyeccion(&p);
-    p.set_fondo_imagen_aspecto(slint::SharedString::from("contain"));
-    p.set_fondo_imagen(img);
-    p.set_mostrar_imagen(true);
+                vp_pdf.lock().unwrap().detener();
+                p.set_es_video(false);
+                p.set_mostrar_video_biblioteca(false);
+                p.set_biblioteca_video_frame(slint::Image::default());
+                limpiar_texto_proyeccion(&p);
+                p.set_fondo_imagen_aspecto(slint::SharedString::from("contain"));
+                p.set_fondo_imagen(img);
+                p.set_mostrar_imagen(true);
 
-    // ── AGREGAR: Notificar a OBS ──
-    let idx_pdf = ui.get_selected_pdf_idx();
-    let ruta_pagina = {
-        let lista = pdf_state_proj.read().unwrap();
-        lista.get(idx_pdf as usize)
-            .and_then(|pdf| pdf.pages.get(page_idx as usize).cloned())
-    };
-    if let Some(ruta_pagina) = ruta_pagina {
-        let mut e = overlay_pdf.lock().unwrap();
-        e.texto.clear();
-        e.referencia.clear();
-        e.fondo_tipo    = "imagen".to_string();
-        e.fondo_opacity = 0.0;
-        e.fondo_ajuste  = "contain".to_string();
-        if let Ok(bytes) = std::fs::read(&ruta_pagina) {
-            e.fondo_imagen_content_type = content_type_desde_extension(&ruta_pagina).to_string();
-            e.fondo_imagen_bytes = bytes;
-        }
-        e.fondo_version += 1;
-    }
-}
+                // ── Notificar a OBS ──
+                if ui.get_overlay_solo_texto() {
+                    let mut e = overlay_pdf.lock().unwrap();
+                    e.video_activo = false;
+                    e.texto.clear();
+                    e.referencia.clear();
+                    e.fondo_tipo = "transparente".to_string();
+                    e.fondo_color.clear();
+                    e.fondo_opacity = 0.0;
+                    e.fondo_imagen_bytes.clear();
+                    e.fondo_version += 1;
+                } else {
+                    let idx_pdf = ui.get_selected_pdf_idx();
+                    let ruta_pagina = {
+                        let lista = pdf_state_proj.read().unwrap();
+                        lista.get(idx_pdf as usize)
+                            .and_then(|pdf| pdf.pages.get(page_idx as usize).cloned())
+                    };
+                    if let Some(ruta_pagina) = ruta_pagina {
+                        let mut e = overlay_pdf.lock().unwrap();
+                        e.video_activo = false;
+                        e.texto.clear();
+                        e.referencia.clear();
+                        e.fondo_tipo    = "imagen".to_string();
+                        e.fondo_opacity = 0.0;
+                        e.fondo_ajuste  = "contain".to_string();
+                        if let Ok(bytes) = std::fs::read(&ruta_pagina) {
+                            e.fondo_imagen_content_type = content_type_desde_extension(&ruta_pagina).to_string();
+                            e.fondo_imagen_bytes = bytes;
+                        }
+                        e.fondo_version += 1;
+                    }
+                }
+            }
         });
     }
 
@@ -3599,6 +3753,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // ── AGREGAR: Notificar a OBS ──
     let mut e = overlay_mm.lock().unwrap();
+    e.video_activo = false;
     e.texto.clear();
     e.referencia.clear();
     e.fondo_tipo    = "imagen".to_string();
@@ -3721,6 +3876,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let ui_h        = ui.as_weak();
         let bloqueo     = Arc::clone(&bloqueo_estilos);
         let bsc_video_vv = build_and_save_config.clone();
+        let overlay_vid  = Arc::clone(&overlay_estado);
         ui.on_proyectar_video(move |idx| {
             let p  = p_handle.unwrap();
             let ui = ui_h.unwrap();
@@ -3760,10 +3916,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             // NOTA: no tocamos p.set_es_video / p.set_bg_color / p.set_fondo_imagen / etc.
             // Esas propiedades siguen describiendo el FONDO de biblias/cantos intacto.
-            p.set_mostrar_video_biblioteca(true);
+             p.set_mostrar_video_biblioteca(true);
             vp_lib.lock().unwrap().reproducir(&ruta, p.as_weak(), is_loop, true);
             ui.set_is_video_projecting(true);
             ui.set_is_proyector_playing(true);
+
+            // ── AGREGAR: Notificar a OBS (video con audio) ──
+            // Servimos el archivo tal cual con soporte de Range; el
+            // <video> del navegador de OBS lo descarga y decodifica solo.
+            {
+                let mut e = overlay_vid.lock().unwrap();
+                e.video_activo = true;
+                e.video_ruta   = ruta.clone();
+                e.video_loop   = is_loop;
+                e.video_token += 1;
+            }
         });
     }
 

@@ -978,15 +978,25 @@ fn calcular_font_size_versiculo(
 // Reproductor de video nativo (GStreamer)
 // ---------------------------------------------------------------------------
 struct NativeVideoPlayer {
-    pipeline: Option<gst::Element>,
+     pipeline: Option<gst::Element>,
+    generacion: Arc<std::sync::atomic::AtomicU64>,
+    pausado_por_usuario: Arc<AtomicBool>,
 }
 
 impl NativeVideoPlayer {
-    fn new() -> Self { Self { pipeline: None } }
+    fn new() -> Self {
+        Self {
+            pipeline: None,
+            generacion: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            pausado_por_usuario: Arc::new(AtomicBool::new(false)),
+        }
+    }
 
     pub fn reproducir(&mut self, ruta: &str, proj_weak: slint::Weak<ProjectorWindow>, is_loop: bool, es_biblioteca: bool) {
         self.detener();
-        
+    self.pausado_por_usuario.store(false, Ordering::Release);
+    self.generacion.fetch_add(1, Ordering::AcqRel);
+    let mi_generacion = self.generacion.load(Ordering::Acquire);
         let path = std::path::Path::new(ruta).canonicalize()
             .unwrap_or_else(|_| std::path::PathBuf::from(ruta));
         let uri = gst::glib::filename_to_uri(&path, None).unwrap();
@@ -1078,11 +1088,25 @@ pipeline.set_property("video-sink", &sink_bin);
         self.pipeline = Some(pipeline.clone());
         let bus            = pipeline.bus().unwrap();
         let pipeline_clone = pipeline.clone();
+        let generacion_hilo = Arc::clone(&self.generacion);
+        let pausado_hilo    = Arc::clone(&self.pausado_por_usuario);
         std::thread::spawn(move || {
             for msg in bus.iter_timed(gst::ClockTime::NONE) {
+                // Si esta generación ya no es la vigente (se llamó a
+                // detener() o reproducir() de nuevo mientras tanto),
+                // este hilo pertenece a un pipeline "fantasma": lo
+                // ignoramos por completo para no pisar el estado del
+                // pipeline actual (esto arregla que un video se
+                // detuviera solo, o que reviviera tras pausarlo).
+                if generacion_hilo.load(Ordering::Acquire) != mi_generacion {
+                    break;
+                }
                 match msg.view() {
                     gst::MessageView::Eos(..) => {
-                        if is_loop {
+                        if generacion_hilo.load(Ordering::Acquire) != mi_generacion {
+                            break;
+                        }
+                        if is_loop && !pausado_hilo.load(Ordering::Acquire) {
                             let _ = pipeline_clone.seek_simple(
                                 gst::SeekFlags::FLUSH | gst::SeekFlags::KEY_UNIT,
                                 gst::ClockTime::ZERO,
@@ -1103,6 +1127,10 @@ pipeline.set_property("video-sink", &sink_bin);
     }
 
     fn detener(&mut self) {
+        // Invalida cualquier hilo de bus que siga vivo de una reproducción
+        // anterior, para que no reaccione a mensajes tardíos del pipeline
+        // viejo (causa raíz de los 3 bugs reportados).
+        self.generacion.fetch_add(1, Ordering::AcqRel);
         if let Some(pipeline) = self.pipeline.take() {
             let _ = pipeline.set_state(gst::State::Null);
         }
@@ -1190,9 +1218,11 @@ pipeline.set_property("video-sink", &sink_bin);
             let (_, state, _) = pipeline.state(gst::ClockTime::NONE);
             if state == gst::State::Playing {
                 pipeline.set_state(gst::State::Paused).unwrap();
+                self.pausado_por_usuario.store(true, Ordering::Release);
                 return false;
             } else {
                 pipeline.set_state(gst::State::Playing).unwrap();
+                self.pausado_por_usuario.store(false, Ordering::Release);
                 return true;
             }
         }

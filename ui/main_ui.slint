@@ -1005,6 +1005,27 @@ Timer {
                                 }
                             }
 
+
+                            Rectangle {
+                                width: 90px; height: 36px;
+                                border-radius: 4px;
+                                background: help-touch.has-hover ? Theme.bg_card_hover : transparent;
+                                help-touch := TouchArea {
+                                    clicked => {
+                                        root.menu_ayuda_x = self.absolute-position.x;
+                                        root.menu_ayuda_y = self.absolute-position.y + self.height;
+                                        root.mostrar_menu_ayuda = !root.mostrar_menu_ayuda;
+                                    }
+                                }
+                                Text {
+                                    text: "Ayuda";
+                                    color: help-touch.has-hover ? Theme.text_primary : Theme.text_secondary;
+                                    font-size: 11px; font-weight: 700;
+                                    horizontal-alignment: center; vertical-alignment: center;
+                                    width: 100%; height: 100%;
+                                }
+                            }
+
                                 Rectangle { horizontal-stretch: 1; }
 
                                 Rectangle {
@@ -1689,6 +1710,14 @@ Timer {
     in-out property <length> menu_herramientas_x: 0px;
     in-out property <length> menu_herramientas_y: 0px;
 
+    in-out property <bool> mostrar_menu_ayuda: false;
+    in-out property <length> menu_ayuda_x: 0px;
+    in-out property <length> menu_ayuda_y: 0px;
+
+    in-out property <bool> mostrar_acerca_de: false;
+    in-out property <string> acerca_version: "";
+    in-out property <string> acerca_aceleracion: "";
+
     in-out property <bool> libreoffice_listo: false;
     in-out property <bool> instalando_libreoffice: false;
     in-out property <float> libreoffice_progreso: 0.0;
@@ -1778,6 +1807,127 @@ if (root.mostrar_menu_herramientas) : Rectangle {
     }
 }
 
+
+// ══════════════════════════════════════════════════════════════
+//  MENÚ DESPLEGABLE: AYUDA
+// ══════════════════════════════════════════════════════════════
+if (root.mostrar_menu_ayuda) : Rectangle {
+    width: 100%; height: 100%; background: transparent;
+    TouchArea { clicked => { root.mostrar_menu_ayuda = false; } }
+    Rectangle {
+        x: root.menu_ayuda_x; y: root.menu_ayuda_y;
+        width: 170px; height: 40px;
+        background: Theme.bg_popup; border-radius: 8px; border-width: 2px; border-color: Theme.border_strong;
+        TouchArea {}
+        VerticalLayout {
+            padding: 4px; spacing: 2px;
+            MenuItem {
+                text: "Acerca de"; icon: "";
+                clicked => {
+                    root.mostrar_menu_ayuda = false;
+                    root.mostrar_acerca_de = true;
+                }
+            }
+        }
+    }
+}
+// ══════════════════════════════════════════════════════════════
+//  MODAL: ACERCA DE
+// ══════════════════════════════════════════════════════════════
+if (root.mostrar_acerca_de) : Rectangle {
+    width: 100%; height: 100%; background: Theme.overlay;
+    TouchArea { clicked => { root.mostrar_acerca_de = false; } }
+
+    Rectangle {
+        width: 520px; height: 560px;
+        background: Theme.bg_popup; border-radius: 14px;
+        border-width: 2px; border-color: Theme.border_strong;
+        TouchArea {}
+
+        VerticalLayout {
+            // ── Header ───────────────────────────────────────────────
+            Rectangle {
+                height: 56px;
+                HorizontalLayout {
+                    padding-left: 26px; padding-right: 14px;
+                    Text { text: "ACERCA DE"; color: Theme.text_muted; font-size: 10px; font-weight: 900; letter-spacing: 2px; vertical-alignment: center; horizontal-stretch: 1; }
+                    Rectangle {
+                        width: 32px; height: 32px; border-radius: 8px;
+                        background: touch-close-acerca.has-hover ? Theme.bg_card_hover : transparent;
+                        touch-close-acerca := TouchArea { clicked => { root.mostrar_acerca_de = false; } }
+                        Text { text: "✕"; color: Theme.text_secondary; font-size: 14px; horizontal-alignment: center; vertical-alignment: center; }
+                    }
+                }
+            }
+            Rectangle { height: 1px; background: Theme.separator; }
+
+            // ── Contenido ────────────────────────────────────────────
+            VerticalLayout {
+                vertical-stretch: 1;
+                padding-left: 32px; padding-right: 32px;
+                padding-top: 28px; padding-bottom: 28px;
+                spacing: 0px;
+
+                // Nombre y versión, centrados y con más aire
+                VerticalLayout {
+                    alignment: center; spacing: 8px;
+                    Text { text: "ReadyShow"; color: Theme.accent; font-size: 30px; font-weight: 900; horizontal-alignment: center; }
+                    Rectangle {
+                        width: 90px; height: 26px; border-radius: 13px;
+                        background: Theme.accent_soft;
+                        Text {
+                            text: "Versión " + root.acerca_version;
+                            color: Theme.accent; font-size: 11px; font-weight: 800;
+                            horizontal-alignment: center; vertical-alignment: center;
+                            width: 100%; height: 100%;
+                        }
+                    }
+                }
+
+                Rectangle { height: 26px; }
+
+                // Estado de aceleración — más aire y texto más grande
+                Rectangle {
+                    height: 58px; border-radius: 10px;
+                    background: Theme.bg_list; border-width: 1px; border-color: Theme.border_subtle;
+                    HorizontalLayout {
+                        padding-left: 16px; padding-right: 16px; spacing: 12px;
+                        Rectangle {
+                            width: 32px; height: 32px; border-radius: 16px;
+                            background: Theme.accent_soft;
+                            Text { text: "⚙"; color: Theme.accent; font-size: 16px; horizontal-alignment: center; vertical-alignment: center; width: 100%; height: 100%; }
+                        }
+                        Text {
+                            text: root.acerca_aceleracion;
+                            color: Theme.text_secondary; font-size: 11px; font-weight: 700;
+                            wrap: word-wrap; vertical-alignment: center; horizontal-stretch: 1;
+                        }
+                    }
+                }
+
+                Rectangle { height: 24px; }
+
+                // Licencia — ocupa el espacio restante, con buen padding interno
+                Text { text: "LICENCIA MIT"; color: Theme.text_muted; font-size: 10px; font-weight: 900; letter-spacing: 1.5px; height: 18px; }
+                Rectangle { height: 8px; }
+                Rectangle {
+                    vertical-stretch: 1; border-radius: 10px;
+                    background: Theme.bg_list; border-width: 1px; border-color: Theme.border_subtle;
+                    clip: true;
+                    ScrollView {
+                        VerticalLayout {
+                            padding: 18px;
+                            Text {
+                                text: "Copyright © 2025 Arbasante\n\nSe concede permiso, de forma gratuita, a cualquier persona que obtenga una copia de este software y de los archivos de documentación asociados, para utilizar el software sin restricción, incluyendo, sin limitación, los derechos de uso, copia, modificación, fusión, publicación, distribución, sublicencia y/o venta de copias del software, y a permitir a las personas a quienes se les proporcione el software hacerlo, sujeto a las siguientes condiciones:\n\nEl aviso de copyright anterior y este aviso de permiso se incluirán en todas las copias o partes sustanciales del software.\n\nEl software se proporciona \"tal cual\", sin garantía de ningún tipo, expresa o implícita, incluyendo pero sin limitarse a las garantías de comerciabilidad, idoneidad para un propósito particular y no infracción.";
+                                color: Theme.text_secondary; font-size: 11px; wrap: word-wrap;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
 
 
     // ══════════════════════════════════════════════════════════════

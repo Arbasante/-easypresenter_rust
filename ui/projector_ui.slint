@@ -14,18 +14,20 @@ export component MedidorTexto inherits Text {
 
     wrap: word-wrap;
     overflow: clip;
-    font-family: "Google Sans";
-    font-weight: 900;
+    in property <string> texto_font_family: "Google Sans";
+    font-family: self.texto_font_family;
+    font-weight: (self.texto_font_family == "Outfit" || self.texto_font_family == "Rubik") ? 800 : 900;
 
     // Rust lee esta altura después de fijar `text`, `width` y `font-size`.
     out property <length> altura_medida: self.preferred-height;
 }
-
 export component MedidorWindow inherits Window {
     width: 4px;
     height: 4px;
 
-    medidor := MedidorTexto { }
+    in-out property <string> text_font_family: "Google Sans";
+
+    medidor := MedidorTexto { texto_font_family: root.text_font_family; }
 
     public function medir_altura(texto: string, ancho: length, tamano_fuente: length) -> length {
         medidor.text = texto;
@@ -43,7 +45,8 @@ export component ProjectorWindow inherits Window {
     // 1. El fondo real de la ventana de Windows siempre será negro
     background: black;
 
-    default-font-family: "Google Sans";
+    in-out property <string> text_font_family: "Google Sans";
+    default-font-family: root.text_font_family;
 
     in property <string> texto_proyeccion: "";
     in property <string> referencia: "";
@@ -119,8 +122,9 @@ export component ProjectorWindow inherits Window {
                 Text {
                     text: root.texto_proyeccion;
                     color: root.text_color;
+                    font-family: root.text_font_family;
                     font-size: root.tamano_letra * 1px;
-                    font-weight: 900;
+                    font-weight: (root.text_font_family == "Outfit" || root.text_font_family == "Rubik") ? 800 : 900;
                     wrap: word-wrap;
                     horizontal-alignment: center;
                     vertical-alignment: center;
@@ -145,6 +149,7 @@ export component ProjectorWindow inherits Window {
                     vertical-alignment: center;
                     width: parent.width;
                     height: parent.height;
+                    
                 }
             }
         }

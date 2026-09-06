@@ -7,7 +7,7 @@
     "/home/basanteriano/Descargas/Proyektor - Linux/fondos/Videos/AmazonSwamp   FREE Video Background Loops HD 1080p.webm"
   ],
   "cantos_video_paths": [],
-  "tema_oscuro": true,
+  "tema_oscuro": false,
   "biblias_selected_img": -1,
   "cantos_selected_img": -1,
   "biblias_selected_vid": 0,
@@ -39,15 +39,9 @@
   "multimedia_aspectos": [
     "centro"
   ],
-  "video_paths": [
-    "/home/basanteriano/Descargas/Comp.avi"
-  ],
-  "video_names": [
-    "Comp.avi"
-  ],
-  "video_loops": [
-    true
-  ],
+  "video_paths": [],
+  "video_names": [],
+  "video_loops": [],
   "margen_izquierdo": 0.0,
   "margen_derecho": 0.0,
   "margen_superior": 0.0,
@@ -64,5 +58,6 @@
       1
     ]
   ],
-  "auto_proyectar_inicio": true
+  "auto_proyectar_inicio": true,
+  "proyeccion_font_family": "Arimo"
 }

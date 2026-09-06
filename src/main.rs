@@ -69,9 +69,13 @@ struct ConfigApp {
     #[serde(default = "default_true")]
     auto_proyectar_inicio: bool,
 
+    #[serde(default = "default_font")]
+    proyeccion_font_family: String,
+
 }
 
 fn default_true() -> bool { true }
+fn default_font() -> String { "Google Sans".to_string() }
 
 fn config_path(user_data_dir: &std::path::Path) -> std::path::PathBuf {
     user_data_dir.join("config.json")
@@ -89,7 +93,9 @@ fn cargar_config(user_data_dir: &std::path::Path) -> ConfigApp {
         cfg.cantos_font_color  = [255, 255, 255];
         cfg.biblias_font_scale = 1.0;
         cfg.cantos_font_scale  = 1.0;
+        cfg.proyeccion_font_family = "Google Sans".to_string();
         cfg
+       
     }
 }
 
@@ -933,47 +939,33 @@ fn calcular_font_size_canto(
     p: &MedidorWindow,
     texto: &str, screen_w: f32, screen_h: f32, scale: f32,
     m_izq: f32, m_der: f32, m_sup: f32, m_inf: f32,
+    font_family: &str,
 ) -> f32 {
+    p.set_text_font_family(SharedString::from(font_family));
     let ancho_util = (screen_w - PROJ_PADDING * 2.0 - m_izq - m_der).max(10.0);
     let alto_util  = (screen_h - PROJ_PADDING * 2.0 - m_sup - m_inf).max(10.0);
-
-    //let ancho_logical = slint::LogicalLength::new(ancho_util);
     let techo = FONT_SIZE_MAXIMO.min(alto_util);
-
     let maximo = buscar_tamano_optimo(alto_util, techo, |candidato| {
-        p.invoke_medir_altura(
-            SharedString::from(texto),
-            ancho_util,
-            candidato,
-        )
+        p.invoke_medir_altura(SharedString::from(texto), ancho_util, candidato)
     });
-
     (maximo * scale).min(maximo)
 }
 
-/// Tamaño de fuente para VERSÍCULOS, usando medición real vía Slint.
 fn calcular_font_size_versiculo(
     p: &MedidorWindow,
     texto: &str, screen_w: f32, screen_h: f32, scale: f32,
     m_izq: f32, m_der: f32, m_sup: f32, m_inf: f32,
+    font_family: &str,
 ) -> f32 {
+    p.set_text_font_family(SharedString::from(font_family));
     let ancho_util = (screen_w - PROJ_PADDING * 2.0 - m_izq - m_der).max(10.0);
     let alto_util  = (screen_h - PROJ_PADDING * 2.0 - REF_ZONE_H - 8.0 - m_sup - m_inf).max(10.0);
-
-    //let ancho_logical = slint::LogicalLength::new(ancho_util);
     let techo = FONT_SIZE_MAXIMO.min(alto_util);
-
     let maximo = buscar_tamano_optimo(alto_util, techo, |candidato| {
-        p.invoke_medir_altura(
-            SharedString::from(texto),
-            ancho_util,
-            candidato,
-        )
+        p.invoke_medir_altura(SharedString::from(texto), ancho_util, candidato)
     });
-
     (maximo * scale).min(maximo)
 }
-
 // ---------------------------------------------------------------------------
 // Reproductor de video nativo (GStreamer)
 // ---------------------------------------------------------------------------
@@ -1285,6 +1277,7 @@ fn aplicar_estilos(
     let opacity    = if is_biblia { ui.get_biblias_fondo_opacity() } else { ui.get_cantos_fondo_opacity() };
     p.set_text_color(font_color);
     p.set_fondo_opacity(opacity);
+    //p.set_text_font_family(ui.get_proyeccion_font_family());
 
     if bg_type == "negro" {
         vp.lock().unwrap().detener();
@@ -2091,6 +2084,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ui.set_cantos_fondo_opacity(cfg.cantos_fondo_opacity);
     ui.set_biblias_font_scale(if cfg.biblias_font_scale == 0.0 { 1.0 } else { cfg.biblias_font_scale });
     ui.set_cantos_font_scale(if cfg.cantos_font_scale == 0.0 { 1.0 } else { cfg.cantos_font_scale });
+    let fuente_inicial = if cfg.proyeccion_font_family.is_empty() { "Google Sans".to_string() } else { cfg.proyeccion_font_family.clone() };
+    ui.set_proyeccion_font_family(SharedString::from(&fuente_inicial));
+    proyector.set_text_font_family(SharedString::from(&fuente_inicial));
+    medidor_win.set_text_font_family(SharedString::from(&fuente_inicial));
     ui.set_margen_izquierdo(cfg.margen_izquierdo);
     ui.set_margen_derecho(cfg.margen_derecho);
     ui.set_margen_superior(cfg.margen_superior);
@@ -2205,6 +2202,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 cantos_fondo_opacity:  ui.get_cantos_fondo_opacity(),
                 biblias_font_scale:   ui.get_biblias_font_scale(),
                 cantos_font_scale:    ui.get_cantos_font_scale(),
+                proyeccion_font_family: ui.get_proyeccion_font_family().to_string(),
                 multimedia_paths:   mm.iter().map(|m| m.path.clone()).collect(),
                 multimedia_names:   mm.iter().map(|m| m.name.clone()).collect(),
                 multimedia_aspectos: mm.iter().map(|m| m.aspecto.clone()).collect(),
@@ -2406,7 +2404,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let texto_nuevo = diapos_slint[idx].texto.clone();
                     let scale       = ui.get_cantos_font_scale();
                     let medidor = medidor_gc.unwrap();
-                    let font_size   = calcular_font_size_canto(&medidor, &texto_nuevo, screen_w, screen_h, scale, m_izq, m_der, m_sup, m_inf);
+                    let font_size = calcular_font_size_canto(&medidor, &texto_nuevo, screen_w, screen_h, scale, m_izq, m_der, m_sup, m_inf, &ui.get_proyeccion_font_family());
                     p.set_texto_proyeccion(texto_nuevo);
                     p.set_tamano_letra(font_size);
                     p.set_referencia(SharedString::from(""));
@@ -2539,10 +2537,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             );
             let medidor = medidor_pe.unwrap();
             let font_size = if tiene_referencia {
-                calcular_font_size_versiculo(&medidor, &texto, screen_w, screen_h, scale, m_izq, m_der, m_sup, m_inf)
-            } else {
-                calcular_font_size_canto(&medidor, &texto, screen_w, screen_h, scale, m_izq, m_der, m_sup, m_inf)
-            };
+    calcular_font_size_versiculo(&medidor, &texto, screen_w, screen_h, scale, m_izq, m_der, m_sup, m_inf, &ui_local.get_proyeccion_font_family())
+} else {
+    calcular_font_size_canto(&medidor, &texto, screen_w, screen_h, scale, m_izq, m_der, m_sup, m_inf, &ui_local.get_proyeccion_font_family())
+};
             p.set_tamano_letra(font_size);
             let modo_actual = if tiene_referencia { "biblias" } else { "cantos" };
             let mut l_modo    = last_modo.lock().unwrap();
@@ -2807,11 +2805,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             ui.get_margen_superior(),  ui.get_margen_inferior(),
                         );
                         let medidor = medidor_se.unwrap();
-                        let base_size  = if tiene_ref {
-                            calcular_font_size_versiculo(&medidor, &texto, sw, sh, scale, m_izq, m_der, m_sup, m_inf)
-                        } else {
-                            calcular_font_size_canto(&medidor, &texto, sw, sh, scale, m_izq, m_der, m_sup, m_inf)
-                        };
+                        let base_size = if tiene_ref {
+    calcular_font_size_versiculo(&medidor, &texto, sw, sh, scale, m_izq, m_der, m_sup, m_inf, &ui.get_proyeccion_font_family())
+} else {
+    calcular_font_size_canto(&medidor, &texto, sw, sh, scale, m_izq, m_der, m_sup, m_inf, &ui.get_proyeccion_font_family())
+};
                         p.set_tamano_letra(base_size);
                     }
                 }
@@ -2849,14 +2847,60 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     ui.get_margen_superior(),  ui.get_margen_inferior(),
                 );
                 let medidor = medidor_sfs.unwrap();
-                let base_size  = if tiene_ref {
-                    calcular_font_size_versiculo(&medidor, &texto, sw, sh, scale, m_izq, m_der, m_sup, m_inf)
-                } else {
-                    calcular_font_size_canto(&medidor, &texto, sw, sh, scale, m_izq, m_der, m_sup, m_inf)
-                };
+                let base_size = if tiene_ref {
+    calcular_font_size_versiculo(&medidor, &texto, sw, sh, scale, m_izq, m_der, m_sup, m_inf, &ui.get_proyeccion_font_family())
+} else {
+    calcular_font_size_canto(&medidor, &texto, sw, sh, scale, m_izq, m_der, m_sup, m_inf, &ui.get_proyeccion_font_family())
+};
                 p.set_tamano_letra(base_size);
             }
             bsc_font();
+        });
+    }
+
+        // ── Cambio de fuente (GLOBAL: aplica sin importar la pestaña activa) ────
+    {
+        let ui_h        = ui.as_weak();
+        let p_h         = proyector.as_weak();
+        let sp          = Arc::clone(&segunda_pantalla);
+        let modo_vivo   = Arc::clone(&modo_en_vivo);
+        let bsc_fuente  = build_and_save_config.clone();
+        let medidor_cf  = medidor_win.as_weak();
+        ui.on_cambiar_fuente_proyeccion(move |fuente| {
+            let ui = ui_h.unwrap();
+            let p  = p_h.unwrap();
+            p.set_text_font_family(fuente.clone());
+
+            let modo_actual = modo_vivo.lock().unwrap().clone();
+            if !modo_actual.is_empty() {
+                let active_idx = ui.get_active_estrofa_index();
+                if active_idx >= 0 {
+                    let estrofas = ui.get_estrofas_actuales();
+                    let idx = active_idx as usize;
+                    if idx < estrofas.row_count() {
+                        if let Some(d) = estrofas.row_data(idx) {
+                            let texto      = d.texto.to_string();
+                            let referencia = p.get_referencia().to_string();
+                            let tiene_ref  = !referencia.is_empty();
+                            let info       = *sp.lock().unwrap();
+                            let (sw, sh)   = if let Some((_, _, w, h)) = info { (w as f32, h as f32) } else { (1280.0, 720.0) };
+                            let scale      = if modo_actual == "biblias" { ui.get_biblias_font_scale() } else { ui.get_cantos_font_scale() };
+                            let (m_izq, m_der, m_sup, m_inf) = (
+                                ui.get_margen_izquierdo(), ui.get_margen_derecho(),
+                                ui.get_margen_superior(),  ui.get_margen_inferior(),
+                            );
+                            let medidor = medidor_cf.unwrap();
+                            let base_size = if tiene_ref {
+                                calcular_font_size_versiculo(&medidor, &texto, sw, sh, scale, m_izq, m_der, m_sup, m_inf, &fuente)
+                            } else {
+                                calcular_font_size_canto(&medidor, &texto, sw, sh, scale, m_izq, m_der, m_sup, m_inf, &fuente)
+                            };
+                            p.set_tamano_letra(base_size);
+                        }
+                    }
+                }
+            }
+            bsc_fuente();
         });
     }
 

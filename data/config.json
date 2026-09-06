@@ -8,7 +8,7 @@
   ],
   "cantos_video_paths": [],
   "tema_oscuro": true,
-  "biblias_selected_img": 0,
+  "biblias_selected_img": -1,
   "cantos_selected_img": -1,
   "biblias_selected_vid": 0,
   "cantos_selected_vid": -1,
@@ -40,15 +40,12 @@
     "centro"
   ],
   "video_paths": [
-    "/home/basanteriano/Descargas/BIENVENIDOS A LA CASA DE DIOS _ LOOPS _.mp4",
     "/home/basanteriano/Descargas/Comp.avi"
   ],
   "video_names": [
-    "BIENVENIDOS A LA CASA DE DIOS _ LOOPS _.mp4",
     "Comp.avi"
   ],
   "video_loops": [
-    true,
     true
   ],
   "margen_izquierdo": 0.0,

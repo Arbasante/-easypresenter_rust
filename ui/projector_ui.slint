@@ -65,47 +65,47 @@ export component ProjectorWindow inherits Window {
     in property <float> margen_superior: 0;
     in property <float> margen_inferior: 0;
 
-    // 2. EL CONTENEDOR MÁGICO: Este Rectangle es tu nueva "Área de Proyección"
+        // 2. NUEVO PARADIGMA: el fondo (imagen/video) SIEMPRE ocupa el 100%
+    //    de la ventana, sin recalcularse jamás por los márgenes. Cada
+    //    margen solo dibuja su propia "cortina" negra en su borde,
+    //    totalmente independiente de los otros tres. Esto elimina el
+    //    bug donde mover un margen (p.ej. izquierdo) reescalaba el
+    //    fondo con "contain"/"cover" y provocaba un desplazamiento
+    //    visible también en el eje contrario.
     Rectangle {
-        // Empujamos el contenedor desde la izquierda y arriba
-        x: root.margen_izquierdo * 1px;
-        y: root.margen_superior * 1px;
-        
-        // Reducimos el tamaño total restándole los márgenes
-        width: parent.width - (root.margen_izquierdo + root.margen_derecho) * 1px;
-        height: parent.height - (root.margen_superior + root.margen_inferior) * 1px;
-        
-        // Evita que las imágenes, videos o textos se salgan de este rectángulo
-        clip: true; 
-
-        // El color de fondo que elige el usuario
+        width: 100%; height: 100%;
         background: root.bg_color;
 
-        // ── Capa 1: Imagen estática ────────────────────────────────────
-        if (root.mostrar_imagen && !root.es_video) : Image {
+        // ── Capa 1: Imagen estática (tamaño FIJO, nunca depende de márgenes) ─
+        if (root.mostrar_imagen && !root.es_video && !root.mostrar_video_biblioteca) : Image {
             source: root.fondo_imagen;
             width: 100%; height: 100%;
             image-fit: root.fondo_imagen_aspecto == "rellenar" ? cover
                      : (root.fondo_imagen_aspecto == "estirar" ? fill : contain);
         }
 
-        // ── Capa 1.5: Frame de video ───────────────────────────────────
-        if (root.es_video) : Image {
+        // ── Capa 1.5: Frame de video de FONDO (tamaño FIJO) ──────────────
+        if (root.es_video && !root.mostrar_video_biblioteca) : Image {
             source: root.fondo_video_frame;
             width: 100%; height: 100%;
             image-fit: contain;
         }
 
-        // ── Capa 2: Velo oscurecedor (aplica a imagen Y video) ─────────
-        Rectangle {
+        // ── Capa 2: Velo oscurecedor — SOLO aplica al fondo ──────────────
+        if (!root.mostrar_video_biblioteca) : Rectangle {
             width: 100%; height: 100%;
             background: rgba(0, 0, 0, root.fondo_opacity);
         }
 
-        // ── Capa 3: Texto ──────────────────────────────────────────────
-        VerticalLayout {
-            // Ya no usamos padding aquí, porque el Rectangle padre ya tiene el tamaño correcto
-            width: 100%; height: 100%;
+        // ── Capa 3: Texto — se ubica dentro del área visible (con márgenes) ─
+        //    Aquí SÍ aplicamos los márgenes, porque el texto debe
+        //    reposicionarse dentro del espacio disponible. Esto no
+        //    afecta al fondo, que vive en una capa completamente aparte.
+        if (!root.mostrar_video_biblioteca) : VerticalLayout {
+            x: root.margen_izquierdo * 1px;
+            y: root.margen_superior * 1px;
+            width: parent.width - (root.margen_izquierdo + root.margen_derecho) * 1px;
+            height: parent.height - (root.margen_superior + root.margen_inferior) * 1px;
             spacing: 0px;
 
             padding-left: 4px;
@@ -122,7 +122,6 @@ export component ProjectorWindow inherits Window {
                     font-size: root.tamano_letra * 1px;
                     font-weight: 900;
                     wrap: word-wrap;
-                    //overflow: elide;
                     horizontal-alignment: center;
                     vertical-alignment: center;
                     width: parent.width;
@@ -141,8 +140,7 @@ export component ProjectorWindow inherits Window {
                     font-size: 75px;
                     font-weight: 800;
                     font-italic: true;
-                    // Le damos un pequeño margen derecho interno para que no quede pegado al borde absoluto
-                    padding-right: 20px; 
+                    padding-right: 20px;
                     horizontal-alignment: right;
                     vertical-alignment: center;
                     width: parent.width;
@@ -150,6 +148,8 @@ export component ProjectorWindow inherits Window {
                 }
             }
         }
+
+        // ── Capa 4: Video de la BIBLIOTECA (tamaño FIJO) ─────────────────
         if (root.mostrar_video_biblioteca) : Rectangle {
             width: 100%; height: 100%;
             background: black;
@@ -161,8 +161,32 @@ export component ProjectorWindow inherits Window {
             }
         }
 
-
-
+        // ── Capa 5: CORTINAS DE MARGEN ────────────────────────────────────
+        // Cada cortina depende ÚNICAMENTE de su propia variable. Mover
+        // el margen izquierdo solo cambia el ancho de la cortina
+        // izquierda; no toca superior, inferior ni derecha, y — lo
+        // más importante — NO fuerza ningún recálculo de escala del
+        // fondo, porque el fondo ya no vive dentro de este cálculo.
+        Rectangle {
+            x: 0; y: 0;
+            width: root.margen_izquierdo * 1px; height: 100%;
+            background: black;
+        }
+        Rectangle {
+            x: parent.width - root.margen_derecho * 1px; y: 0;
+            width: root.margen_derecho * 1px; height: 100%;
+            background: black;
+        }
+        Rectangle {
+            x: 0; y: 0;
+            width: 100%; height: root.margen_superior * 1px;
+            background: black;
+        }
+        Rectangle {
+            x: 0; y: parent.height - root.margen_inferior * 1px;
+            width: 100%; height: root.margen_inferior * 1px;
+            background: black;
+        }
     }
 
 

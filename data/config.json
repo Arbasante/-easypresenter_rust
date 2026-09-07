@@ -31,17 +31,29 @@
   "biblias_font_scale": 0.99999976,
   "cantos_font_scale": 2.0,
   "multimedia_paths": [
-    "/home/basanteriano/Descargas/video.png"
+    "/home/basanteriano/Descargas/video.png",
+    "/home/basanteriano/Descargas/readyshow.jpg"
   ],
   "multimedia_names": [
-    "video.png"
+    "video.png",
+    "readyshow.jpg"
   ],
   "multimedia_aspectos": [
+    "centro",
     "centro"
   ],
-  "video_paths": [],
-  "video_names": [],
-  "video_loops": [],
+  "video_paths": [
+    "/home/basanteriano/Descargas/pergamino de amor.mp4",
+    "/home/basanteriano/Descargas/BIENVENIDOS A LA CASA DE DIOS _ LOOPS _.mp4"
+  ],
+  "video_names": [
+    "pergamino de amor.mp4",
+    "BIENVENIDOS A LA CASA DE DIOS _ LOOPS _.mp4"
+  ],
+  "video_loops": [
+    false,
+    false
+  ],
   "margen_izquierdo": 0.0,
   "margen_derecho": 0.0,
   "margen_superior": 0.0,
@@ -50,12 +62,12 @@
   "default_bg_idx": 0,
   "pantallas_roles": [
     [
-      0,
-      1
-    ],
-    [
       1,
       2
+    ],
+    [
+      0,
+      1
     ]
   ],
   "auto_proyectar_inicio": true,

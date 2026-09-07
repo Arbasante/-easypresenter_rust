@@ -597,7 +597,8 @@ property <[string]> fuentes_disponibles: [
                         vertical-stretch: 1;
 
                         // ── TAB CANTOS ──
-                        if (root.active-tab == "cantos") : VerticalLayout {
+                         VerticalLayout {
+                             visible: root.active-tab == "cantos";
                             // Buscador
                             Rectangle {
                                 height: 52px;
@@ -657,7 +658,8 @@ property <[string]> fuentes_disponibles: [
                         }
 
                         // ── TAB BIBLIAS ──
-                        if (root.active-tab == "biblias") : VerticalLayout {
+                        VerticalLayout {
+                            visible: root.active-tab == "biblias";
                             padding: 10px; spacing: 10px;
                             ComboBox { height: 32px; width: 100%; model: root.bible-versions; current-value <=> root.current-bible-version; selected(val) => { root.bible-version-changed(val); } }
                             Rectangle {
@@ -743,7 +745,8 @@ property <[string]> fuentes_disponibles: [
                         }
 
                         // ── TAB IMÁGENES MULTIMEDIA ──
-                        if (root.active-tab == "imagenes") : Rectangle {
+                        Rectangle {
+                            visible: root.active-tab == "imagenes";
                             vertical-stretch: 1; background: Theme.bg_list; border-width: 1px; border-color: Theme.border_subtle;
                             TouchArea {
                                 pointer-event(e) => {
@@ -794,7 +797,8 @@ property <[string]> fuentes_disponibles: [
                         }
 
                         // ── TAB VIDEOS (BIBLIOTECA) ──
-                        if (root.active-tab == "videos") : Rectangle {
+                        Rectangle {
+                            visible: root.active-tab == "videos";
                             vertical-stretch: 1; background: Theme.bg_list; border-width: 1px; border-color: Theme.border_subtle;
                             TouchArea {
                                 pointer-event(e) => {
@@ -844,7 +848,8 @@ property <[string]> fuentes_disponibles: [
                         }
 
                         // ── TAB PDF (BIBLIOTECA) ──
-                        if (root.active-tab == "pdf") : Rectangle {
+                        Rectangle {
+                            visible: root.active-tab == "pdf";
                             vertical-stretch: 1; background: Theme.bg_list; border-width: 1px; border-color: Theme.border_subtle;
                             TouchArea {
                                 pointer-event(e) => {
@@ -1155,7 +1160,8 @@ property <[string]> fuentes_disponibles: [
                             width: 100%; height: 100%; background: Theme.bg_main;
 
                             // ── VISTA CANTOS / BIBLIAS ──
-                            if (root.active-tab == "cantos" || root.active-tab == "biblias") : Rectangle {
+                            Rectangle {
+                                visible: root.active-tab == "cantos" || root.active-tab == "biblias";
                                 width: 100%; height: 100%;
                                 if (root.estrofas_actuales.length == 0) : VerticalLayout {
                                     alignment: center; spacing: 16px;
@@ -1280,7 +1286,8 @@ property <[string]> fuentes_disponibles: [
                             }
 
                             // ── VISTA IMÁGENES (panel central) ──
-                            if (root.active-tab == "imagenes") : Rectangle {
+                            Rectangle {
+                                visible: root.active-tab == "imagenes";
                                 width: 100%; height: 100%; background: Theme.bg_main;
                                 touch-central-media := TouchArea {
                                     clicked => { root.proyectar_multimedia(root.selected_media_idx); }
@@ -1311,7 +1318,8 @@ property <[string]> fuentes_disponibles: [
                             }
 
                             // ── VISTA VIDEOS (panel central) ──
-                            if (root.active-tab == "videos") : Rectangle {
+                            Rectangle {
+                                visible: root.active-tab == "videos";
                                 width: 100%; height: 100%; background: Theme.bg_main;
                                 if (root.selected_video_idx >= 0 && root.selected_video_idx < root.video_items.length) : VerticalLayout {
                                     padding: 16px; spacing: 12px;
@@ -1376,7 +1384,8 @@ property <[string]> fuentes_disponibles: [
                             }
 
                             // ── VISTA PDF (panel central) ──
-                            if (root.active-tab == "pdf") : Rectangle {
+                            Rectangle {
+                                visible: root.active-tab == "pdf";
                                 width: 100%; height: 100%; background: Theme.bg_main;
                                 if (root.pdf_pages.length == 0) : VerticalLayout {
                                     alignment: center; spacing: 16px;

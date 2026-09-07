@@ -114,6 +114,23 @@ fn verificar_integridad_db(conn: &Connection) -> bool {
     checkpoint_ok && integridad == "ok"
 }
 
+/// Detiene AMBOS reproductores de video (fondo y biblioteca) y limpia
+/// la capa de video de biblioteca en el proyector. Debe llamarse SIEMPRE
+/// que se vaya a proyectar algo que no sea el video de biblioteca en
+/// curso (estrofa, imagen de multimedia, página de PDF, etc.), para
+/// evitar que el audio de un video de biblioteca siga sonando "detrás"
+/// de otro contenido.
+fn detener_todo_video(
+    p: &ProjectorWindow,
+    vp_fondo: &Arc<Mutex<NativeVideoPlayer>>,
+    vp_biblioteca: &Arc<Mutex<NativeVideoPlayer>>,
+) {
+    vp_fondo.lock().unwrap().detener();
+    vp_biblioteca.lock().unwrap().detener();
+    p.set_mostrar_video_biblioteca(false);
+    p.set_biblioteca_video_frame(slint::Image::default());
+}
+
 /// Verifica específicamente que la base de cantos tenga datos coherentes:
 /// no solo que la tabla `cantos` exista, sino que además tenga registros
 /// en `diapositivas` (que es justo lo que fallaba: lista cargaba pero al
@@ -2534,10 +2551,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let ui_local = ui_h.unwrap();
 
                         ui_local.set_is_video_projecting(false);
-            p.set_mostrar_video_biblioteca(false);
-            p.set_biblioteca_video_frame(slint::Image::default());
-            vp_lib_estrofa.lock().unwrap().detener();
-            bloqueo.store(false, Ordering::Release);
+    detener_todo_video(&p, &vp, &vp_lib_estrofa);   
+    bloqueo.store(false, Ordering::Release);
+           
 
             p.set_texto_proyeccion(texto.clone());
 
@@ -3731,28 +3747,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     {
-        let ui_pdf_proj = ui.as_weak();
-        let p_pdf       = proyector.as_weak();
-        let vp_pdf      = Arc::clone(&video_player);
-        let bloqueo     = Arc::clone(&bloqueo_estilos);
-        let pdf_state_proj = Arc::clone(&pdf_state);
-        let overlay_pdf     = Arc::clone(&overlay_estado);
-        ui.on_proyectar_pdf_pagina(move |page_idx| {
-            let ui = ui_pdf_proj.unwrap();
-            let p  = p_pdf.unwrap();
-            bloqueo.store(true, Ordering::Release);
-            ui.set_is_video_projecting(false);
-            ui.set_active_pdf_page(page_idx);
-            let current_pages = ui.get_pdf_pages();
-            if let Some(img) = current_pages.row_data(page_idx as usize) {
-                vp_pdf.lock().unwrap().detener();
-                p.set_es_video(false);
-                p.set_mostrar_video_biblioteca(false);
-                p.set_biblioteca_video_frame(slint::Image::default());
-                limpiar_texto_proyeccion(&p);
-                p.set_fondo_imagen_aspecto(slint::SharedString::from("contain"));
-                p.set_fondo_imagen(img);
-                p.set_mostrar_imagen(true);
+    let ui_pdf_proj = ui.as_weak();
+    let p_pdf       = proyector.as_weak();
+    let vp_pdf      = Arc::clone(&video_player);
+    let vp_lib_pdf  = Arc::clone(&biblioteca_video_player);   // ← AÑADIR
+    let bloqueo     = Arc::clone(&bloqueo_estilos);
+    let pdf_state_proj = Arc::clone(&pdf_state);
+    let overlay_pdf     = Arc::clone(&overlay_estado);
+    ui.on_proyectar_pdf_pagina(move |page_idx| {
+        let ui = ui_pdf_proj.unwrap();
+        let p  = p_pdf.unwrap();
+        bloqueo.store(true, Ordering::Release);
+        ui.set_is_video_projecting(false);
+        ui.set_active_pdf_page(page_idx);
+        let current_pages = ui.get_pdf_pages();
+        if let Some(img) = current_pages.row_data(page_idx as usize) {
+            detener_todo_video(&p, &vp_pdf, &vp_lib_pdf);   // ← REEMPLAZA a "vp_pdf.lock().unwrap().detener();" + las 2 líneas de biblioteca_video_frame
+            p.set_es_video(false);
+            limpiar_texto_proyeccion(&p);
+            p.set_fondo_imagen_aspecto(slint::SharedString::from("contain"));
+            p.set_fondo_imagen(img);
+            p.set_mostrar_imagen(true);
 
                 // ── Notificar a OBS ──
                 if ui.get_overlay_solo_texto() {
@@ -3823,74 +3838,69 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     {
-        let p_handle  = proyector.as_weak();
-        let multi_state = Arc::clone(&multimedia_state);
-        let vp        = Arc::clone(&video_player);
-        let ui_h      = ui.as_weak();
-        let bloqueo   = Arc::clone(&bloqueo_estilos);
-        let image_cache_mm   = Arc::clone(&image_cache);
-        let refresh_multimedia_mm = refresh_multimedia.clone();
-        let bsc_multi_mm      = build_and_save_config.clone();
-        let overlay_mm = Arc::clone(&overlay_estado);
-        ui.on_proyectar_multimedia(move |idx| {
-            let p        = p_handle.unwrap();
-            let ui_local = ui_h.unwrap();
-            bloqueo.store(true, Ordering::Release);
-            ui_local.set_is_video_projecting(false);
+    let p_handle  = proyector.as_weak();
+    let multi_state = Arc::clone(&multimedia_state);
+    let vp        = Arc::clone(&video_player);
+    let vp_lib_mm = Arc::clone(&biblioteca_video_player);   // ← AÑADIR
+    let ui_h      = ui.as_weak();
+    let bloqueo   = Arc::clone(&bloqueo_estilos);
+    let image_cache_mm   = Arc::clone(&image_cache);
+    let refresh_multimedia_mm = refresh_multimedia.clone();
+    let bsc_multi_mm      = build_and_save_config.clone();
+    let overlay_mm = Arc::clone(&overlay_estado);
+    ui.on_proyectar_multimedia(move |idx| {
+        let p        = p_handle.unwrap();
+        let ui_local = ui_h.unwrap();
+        bloqueo.store(true, Ordering::Release);
+        ui_local.set_is_video_projecting(false);
 
-            let ruta = {
-                let state = multi_state.read().unwrap();
-                state.get(idx as usize).map(|item| item.path.clone())
+        let ruta = {
+            let state = multi_state.read().unwrap();
+            state.get(idx as usize).map(|item| item.path.clone())
+        };
+
+        let Some(ruta) = ruta else { return };
+
+        if !archivo_existe(&ruta) {
+            multi_state.write().unwrap().retain(|item| item.path != ruta);
+            image_cache_mm.lock().unwrap().remove(&ruta);
+            ui_local.set_selected_media_idx(-1);
+            refresh_multimedia_mm();
+            bsc_multi_mm();
+            mostrar_aviso(&ui_h, "El archivo ya no existe y fue removido de la biblioteca.");
+            return;
+        }
+
+        if let Ok(img) = slint::Image::load_from_path(std::path::Path::new(&ruta)) {
+            detener_todo_video(&p, &vp, &vp_lib_mm);   // ← REEMPLAZA a "vp.lock().unwrap().detener();" y las 2 líneas de biblioteca_video_frame
+            p.set_es_video(false);
+            p.set_bg_color(slint::Color::from_rgb_u8(0, 0, 0));
+            limpiar_texto_proyeccion(&p);
+            p.set_fondo_opacity(0.0);
+            let aspecto = { let state = multi_state.read().unwrap(); state.iter().find(|i| i.path == ruta).map(|i| i.aspecto.clone()).unwrap_or_default() };
+            p.set_fondo_imagen_aspecto(slint::SharedString::from(&aspecto));
+            p.set_fondo_imagen(img);
+            p.set_mostrar_imagen(true);
+
+            let mut e = overlay_mm.lock().unwrap();
+            e.video_activo = false;
+            e.texto.clear();
+            e.referencia.clear();
+            e.fondo_tipo    = "imagen".to_string();
+            e.fondo_opacity = 0.0;
+            e.fondo_ajuste  = match aspecto.as_str() {
+                "rellenar" => "cover".to_string(),
+                "estirar"  => "fill".to_string(),
+                _          => "contain".to_string(),
             };
-
-            let Some(ruta) = ruta else { return };
-
-            if !archivo_existe(&ruta) {
-                // El archivo fue borrado/movido fuera de la app: lo quitamos
-                // de la biblioteca y avisamos, en vez de fallar en silencio.
-                multi_state.write().unwrap().retain(|item| item.path != ruta);
-                image_cache_mm.lock().unwrap().remove(&ruta);
-                ui_local.set_selected_media_idx(-1);
-                refresh_multimedia_mm();
-                bsc_multi_mm();
-                mostrar_aviso(&ui_h, "El archivo ya no existe y fue removido de la biblioteca.");
-                return;
+            if let Ok(bytes) = std::fs::read(&ruta) {
+                e.fondo_imagen_content_type = content_type_desde_extension(&ruta).to_string();
+                e.fondo_imagen_bytes = bytes;
             }
-
-            if let Ok(img) = slint::Image::load_from_path(std::path::Path::new(&ruta)) {
-    vp.lock().unwrap().detener();
-    p.set_es_video(false);
-    p.set_mostrar_video_biblioteca(false);
-    p.set_biblioteca_video_frame(slint::Image::default());
-    p.set_bg_color(slint::Color::from_rgb_u8(0, 0, 0));
-    limpiar_texto_proyeccion(&p);
-    p.set_fondo_opacity(0.0);
-    let aspecto = { let state = multi_state.read().unwrap(); state.iter().find(|i| i.path == ruta).map(|i| i.aspecto.clone()).unwrap_or_default() };
-    p.set_fondo_imagen_aspecto(slint::SharedString::from(&aspecto));
-    p.set_fondo_imagen(img);
-    p.set_mostrar_imagen(true);
-
-    // ── AGREGAR: Notificar a OBS ──
-    let mut e = overlay_mm.lock().unwrap();
-    e.video_activo = false;
-    e.texto.clear();
-    e.referencia.clear();
-    e.fondo_tipo    = "imagen".to_string();
-    e.fondo_opacity = 0.0;
-    e.fondo_ajuste  = match aspecto.as_str() {
-        "rellenar" => "cover".to_string(),
-        "estirar"  => "fill".to_string(),
-        _          => "contain".to_string(),
-    };
-    if let Ok(bytes) = std::fs::read(&ruta) {
-        e.fondo_imagen_content_type = content_type_desde_extension(&ruta).to_string();
-        e.fondo_imagen_bytes = bytes;
-    }
-    e.fondo_version += 1;
+            e.fondo_version += 1;
+        }
+    });
 }
-        });
-    }
-
     // ── Vídeos proyectables ──────────────────────────────────────────────────
     let refresh_videos = {
         let ui_handle = ui.as_weak();
@@ -3989,25 +3999,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
          {
-        let p_handle    = proyector.as_weak();
-        let vid_state   = Arc::clone(&video_state);
-        let vp_lib      = Arc::clone(&biblioteca_video_player);
-        let ui_h        = ui.as_weak();
-        let bloqueo     = Arc::clone(&bloqueo_estilos);
-        let bsc_video_vv = build_and_save_config.clone();
-        let overlay_vid  = Arc::clone(&overlay_estado);
-        ui.on_proyectar_video(move |idx| {
-            let p  = p_handle.unwrap();
-            let ui = ui_h.unwrap();
-            bloqueo.store(true, Ordering::Release);
+    let p_handle    = proyector.as_weak();
+    let vid_state   = Arc::clone(&video_state);
+    let vp_lib      = Arc::clone(&biblioteca_video_player);
+    let vp_fondo_v  = Arc::clone(&video_player);   // ← AÑADIR
+    let ui_h        = ui.as_weak();
+    let bloqueo     = Arc::clone(&bloqueo_estilos);
+    let bsc_video_vv = build_and_save_config.clone();
+    let overlay_vid  = Arc::clone(&overlay_estado);
+    ui.on_proyectar_video(move |idx| {
+        let p  = p_handle.unwrap();
+        let ui = ui_h.unwrap();
+        bloqueo.store(true, Ordering::Release);
 
-            let item_info = {
-                let state = vid_state.read().unwrap();
-                state.get(idx as usize).map(|i| (i.path.clone(), i.is_loop))
-            };
-            let Some((ruta, is_loop)) = item_info else { return };
+        let item_info = {
+            let state = vid_state.read().unwrap();
+            state.get(idx as usize).map(|i| (i.path.clone(), i.is_loop))
+        };
+        let Some((ruta, is_loop)) = item_info else { return };
 
-            if !archivo_existe(&ruta) {
+        if !archivo_existe(&ruta) {
                 vid_state.write().unwrap().retain(|item| item.path != ruta);
 
                 // Reconstruye la lista visible sin depender de refresh_videos
@@ -4035,6 +4046,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             // NOTA: no tocamos p.set_es_video / p.set_bg_color / p.set_fondo_imagen / etc.
             // Esas propiedades siguen describiendo el FONDO de biblias/cantos intacto.
+            vp_fondo_v.lock().unwrap().detener();  
              p.set_mostrar_video_biblioteca(true);
             vp_lib.lock().unwrap().reproducir(&ruta, p.as_weak(), is_loop, true);
             ui.set_is_video_projecting(true);
@@ -4086,6 +4098,7 @@ let p_restore = proyector.as_weak();
 let pa_timer  = Arc::clone(&proyector_abierto);
 let _restore_timer = slint::Timer::default();
 _restore_timer.start(
+    
     slint::TimerMode::Repeated,
     std::time::Duration::from_millis(350), // antes 100ms — 3.5x menos wakeups
     move || {
@@ -4096,6 +4109,29 @@ _restore_timer.start(
         }
     },
 );
+std::mem::forget(_restore_timer); 
+
+let vp_timer       = Arc::clone(&biblioteca_video_player);
+    let ui_timer_handle = ui.as_weak();
+    let _video_timer   = slint::Timer::default();
+    _video_timer.start(slint::TimerMode::Repeated, std::time::Duration::from_millis(750), move || {
+        if let Some(ui) = ui_timer_handle.upgrade() {
+            if ui.get_is_video_projecting() {
+                let (pos_ms, dur_ms) = vp_timer.lock().unwrap().get_position_and_duration();
+                if dur_ms > 0 {
+                    let progress  = pos_ms as f32 / dur_ms as f32;
+                    ui.set_proyector_progress(progress);
+                    let pos_sec   = pos_ms / 1000;
+                    let dur_sec   = dur_ms / 1000;
+                    let time_str  = format!("{:02}:{:02} / {:02}:{:02}",
+                        pos_sec / 60, pos_sec % 60,
+                        dur_sec / 60, dur_sec % 60);
+                    ui.set_proyector_time(slint::SharedString::from(time_str));
+                }
+            }
+        }
+    });
+    std::mem::forget(_video_timer);
 
     // OPT-8: Timer declarado como variable local — vive hasta el final de main().
     //        El Box::leak original era un memory leak innecesario.

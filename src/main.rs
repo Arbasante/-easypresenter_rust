@@ -602,8 +602,8 @@ if !biblias_ok {
         let biblias_db = Connection::open(biblias_path)?;
 
         // Optimizaciones de SQLite
-        cantos_db.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;")?;
-        biblias_db.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;")?;
+        cantos_db.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 5000;")?;
+        biblias_db.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 5000;")?;
         cantos_db.set_prepared_statement_cache_capacity(32);
         biblias_db.set_prepared_statement_cache_capacity(32);
 
@@ -756,31 +756,48 @@ if !biblias_ok {
             .collect()
     }
 
-    fn insert_diapositivas_intern(&self, canto_id: i32, letra: &str) {
-        let mut stmt = self.cantos_db
+        fn insert_diapositivas_intern(&self, canto_id: i32, letra: &str) {
+        let Ok(mut stmt) = self.cantos_db
             .prepare_cached("INSERT INTO diapositivas (canto_id, orden, texto) VALUES (?, ?, ?)")
-            .unwrap();
+        else {
+            eprintln!("No se pudo preparar el INSERT de diapositivas para canto_id={}", canto_id);
+            return;
+        };
         let mut orden = 1i32;
         for estrofa in letra.split("\n\n") {
             let texto = trim(estrofa);
             if !texto.is_empty() {
-                stmt.execute(rusqlite::params![canto_id, orden, texto]).unwrap();
+                if stmt.execute(rusqlite::params![canto_id, orden, texto]).is_err() {
+                    eprintln!("No se pudo insertar la estrofa {} del canto_id={}", orden, canto_id);
+                    continue;
+                }
                 orden += 1;
             }
         }
     }
 
-    fn add_canto(&self, titulo: &str, letra: &str) {
-        self.cantos_db
+    fn add_canto(&self, titulo: &str, letra: &str) -> bool {
+        if self.cantos_db
             .execute("INSERT INTO cantos (titulo, tono, categoria) VALUES (?, '', 'Personalizado')", [titulo])
-            .unwrap();
+            .is_err()
+        {
+            eprintln!("No se pudo insertar el canto '{}': la base de datos estaba ocupada.", titulo);
+            return false;
+        }
         self.insert_diapositivas_intern(self.cantos_db.last_insert_rowid() as i32, letra);
+        true
     }
 
-    fn update_canto(&self, id: i32, titulo: &str, letra: &str) {
-        self.cantos_db.execute("UPDATE cantos SET titulo = ? WHERE id = ?", rusqlite::params![titulo, id]).unwrap();
-        self.cantos_db.execute("DELETE FROM diapositivas WHERE canto_id = ?", [id]).unwrap();
+    fn update_canto(&self, id: i32, titulo: &str, letra: &str) -> bool {
+        if self.cantos_db.execute("UPDATE cantos SET titulo = ? WHERE id = ?", rusqlite::params![titulo, id]).is_err() {
+            eprintln!("No se pudo actualizar el canto id={}: la base de datos estaba ocupada.", id);
+            return false;
+        }
+        if self.cantos_db.execute("DELETE FROM diapositivas WHERE canto_id = ?", [id]).is_err() {
+            return false;
+        }
         self.insert_diapositivas_intern(id, letra);
+        true
     }
 
     fn delete_canto(&self, id: i32) {
@@ -2301,10 +2318,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         let ui_handle   = ui.as_weak();
     let state_clone = Arc::clone(&state);
+    let busqueda_secuencia = Arc::new(std::sync::atomic::AtomicU64::new(0));
     ui.on_buscar_cantos(move |t| {
         let busqueda = t.to_string();
         let ui_t     = ui_handle.clone();
         let state_t  = Arc::clone(&state_clone);
+        // Cada búsqueda reclama un número de secuencia. Si el resultado
+        // llega cuando ya hay una búsqueda más reciente, se descarta en
+        // vez de pisar la UI con datos viejos (esto causaba la lista de
+        // cantos/letras en blanco de forma intermitente al escribir rápido
+        // o al navegar justo mientras una búsqueda vieja seguía en curso).
+        let seq_arc = Arc::clone(&busqueda_secuencia);
+        seq_arc.fetch_add(1, Ordering::SeqCst);
+        let mi_seq = seq_arc.load(Ordering::SeqCst);
         thread::spawn(move || {
             let (cantos_slint, favs) = {
                 let estado   = state_t.lock().unwrap();
@@ -2330,6 +2356,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 (lista, favs)
             };
             let _ = slint::invoke_from_event_loop(move || {
+                if seq_arc.load(Ordering::SeqCst) != mi_seq { return; }
                 if let Some(ui) = ui_t.upgrade() {
                     ui.set_cantos(ModelRc::from(Rc::new(VecModel::from(cantos_slint))));
                     ui.set_favoritos(ModelRc::from(Rc::new(VecModel::from(favs))));
@@ -2372,9 +2399,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let sp_guardar   = Arc::clone(&segunda_pantalla);
         let medidor_gc   = medidor_win.as_weak();
         ui.on_guardar_canto(move |id, titulo, letra| {
-            {
+            let guardado_ok = {
                 let estado = state_clone.lock().unwrap();
-                if id == -1 { estado.add_canto(&titulo, &letra); } else { estado.update_canto(id, &titulo, &letra); }
+                if id == -1 { estado.add_canto(&titulo, &letra) } else { estado.update_canto(id, &titulo, &letra) }
+            };
+            if !guardado_ok {
+                // No refrescamos con datos posiblemente inconsistentes;
+                // el usuario puede reintentar guardar sin perder lo escrito.
+                return;
             }
             c_clone(String::new());
             if id != -1 {
@@ -4158,16 +4190,27 @@ _restore_timer.start(
             let ui = ui_h.unwrap();
             if fav.tipo == "canto" {
                 ui.set_active_tab(SharedString::from("cantos"));
-                let id    = fav.id;
-                let titulo = state.lock().unwrap().get_canto_titulo(id);
-                ui.set_elemento_seleccionado(SharedString::from(&titulo));
-                let diapos: Vec<DiapositivaUI> = state.lock().unwrap()
-                    .get_canto_diapositivas(id)
-                    .iter()
-                    .map(diapositiva_a_ui)
-                    .collect();
-                ui.set_estrofas_actuales(ModelRc::from(Rc::new(VecModel::from(diapos))));
-                ui.set_active_estrofa_index(-1);
+                let id = fav.id;
+                // Se mueve a un hilo, igual que la rama de biblia: evita
+                // congelar el hilo de eventos de Slint si el Mutex<AppState>
+                // está momentáneamente ocupado por otra operación (búsqueda
+                // en curso, guardado de un canto, etc.).
+                let state_t = Arc::clone(&state);
+                let ui_t    = ui.as_weak();
+                thread::spawn(move || {
+                    let (titulo, diapos_db) = {
+                        let estado = state_t.lock().unwrap();
+                        (estado.get_canto_titulo(id), estado.get_canto_diapositivas(id))
+                    };
+                    let diapos: Vec<DiapositivaUI> = diapos_db.iter().map(diapositiva_a_ui).collect();
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = ui_t.upgrade() {
+                            ui.set_elemento_seleccionado(SharedString::from(&titulo));
+                            ui.set_estrofas_actuales(ModelRc::from(Rc::new(VecModel::from(diapos))));
+                            ui.set_active_estrofa_index(-1);
+                        }
+                    });
+                });
             } else {
                 ui.set_active_tab(SharedString::from("biblias"));
                 let ref_str = fav.referencia.to_string();

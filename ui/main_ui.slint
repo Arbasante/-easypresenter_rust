@@ -37,6 +37,7 @@ export struct BookInfo { id: int, nombre: string, capitulos: int }
 export struct DiapositivaUI { orden: string, texto: string, font_size: float, favorito: bool }
 export struct ChapterRow { caps: [int] }
 export struct MediaItem { id: int, nombre: string, path: string, img: image, aspecto: string, is_loop: bool, }
+export struct VideoGaleriaItem { nombre: string, path: string, img: image }
 export struct PdfItem { id: int, nombre: string, miniatura: image, total_paginas: int }
 
 export component SplashWindow inherits Window {
@@ -413,8 +414,8 @@ property <[string]> fuentes_disponibles: [
 
     in property <[image]> biblias_image_data: [];
     in property <[image]> cantos_image_data: [];
-    in property <[string]> biblias_video_names: [];
-    in property <[string]> cantos_video_names: [];
+    in property <[VideoGaleriaItem]> biblias_video_gallery: [];
+in property <[VideoGaleriaItem]> cantos_video_gallery: [];
     in-out property <int> biblias_selected_img: -1;
     in-out property <int> cantos_selected_img: -1;
     in-out property <int> biblias_selected_vid: -1;
@@ -1673,7 +1674,24 @@ Rectangle {
                                 width: 100%; height: 100%;
                                 HorizontalLayout { padding: 2px; spacing: 8px; alignment: start;
                                     Rectangle { width: 92px; height: 64px; border-radius: 8px; border-width: 1px; border-color: Theme.border_subtle; background: nm-bagv.has-hover ? rgba(0,0,0,0.05) : rgba(0,0,0,0.02); nm-bagv := TouchArea { clicked => { root.agregar_a_galeria("biblias-vid"); } } VerticalLayout { alignment: center; spacing: 3px; Text { text: "+"; color: Theme.text_muted; font-size: 20px; horizontal-alignment: center; } Text { text: "Agregar"; color: Theme.text_muted; font-size: 8px; horizontal-alignment: center; font-weight: 700; } } }
-                                    for vid[idx] in root.biblias_video_names : Rectangle { width: 92px; height: 64px; border-radius: 8px; border-width: 2px; background: #080808; border-color: root.biblias_selected_vid == idx ? Theme.accent : rgba(0,0,0,0.04); VerticalLayout { padding-left: 8px; padding-right: 8px; padding-top: 8px; padding-bottom: 6px; alignment: center; spacing: 4px; Rectangle { height: 14px; background: rgba(0,0,0,0.04); border-radius: 3px; Text { text: "MP4"; font-size: 6px; font-weight: 900; color: Theme.text_muted; horizontal-alignment: center; vertical-alignment: center; width: 100%; height: 100%; } } Text { text: vid; font-size: 7px; color: Theme.text_secondary; horizontal-alignment: center; vertical-alignment: center; wrap: word-wrap; } } TouchArea { clicked => { root.seleccionar_galeria_item("biblias-vid", idx); } } Rectangle { width: 16px; height: 16px; x: parent.width - 20px; y: 4px; border-radius: 8px; background: rgba(0,0,0,0.75); TouchArea { clicked => { root.eliminar_galeria_item("biblias-vid", idx); } } Text { text: "✕"; color: #f87171; font-size: 8px; horizontal-alignment: center; vertical-alignment: center; font-weight: 900; } } }
+                                    for vid[idx] in root.biblias_video_gallery : Rectangle {
+    width: 92px; height: 64px; border-radius: 8px; border-width: 2px; clip: true;
+    background: #080808;
+    border-color: root.biblias_selected_vid == idx ? Theme.accent : rgba(0,0,0,0.04);
+    Image { source: vid.img; width: 100%; height: 100%; image-fit: cover; }
+    Rectangle {
+        y: parent.height - 18px; width: 100%; height: 18px;
+        background: rgba(0,0,0,0.65);
+        Text { text: vid.nombre; font-size: 7px; color: white; horizontal-alignment: center; vertical-alignment: center; overflow: elide; width: 100%; }
+    }
+    TouchArea { clicked => { root.seleccionar_galeria_item("biblias-vid", idx); } }
+    Rectangle {
+        width: 16px; height: 16px; x: parent.width - 20px; y: 4px; border-radius: 8px;
+        background: rgba(0,0,0,0.75);
+        TouchArea { clicked => { root.eliminar_galeria_item("biblias-vid", idx); } }
+        Text { text: "✕"; color: #f87171; font-size: 8px; horizontal-alignment: center; vertical-alignment: center; font-weight: 900; }
+    }
+}
                                 }
                             }
                         }
@@ -1753,7 +1771,24 @@ Rectangle {
                                 width: 100%; height: 100%;
                                 HorizontalLayout { padding: 2px; spacing: 8px; alignment: start;
                                     Rectangle { width: 92px; height: 64px; border-radius: 8px; border-width: 1px; border-color: Theme.border_subtle; background: nm-cagv.has-hover ? rgba(0,0,0,0.05) : rgba(0,0,0,0.02); nm-cagv := TouchArea { clicked => { root.agregar_a_galeria("cantos-vid"); } } VerticalLayout { alignment: center; spacing: 3px; Text { text: "+"; color: Theme.text_muted; font-size: 20px; horizontal-alignment: center; } Text { text: "Agregar"; color: Theme.text_muted; font-size: 8px; horizontal-alignment: center; font-weight: 700; } } }
-                                    for vid[idx] in root.cantos_video_names : Rectangle { width: 92px; height: 64px; border-radius: 8px; border-width: 2px; background: #080808; border-color: root.cantos_selected_vid == idx ? Theme.accent : rgba(0,0,0,0.04); VerticalLayout { padding-left: 8px; padding-right: 8px; padding-top: 8px; padding-bottom: 6px; alignment: center; spacing: 4px; Rectangle { height: 14px; background: rgba(0,0,0,0.04); border-radius: 3px; Text { text: "MP4"; font-size: 6px; font-weight: 900; color: Theme.text_muted; horizontal-alignment: center; vertical-alignment: center; width: 100%; height: 100%; } } Text { text: vid; font-size: 7px; color: Theme.text_secondary; horizontal-alignment: center; vertical-alignment: center; wrap: word-wrap; } } TouchArea { clicked => { root.seleccionar_galeria_item("cantos-vid", idx); } } Rectangle { width: 16px; height: 16px; x: parent.width - 20px; y: 4px; border-radius: 8px; background: rgba(0,0,0,0.75); TouchArea { clicked => { root.eliminar_galeria_item("cantos-vid", idx); } } Text { text: "✕"; color: #f87171; font-size: 8px; horizontal-alignment: center; vertical-alignment: center; font-weight: 900; } } }
+                                    for vid[idx] in root.cantos_video_gallery : Rectangle {
+    width: 92px; height: 64px; border-radius: 8px; border-width: 2px; clip: true;
+    background: #080808;
+    border-color: root.cantos_selected_vid == idx ? Theme.accent : rgba(0,0,0,0.04);
+    Image { source: vid.img; width: 100%; height: 100%; image-fit: cover; }
+    Rectangle {
+        y: parent.height - 18px; width: 100%; height: 18px;
+        background: rgba(0,0,0,0.65);
+        Text { text: vid.nombre; font-size: 7px; color: white; horizontal-alignment: center; vertical-alignment: center; overflow: elide; width: 100%; }
+    }
+    TouchArea { clicked => { root.seleccionar_galeria_item("cantos-vid", idx); } }
+    Rectangle {
+        width: 16px; height: 16px; x: parent.width - 20px; y: 4px; border-radius: 8px;
+        background: rgba(0,0,0,0.75);
+        TouchArea { clicked => { root.eliminar_galeria_item("cantos-vid", idx); } }
+        Text { text: "✕"; color: #f87171; font-size: 8px; horizontal-alignment: center; vertical-alignment: center; font-weight: 900; }
+    }
+}
                                 }
                             }
                         }

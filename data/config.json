@@ -4,18 +4,21 @@
   ],
   "cantos_image_paths": [],
   "biblias_video_paths": [
-    "/home/basanteriano/Descargas/Proyektor - Linux/fondos/Videos/AmazonSwamp   FREE Video Background Loops HD 1080p.webm"
+    "/home/basanteriano/Descargas/Proyektor - Linux/fondos/Videos/AmazonSwamp   FREE Video Background Loops HD 1080p.webm",
+    "/home/basanteriano/Descargas/Proyektor - Linux/fondos/Videos/Particle_Wave_4K_Motion_Background_Loop.mp4"
   ],
-  "cantos_video_paths": [],
+  "cantos_video_paths": [
+    "/home/basanteriano/Descargas/Proyektor - Linux/fondos/Videos/Particle_Wave_4K_Motion_Background_Loop.mp4"
+  ],
   "tema_oscuro": false,
   "biblias_selected_img": -1,
   "cantos_selected_img": -1,
-  "biblias_selected_vid": 0,
-  "cantos_selected_vid": -1,
-  "biblias_video_path": "/home/basanteriano/Descargas/Proyektor - Linux/fondos/Videos/AmazonSwamp   FREE Video Background Loops HD 1080p.webm",
-  "cantos_video_path": "",
-  "biblias_bg_type": "blanco",
-  "cantos_bg_type": "blanco",
+  "biblias_selected_vid": 1,
+  "cantos_selected_vid": 0,
+  "biblias_video_path": "/home/basanteriano/Descargas/Proyektor - Linux/fondos/Videos/Particle_Wave_4K_Motion_Background_Loop.mp4",
+  "cantos_video_path": "/home/basanteriano/Descargas/Proyektor - Linux/fondos/Videos/Particle_Wave_4K_Motion_Background_Loop.mp4",
+  "biblias_bg_type": "video",
+  "cantos_bg_type": "video",
   "biblias_font_color": [
     0,
     0,
@@ -44,13 +47,16 @@
   ],
   "video_paths": [
     "/home/basanteriano/Descargas/pergamino de amor.mp4",
-    "/home/basanteriano/Descargas/BIENVENIDOS A LA CASA DE DIOS _ LOOPS _.mp4"
+    "/home/basanteriano/Descargas/BIENVENIDOS A LA CASA DE DIOS _ LOOPS _.mp4",
+    "/home/basanteriano/Descargas/Proyektor - Linux/fondos/Videos/Particle_Wave_4K_Motion_Background_Loop.mp4"
   ],
   "video_names": [
     "pergamino de amor.mp4",
-    "BIENVENIDOS A LA CASA DE DIOS _ LOOPS _.mp4"
+    "BIENVENIDOS A LA CASA DE DIOS _ LOOPS _.mp4",
+    "Particle_Wave_4K_Motion_Background_Loop.mp4"
   ],
   "video_loops": [
+    false,
     false,
     false
   ],
@@ -62,12 +68,12 @@
   "default_bg_idx": 0,
   "pantallas_roles": [
     [
-      1,
-      2
-    ],
-    [
       0,
       1
+    ],
+    [
+      1,
+      2
     ]
   ],
   "auto_proyectar_inicio": true,

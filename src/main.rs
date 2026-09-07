@@ -475,6 +475,147 @@ fn archivo_existe(path: &str) -> bool {
     std::path::Path::new(path).exists()
 }
 
+/// Extrae UN SOLO frame de un video usando GStreamer y lo reduce a una
+/// miniatura pequeña. No reproduce el archivo completo.
+/// Extrae un frame de un video usando GStreamer, evitando el típico
+/// frame negro/logo inicial. Prueba varios puntos de tiempo en orden
+/// y se queda con el primero que no sea prácticamente negro.
+fn generar_miniatura_video(ruta: &str, tam: u32) -> Option<image::DynamicImage> {
+    let path = std::path::Path::new(ruta).canonicalize().ok()?;
+    let uri = gst::glib::filename_to_uri(&path, None).ok()?;
+
+    let pipeline = gst::ElementFactory::make("playbin")
+        .property("uri", &uri)
+        .build()
+        .ok()?;
+
+    pipeline.set_property("mute", true);
+    pipeline.set_property("volume", 0.0f64);
+
+    let appsink = gst_app::AppSink::builder()
+        .max_buffers(1)
+        .drop(true)
+        .build();
+    appsink.set_property("sync", false);
+    let caps = gst::Caps::builder("video/x-raw").field("format", "RGBA").build();
+    appsink.set_caps(Some(&caps));
+
+    pipeline.set_property("video-sink", &appsink);
+
+    pipeline.set_state(gst::State::Paused).ok()?;
+    if pipeline.state(gst::ClockTime::from_seconds(5)).0.is_err() {
+        let _ = pipeline.set_state(gst::State::Null);
+        return None;
+    }
+
+    // Duración del video, para no pedir un seek más allá del final
+    // (videos muy cortos se quedarían sin frame si pedimos 3s de uno de 1s).
+    let duracion_ms = pipeline.query_duration::<gst::ClockTime>()
+        .map(|d| d.mseconds())
+        .unwrap_or(0);
+
+    // Puntos de tiempo a intentar, en orden. Si el video es corto,
+    // se filtran los que excedan su duración.
+    let candidatos_ms: Vec<u64> = [1000u64, 2500, 500, 4000]
+        .into_iter()
+        .filter(|&ms| duracion_ms == 0 || ms < duracion_ms)
+        .collect();
+    let candidatos_ms = if candidatos_ms.is_empty() { vec![0] } else { candidatos_ms };
+
+    let mut mejor: Option<image::DynamicImage> = None;
+
+    for ms in candidatos_ms {
+        let _ = pipeline.seek_simple(
+            gst::SeekFlags::FLUSH | gst::SeekFlags::KEY_UNIT,
+            gst::ClockTime::from_mseconds(ms),
+        );
+        let _ = pipeline.state(gst::ClockTime::from_seconds(5));
+
+        let sample = appsink.pull_preroll().ok().or_else(|| appsink.pull_sample().ok());
+        let candidato = sample.and_then(|s| {
+            let buffer = s.buffer()?;
+            let info = gst_video::VideoInfo::from_caps(s.caps()?).ok()?;
+            let map = buffer.map_readable().ok()?;
+            let img = image::RgbaImage::from_raw(info.width(), info.height(), map.as_slice().to_vec())?;
+            Some(image::DynamicImage::ImageRgba8(img).thumbnail(tam, tam))
+        });
+
+        if let Some(img) = candidato {
+            if !es_frame_casi_negro(&img) {
+                mejor = Some(img);
+                break; // encontramos uno bueno, no seguimos probando
+            }
+            if mejor.is_none() {
+                mejor = Some(img); // guardamos como respaldo por si todos salen negros
+            }
+        }
+    }
+
+    let _ = pipeline.set_state(gst::State::Null);
+    mejor
+}
+
+/// Heurística simple: calcula el brillo promedio de la miniatura y
+/// decide si es "casi negro" (frame de introducción/fade típico).
+fn es_frame_casi_negro(img: &image::DynamicImage) -> bool {
+    let rgba = img.to_rgba8();
+    let pixels = rgba.pixels();
+    let total = pixels.len().max(1);
+    let suma: u64 = rgba.pixels()
+        .map(|p| (p[0] as u64 + p[1] as u64 + p[2] as u64) / 3)
+        .sum();
+    let promedio = suma / total as u64;
+    promedio < 15 // umbral: casi negro puro
+}
+
+/// Ruta en disco donde se guarda/lee la miniatura cacheada de un video.
+fn ruta_thumb_video(ruta_video: &str, user_data_dir: &std::path::Path) -> PathBuf {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    ruta_video.hash(&mut hasher);
+    let dir = user_data_dir.join("video_thumbs");
+    let _ = std::fs::create_dir_all(&dir);
+    dir.join(format!("{:x}.jpg", hasher.finish()))
+}
+
+/// Construye la lista de VideoGaleriaItem para la UI, usando el caché
+/// de imágenes si ya existe la miniatura, o un placeholder si aún no.
+fn construir_video_gallery(
+    paths: &[String],
+    img_cache: &Arc<Mutex<HashMap<String, slint::Image>>>,
+) -> Vec<VideoGaleriaItem> {
+    paths.iter().map(|p| {
+        let nombre = std::path::Path::new(p)
+            .file_name().unwrap_or_default()
+            .to_string_lossy().to_string();
+        let img = img_cache.lock().unwrap().get(p).cloned()
+            .unwrap_or_else(|| {
+                let buf = SharedPixelBuffer::<slint::Rgba8Pixel>::new(92, 64);
+                slint::Image::from_rgba8(buf)
+            });
+        VideoGaleriaItem {
+            nombre: SharedString::from(nombre),
+            path:   SharedString::from(p.as_str()),
+            img,
+        }
+    }).collect()
+}
+
+/// Devuelve la miniatura del video, usando caché en disco si ya existe.
+fn obtener_o_crear_miniatura_video(
+    ruta_video: &str,
+    user_data_dir: &std::path::Path,
+    tam: u32,
+) -> Option<image::DynamicImage> {
+    let thumb_path = ruta_thumb_video(ruta_video, user_data_dir);
+    if thumb_path.exists() {
+        return image::open(&thumb_path).ok();
+    }
+    let img = generar_miniatura_video(ruta_video, tam)?;
+    let _ = img.save(&thumb_path);
+    Some(img)
+}
+
 /// Muestra un aviso breve (3s) en el banner inferior de la UI.
 fn mostrar_aviso(ui_weak: &slint::Weak<AppWindow>, mensaje: &str) {
     if let Some(ui) = ui_weak.upgrade() {
@@ -2004,6 +2145,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let image_cache_fondo: Arc<Mutex<HashMap<String, slint::Image>>> =
         Arc::new(Mutex::new(HashMap::new()));
 
+    let (thumb_tx, thumb_rx) = std::sync::mpsc::channel::<(String, u32, u32, Vec<u8>)>();
+
     // OPT-3: AtomicBool — lecturas/escrituras sin lock del SO
     let bloqueo_estilos = Arc::new(AtomicBool::new(false));
     let modo_en_vivo: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
@@ -2165,12 +2308,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let images_c: Vec<slint::Image> = st.cantos_image_paths.iter()
             .filter_map(|p| load_image_cached(&image_cache, p))
             .collect();
-        let names_bv: Vec<SharedString> = st.biblias_video_paths.iter()
-            .map(|p| SharedString::from(std::path::Path::new(p).file_name().unwrap_or_default().to_string_lossy().to_string()))
-            .collect();
-        let names_cv: Vec<SharedString> = st.cantos_video_paths.iter()
-            .map(|p| SharedString::from(std::path::Path::new(p).file_name().unwrap_or_default().to_string_lossy().to_string()))
-            .collect();
+       
 
         if !images_b.is_empty() {
             ui.set_biblias_image_data(ModelRc::from(Rc::new(VecModel::from(images_b))));
@@ -2188,16 +2326,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 ui.set_cantos_has_image(true);
             }
         }
-        if !names_bv.is_empty() {
-            ui.set_biblias_video_names(ModelRc::from(Rc::new(VecModel::from(names_bv))));
+
+        if !st.biblias_video_paths.is_empty() {
+            let gal_b = construir_video_gallery(&st.biblias_video_paths, &image_cache);
+            ui.set_biblias_video_gallery(ModelRc::from(Rc::new(VecModel::from(gal_b))));
             ui.set_biblias_video_path(SharedString::from(cfg.biblias_video_path.as_str()));
             ui.set_biblias_selected_vid(cfg.biblias_selected_vid);
         }
-        if !names_cv.is_empty() {
-            ui.set_cantos_video_names(ModelRc::from(Rc::new(VecModel::from(names_cv))));
+        if !st.cantos_video_paths.is_empty() {
+            let gal_c = construir_video_gallery(&st.cantos_video_paths, &image_cache);
+            ui.set_cantos_video_gallery(ModelRc::from(Rc::new(VecModel::from(gal_c))));
             ui.set_cantos_video_path(SharedString::from(cfg.cantos_video_path.as_str()));
             ui.set_cantos_selected_vid(cfg.cantos_selected_vid);
         }
+        
     }
     // refresh_multimedia();
     //  refresh_videos();
@@ -2959,7 +3101,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let img_cache   = Arc::clone(&image_cache);
         let img_cache_fondo = Arc::clone(&image_cache_fondo);
         let bsc_galeria = build_and_save_config.clone();
+        let thumb_tx_gal = thumb_tx.clone();                          // ← AQUÍ, afuera
+        let user_data_dir_cfg_gal = user_data_dir_cfg.clone();        // ← AQUÍ, afuera
         ui.on_agregar_a_galeria(move |tipo| {
+            let ui       = ui_h.unwrap();
+            let tipo_str = tipo.to_string();
             let ui       = ui_h.unwrap();
             let tipo_str = tipo.to_string();
             let es_video = tipo_str.ends_with("-vid");
@@ -3007,30 +3153,50 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 } else if tipo_str == "biblias-vid" {
                     estado.biblias_video_paths.push(path_str.clone());
-                    let names: Vec<SharedString> = estado.biblias_video_paths.iter()
-                        .map(|p| SharedString::from(std::path::Path::new(p).file_name().unwrap().to_string_lossy().to_string()))
-                        .collect();
                     let idx = estado.biblias_video_paths.len() as i32 - 1;
+                    let paths_copia = estado.biblias_video_paths.clone();
                     drop(estado);
-                    ui.set_biblias_video_names(ModelRc::from(Rc::new(VecModel::from(names))));
+                    ui.set_biblias_video_gallery(ModelRc::from(Rc::new(VecModel::from(construir_video_gallery(&paths_copia, &img_cache)))));
                     ui.set_biblias_selected_vid(idx);
                     ui.set_biblias_video_path(SharedString::from(&path_str));
                     ui.set_biblias_bg_type(SharedString::from("video"));
                     ui.invoke_sync_estilos();
                     bsc_galeria();
+
+                    let tx_g = thumb_tx_gal.clone();
+                    let udd_g = user_data_dir_cfg_gal.clone();
+                    let path_g = path_str.clone();
+                    thread::spawn(move || {
+                        if let Some(dynimg) = obtener_o_crear_miniatura_video(&path_g, &udd_g, 160) {
+                            let rgba = dynimg.to_rgba8();
+                            let (w, h) = (rgba.width(), rgba.height());
+                            let raw = rgba.into_raw();
+                            let _ = tx_g.send((path_g, w, h, raw));
+                        }
+                    });
                 } else if tipo_str == "cantos-vid" {
                     estado.cantos_video_paths.push(path_str.clone());
-                    let names: Vec<SharedString> = estado.cantos_video_paths.iter()
-                        .map(|p| SharedString::from(std::path::Path::new(p).file_name().unwrap().to_string_lossy().to_string()))
-                        .collect();
                     let idx = estado.cantos_video_paths.len() as i32 - 1;
+                    let paths_copia = estado.cantos_video_paths.clone();
                     drop(estado);
-                    ui.set_cantos_video_names(ModelRc::from(Rc::new(VecModel::from(names))));
+                    ui.set_cantos_video_gallery(ModelRc::from(Rc::new(VecModel::from(construir_video_gallery(&paths_copia, &img_cache)))));
                     ui.set_cantos_selected_vid(idx);
                     ui.set_cantos_video_path(SharedString::from(&path_str));
                     ui.set_cantos_bg_type(SharedString::from("video"));
                     ui.invoke_sync_estilos();
                     bsc_galeria();
+
+                    let tx_g = thumb_tx_gal.clone();
+                    let udd_g = user_data_dir_cfg_gal.clone();
+                    let path_g = path_str.clone();
+                    thread::spawn(move || {
+                        if let Some(dynimg) = obtener_o_crear_miniatura_video(&path_g, &udd_g, 160) {
+                            let rgba = dynimg.to_rgba8();
+                            let (w, h) = (rgba.width(), rgba.height());
+                            let raw = rgba.into_raw();
+                            let _ = tx_g.send((path_g, w, h, raw));
+                        }
+                    });
                 }
             }
         });
@@ -3150,22 +3316,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             } else if tipo_str == "biblias-vid" && idx_u < estado.biblias_video_paths.len() {
                 estado.biblias_video_paths.remove(idx_u);
-                let names: Vec<SharedString> = estado.biblias_video_paths.iter()
-                    .map(|p| SharedString::from(std::path::Path::new(p).file_name().unwrap().to_string_lossy().to_string()))
-                    .collect();
-                let is_empty = estado.biblias_video_paths.is_empty();
+                let paths_copia = estado.biblias_video_paths.clone();
+                let is_empty = paths_copia.is_empty();
                 drop(estado);
-                ui.set_biblias_video_names(ModelRc::from(Rc::new(VecModel::from(names))));
+                ui.set_biblias_video_gallery(ModelRc::from(Rc::new(VecModel::from(construir_video_gallery(&paths_copia, &img_cache)))));
                 if is_empty { ui.set_biblias_bg_type(SharedString::from("negro")); ui.invoke_sync_estilos(); }
                 bsc_del_gal();
             } else if tipo_str == "cantos-vid" && idx_u < estado.cantos_video_paths.len() {
                 estado.cantos_video_paths.remove(idx_u);
-                let names: Vec<SharedString> = estado.cantos_video_paths.iter()
-                    .map(|p| SharedString::from(std::path::Path::new(p).file_name().unwrap().to_string_lossy().to_string()))
-                    .collect();
-                let is_empty = estado.cantos_video_paths.is_empty();
+                let paths_copia = estado.cantos_video_paths.clone();
+                let is_empty = paths_copia.is_empty();
                 drop(estado);
-                ui.set_cantos_video_names(ModelRc::from(Rc::new(VecModel::from(names))));
+                ui.set_cantos_video_gallery(ModelRc::from(Rc::new(VecModel::from(construir_video_gallery(&paths_copia, &img_cache)))));
                 if is_empty { ui.set_cantos_bg_type(SharedString::from("negro")); ui.invoke_sync_estilos(); }
                 bsc_del_gal();
             }
@@ -3905,16 +4067,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let refresh_videos = {
         let ui_handle = ui.as_weak();
         let state_arc = Arc::clone(&video_state);
+        let img_cache_rv = Arc::clone(&image_cache);
         move || {
             let ui    = ui_handle.unwrap();
             let items = state_arc.read().unwrap();
             let slint_items: Vec<MediaItem> = items.iter().enumerate().map(|(i, item)| {
-                let pixel_buffer = SharedPixelBuffer::<slint::Rgba8Pixel>::new(80, 45);
+                let img = img_cache_rv.lock().unwrap().get(&item.path).cloned()
+                    .unwrap_or_else(|| {
+                        let pixel_buffer = SharedPixelBuffer::<slint::Rgba8Pixel>::new(80, 45);
+                        slint::Image::from_rgba8(pixel_buffer)
+                    });
                 MediaItem {
                     id:      i as i32,
                     nombre:  SharedString::from(&item.name),
                     path:    SharedString::from(&item.path),
-                    img:     slint::Image::from_rgba8(pixel_buffer),
+                    img,
                     aspecto: SharedString::from("rellenar"),
                     is_loop: item.is_loop,
                 }
@@ -3924,24 +4091,88 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     refresh_multimedia();
     refresh_videos();
+
     {
-        
+        let mut paths_init: Vec<String> = video_state.read().unwrap().iter().map(|v| v.path.clone()).collect();
+        paths_init.extend(state.lock().unwrap().biblias_video_paths.clone());
+        paths_init.extend(state.lock().unwrap().cantos_video_paths.clone());
+        let udd_init = user_data_dir_cfg.clone();
+        let tx_init  = thumb_tx.clone();
+        thread::spawn(move || {
+            for ruta in paths_init {
+                if let Some(dynimg) = obtener_o_crear_miniatura_video(&ruta, &udd_init, 160) {
+                    let rgba = dynimg.to_rgba8();
+                    let (w, h) = (rgba.width(), rgba.height());
+                    let raw = rgba.into_raw();
+                    let _ = tx_init.send((ruta.clone(), w, h, raw));
+                }
+            }
+        });
+    }
+
+        // ── Timer que recoge miniaturas de video del canal y actualiza la UI ──
+    {
+        let img_cache_poll = Arc::clone(&image_cache);
+        let refresh_poll   = refresh_videos.clone();
+        let ui_gal_poll    = ui.as_weak();
+        let state_gal_poll = Arc::clone(&state);
+        let thumb_timer = slint::Timer::default();
+        thumb_timer.start(slint::TimerMode::Repeated, std::time::Duration::from_millis(300), move || {
+            let mut hubo_actualizacion = false;
+            while let Ok((ruta, w, h, raw)) = thumb_rx.try_recv() {
+                let mut buf = SharedPixelBuffer::<slint::Rgba8Pixel>::new(w, h);
+                buf.make_mut_bytes().copy_from_slice(&raw);
+                img_cache_poll.lock().unwrap().insert(ruta, slint::Image::from_rgba8(buf));
+                hubo_actualizacion = true;
+            }
+            if hubo_actualizacion {
+                refresh_poll();
+                if let Some(ui) = ui_gal_poll.upgrade() {
+                    let (pb, pc) = {
+                        let st = state_gal_poll.lock().unwrap();
+                        (st.biblias_video_paths.clone(), st.cantos_video_paths.clone())
+                    };
+                    ui.set_biblias_video_gallery(ModelRc::from(Rc::new(VecModel::from(construir_video_gallery(&pb, &img_cache_poll)))));
+                    ui.set_cantos_video_gallery(ModelRc::from(Rc::new(VecModel::from(construir_video_gallery(&pc, &img_cache_poll)))));
+                }
+            }
+        });
+        std::mem::forget(thumb_timer);
+    }
+
+     {
         let vid_state       = Arc::clone(&video_state);
         let refresh_clone   = refresh_videos.clone();
         let bsc_add_vid     = build_and_save_config.clone();
+        let udd_av          = user_data_dir_cfg.clone();
+        let tx_av           = thumb_tx.clone();
         ui.on_agregar_video(move || {
             if let Some(path) = rfd::FileDialog::new()
                 .add_filter("Videos", &["mp4","mkv","avi","mov"]).pick_file()
             {
                 let file_name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+                let path_str  = path.to_string_lossy().to_string();
                 vid_state.write().unwrap().push(MediaData {
-                    path:    path.to_string_lossy().to_string(),
+                    path:    path_str.clone(),
                     name:    file_name,
                     aspecto: "rellenar".to_string(),
                     is_loop: false,
                 });
                 refresh_clone();
                 bsc_add_vid();
+
+                // Genera la miniatura en un hilo aparte y la manda por el canal.
+                // Nada de slint::Image se toca aquí: solo bytes crudos (Send).
+                let udd_t = udd_av.clone();
+                let tx_t  = tx_av.clone();
+                thread::spawn(move || {
+                    if let Some(dynimg) = obtener_o_crear_miniatura_video(&path_str, &udd_t, 160) {
+                        let rgba = dynimg.to_rgba8();
+                        let (w, h) = (rgba.width(), rgba.height());
+                        let raw = rgba.into_raw();
+                        let _ = tx_t.send((path_str.clone(), w, h, raw));
+                    }
+                });
             }
         });
     }

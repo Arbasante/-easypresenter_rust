@@ -33,33 +33,12 @@
   "cantos_fondo_opacity": 0.0,
   "biblias_font_scale": 0.99999976,
   "cantos_font_scale": 2.0,
-  "multimedia_paths": [
-    "/home/basanteriano/Descargas/video.png",
-    "/home/basanteriano/Descargas/readyshow.jpg"
-  ],
-  "multimedia_names": [
-    "video.png",
-    "readyshow.jpg"
-  ],
-  "multimedia_aspectos": [
-    "centro",
-    "centro"
-  ],
-  "video_paths": [
-    "/home/basanteriano/Descargas/pergamino de amor.mp4",
-    "/home/basanteriano/Descargas/BIENVENIDOS A LA CASA DE DIOS _ LOOPS _.mp4",
-    "/home/basanteriano/Descargas/Proyektor - Linux/fondos/Videos/Particle_Wave_4K_Motion_Background_Loop.mp4"
-  ],
-  "video_names": [
-    "pergamino de amor.mp4",
-    "BIENVENIDOS A LA CASA DE DIOS _ LOOPS _.mp4",
-    "Particle_Wave_4K_Motion_Background_Loop.mp4"
-  ],
-  "video_loops": [
-    false,
-    false,
-    false
-  ],
+  "multimedia_paths": [],
+  "multimedia_names": [],
+  "multimedia_aspectos": [],
+  "video_paths": [],
+  "video_names": [],
+  "video_loops": [],
   "margen_izquierdo": 0.0,
   "margen_derecho": 0.0,
   "margen_superior": 0.0,

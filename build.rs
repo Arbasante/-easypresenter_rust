@@ -12,5 +12,10 @@ fn main() {
             .requested_execution_level(ExecutionLevel::AsInvoker);
 
         embed_manifest(manifest).expect("No se pudo incrustar el manifiesto de Windows");
+
+        // Incrusta el icono de la app en el .exe (ventana, taskbar, inicio, accesos directos)
+        let mut res = winres::WindowsResource::new();
+        res.set_icon("assets/icon.ico");
+        res.compile().expect("No se pudo compilar el recurso de icono de Windows");
     }
 }

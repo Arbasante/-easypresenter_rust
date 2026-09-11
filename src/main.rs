@@ -1105,7 +1105,7 @@ fn buscar_tamano_optimo(
     min_size.clamp(12.0, alto_util)
 }
 
-const FONT_SIZE_MAXIMO: f32 = 110.0;
+const FONT_SIZE_MAXIMO: f32 = 130.0;
 
 /// Tamaño de fuente para CANTOS, usando medición real vía Slint.
 /// `p` es la ventana del proyector, que expone `invoke_medir_altura`
@@ -2692,13 +2692,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let p        = p_handle.unwrap();
             let ui_local = ui_h.unwrap();
 
-                        ui_local.set_is_video_projecting(false);
-    detener_todo_video(&p, &vp, &vp_lib_estrofa);   
-    bloqueo.store(false, Ordering::Release);
-           
+            ui_local.set_is_video_projecting(false);
+            // Solo detenemos el video de BIBLIOTECA (si estaba sonando uno).
+            // El video de FONDO (vp) NO se toca aquí: así sigue reproduciéndose
+            // en bucle sin pausarse al cambiar de estrofa/versículo.
+            vp_lib_estrofa.lock().unwrap().detener();
+            p.set_mostrar_video_biblioteca(false);
+            p.set_biblioteca_video_frame(slint::Image::default());
+            bloqueo.store(false, Ordering::Release);
 
             p.set_texto_proyeccion(texto.clone());
-
             {
                 let mut e = overlay_e.lock().unwrap();
                 e.video_activo = false;
@@ -2903,7 +2906,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 })
                                 .collect();
                             ui.set_estrofas_actuales(ModelRc::from(Rc::new(VecModel::from(diapos))));
-                            //ui.set_active_estrofa_index(target_index);
+                            ui.set_active_estrofa_index(-1);   // ← AGREGAR: evita el falso "EN VIVO" en la preview
                             let offset = target_index as f32 * 115.0;
                             ui.set_scroll_to_y(if offset > 150.0 { -(offset - 150.0) } else { 0.0 });
                             // ⚠️ SIN invoke_proyectar_estrofa → segunda pantalla intacta

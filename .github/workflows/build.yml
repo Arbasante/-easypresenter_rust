@@ -81,6 +81,22 @@ jobs:
           echo "--- build.rs ---"
           test -f build.rs && echo "OK" || echo "FALTA build.rs"
 
+      # --------------------------------------------------------
+      # GENERAR ÍCONOS EN TODAS LAS RESOLUCIONES (Linux)
+      # --------------------------------------------------------
+      - name: Generar íconos hicolor
+        run: |
+          sudo apt-get install -y imagemagick
+
+          for size in 16 32 48 64 128 256 512; do
+            mkdir -p "assets/icons/hicolor/${size}x${size}/apps"
+            convert assets/icon.png -resize ${size}x${size} \
+              "assets/icons/hicolor/${size}x${size}/apps/ReadyShow.png"
+          done
+
+          echo "Íconos generados:"
+          find assets/icons -type f
+
 
       # --------------------------------------------------------
       # CARGO-DEB
@@ -363,6 +379,22 @@ jobs:
 
           gst-inspect-1.0 --version
 
+      # ========================================================
+      # GENERAR .ICO DESDE icon.png (Windows)
+      # ========================================================
+      - name: Generar icon.ico
+        shell: pwsh
+        run: |
+          choco install imagemagick -y --no-progress
+          refreshenv
+
+          magick assets\icon.png -define icon:auto-resize=256,128,96,64,48,32,24,16 assets\icon.ico
+
+          if (-not (Test-Path "assets\icon.ico")) {
+            throw "No se generó assets\icon.ico"
+          }
+
+          Write-Host "icon.ico generado correctamente."
 
       # ========================================================
       # BUILD RUST WINDOWS

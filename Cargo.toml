@@ -45,8 +45,14 @@ con soporte de video nativo mediante GStreamer.
 depends = "$auto, libgstreamer1.0-0, gstreamer1.0-plugins-base, gstreamer1.0-plugins-good, gstreamer1.0-plugins-bad, gstreamer1.0-plugins-ugly, gstreamer1.0-libav"
 assets = [
     ["target/release/ReadyShow", "usr/bin/ReadyShow", "755"],
-    ["data/*.db", "usr/share/ReadyShow/data/", "644"],
+    ["data/*.db", "usr/share/readyshow/data/", "644"],
     ["assets/ReadyShow.desktop", "usr/share/applications/", "644"],
-    ["assets/icon.png", "usr/share/icons/hicolor/256x256/apps/ReadyShow.png", "644"],
-    ["libpdfium.so", "usr/share/ReadyShow/", "755"]
+    ["assets/icons/hicolor/16x16/apps/ReadyShow.png", "usr/share/icons/hicolor/16x16/apps/ReadyShow.png", "644"],
+    ["assets/icons/hicolor/32x32/apps/ReadyShow.png", "usr/share/icons/hicolor/32x32/apps/ReadyShow.png", "644"],
+    ["assets/icons/hicolor/48x48/apps/ReadyShow.png", "usr/share/icons/hicolor/48x48/apps/ReadyShow.png", "644"],
+    ["assets/icons/hicolor/64x64/apps/ReadyShow.png", "usr/share/icons/hicolor/64x64/apps/ReadyShow.png", "644"],
+    ["assets/icons/hicolor/128x128/apps/ReadyShow.png", "usr/share/icons/hicolor/128x128/apps/ReadyShow.png", "644"],
+    ["assets/icons/hicolor/256x256/apps/ReadyShow.png", "usr/share/icons/hicolor/256x256/apps/ReadyShow.png", "644"],
+    ["assets/icons/hicolor/512x512/apps/ReadyShow.png", "usr/share/icons/hicolor/512x512/apps/ReadyShow.png", "644"],
+    ["libpdfium.so", "usr/share/readyshow/", "755"]
 ]

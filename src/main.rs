@@ -678,12 +678,10 @@ impl AppState {
                 path.join("data")
             } else if let Ok(appdir) = std::env::var("APPDIR") {
                 //  LINUX (AppImage): $APPDIR apunta a la raíz del bundle
-                std::path::PathBuf::from(appdir).join("usr/share/easy-presenter/data")
+                std::path::PathBuf::from(appdir).join("usr/share/readyshow/data")
             } else {
-                //  LINUX (.deb): ruta nueva, con fallback a la antigua por compatibilidad
-                let nueva   = std::path::PathBuf::from("/usr/share/easy-presenter/data");
-                let antigua = std::path::PathBuf::from("/usr/share/easy-presenter-slint/data");
-                if nueva.exists() { nueva } else { antigua }
+                //  LINUX (.deb): datos "semilla" de instalación
+                std::path::PathBuf::from("/usr/share/readyshow/data")
             };
 
             (user_dir, sys_dir)
@@ -3678,12 +3676,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .to_path_buf();
 
                 let pdfium_paths = [
-                    exe_dir,
-                    std::path::PathBuf::from("/usr/share/easy-presenter"),
-                    std::path::PathBuf::from("/usr/share/easy-presenter-slint"),
-                    std::path::PathBuf::from("/usr/lib"),
-                    std::path::PathBuf::from("."),
-                ];
+    exe_dir,
+    std::path::PathBuf::from("/usr/share/readyshow"),
+    std::path::PathBuf::from("/usr/lib"),
+    std::path::PathBuf::from("."),
+];
 
                 let bind = pdfium_paths.iter().find_map(|p| {
                     Pdfium::bind_to_library(

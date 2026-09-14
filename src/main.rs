@@ -813,6 +813,7 @@ if !biblias_ok {
                 "BibliaTextual"                                => ("BTX",  "Biblia Textual",                             9),
                 "BibliaJubileo"                                => ("JUB",  "Biblia del Jubileo",                        10),
                 "BibliadelOso1573"                             => ("OSO",  "Biblia del Oso 1573",                       11),
+                "ReinaValeraAntigua" => ("RVA", "Reina Valera Antigua", 12),
                 _ => {
                     let s = if nombre_bd.len() >= 4 { &nombre_bd[0..4] } else { &nombre_bd };
                     ("", s, 999)

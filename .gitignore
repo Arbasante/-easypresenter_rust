@@ -1,3 +1,5 @@
 *:Zone.Identifier
 target/
 data/
+node_modules/
+dist/

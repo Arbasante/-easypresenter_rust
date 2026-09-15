@@ -56,3 +56,10 @@ assets = [
     ["assets/icons/hicolor/512x512/apps/ReadyShow.png", "usr/share/icons/hicolor/512x512/apps/ReadyShow.png", "644"],
     ["libpdfium.so", "usr/share/readyshow/", "755"]
 ]
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = true

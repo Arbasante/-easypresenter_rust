@@ -1,0 +1,6 @@
+{
+  "name": "ReadyShow - EasyPresenter",
+  "description": "Software de presentación multimedia para iglesias y eventos: proyección de cantos, Biblia, diapositivas PDF y videos.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

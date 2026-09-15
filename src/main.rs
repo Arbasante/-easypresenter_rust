@@ -288,6 +288,15 @@ fn tamano_cache_capitulos() -> usize {
     match *NIVEL_HARDWARE { 1 => 100, 2 => 200, _ => 400 }
 }
 
+/// Límite máximo de imágenes en memoria para no desbordar RAM.
+fn limite_cache_imagenes() -> usize {
+    match *NIVEL_HARDWARE { 1 => 60, 2 => 150, _ => 300 }
+}
+
+fn limite_cache_fondos() -> usize {
+    match *NIVEL_HARDWARE { 1 => 15, 2 => 30, _ => 60 }
+}
+
 // ---------------------------------------------------------------------------
 // Funciones de utilidad — #[inline] en hot-paths cortos
 // ---------------------------------------------------------------------------
@@ -402,7 +411,13 @@ fn load_image_cached(
     pixel_buffer.make_mut_bytes().copy_from_slice(thumb.as_raw());
     let img = slint::Image::from_rgba8(pixel_buffer);
 
-    cache.lock().unwrap().insert(path.to_string(), img.clone());
+    let mut lock = cache.lock().unwrap();
+    if lock.len() >= limite_cache_imagenes() {
+        if let Some(first_key) = lock.keys().next().cloned() {
+            lock.remove(&first_key);
+        }
+    }
+    lock.insert(path.to_string(), img.clone());
     Some(img)
 }
 
@@ -424,7 +439,13 @@ fn load_image_fondo_cached(
     pixel_buffer.make_mut_bytes().copy_from_slice(thumb.as_raw());
     let img = slint::Image::from_rgba8(pixel_buffer);
 
-    cache.lock().unwrap().insert(path.to_string(), img.clone());
+    let mut lock = cache.lock().unwrap();
+    if lock.len() >= limite_cache_fondos() {
+        if let Some(first_key) = lock.keys().next().cloned() {
+            lock.remove(&first_key);
+        }
+    }
+    lock.insert(path.to_string(), img.clone());
     Some(img)
 }   
 
@@ -757,11 +778,25 @@ if !biblias_ok {
         let cantos_db = Connection::open(cantos_path)?;
         let biblias_db = Connection::open(biblias_path)?;
 
-        // Optimizaciones de SQLite
-        cantos_db.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 5000;")?;
-        biblias_db.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 5000;")?;
-        cantos_db.set_prepared_statement_cache_capacity(32);
-        biblias_db.set_prepared_statement_cache_capacity(32);
+        // Optimizaciones de SQLite de alto rendimiento (WAL, MMAP para lectura sin copias, caché en RAM ampliada)
+        cantos_db.execute_batch("
+            PRAGMA journal_mode = WAL;
+            PRAGMA synchronous = NORMAL;
+            PRAGMA busy_timeout = 5000;
+            PRAGMA cache_size = -64000;
+            PRAGMA mmap_size = 268435456;
+            PRAGMA temp_store = MEMORY;
+        ")?;
+        biblias_db.execute_batch("
+            PRAGMA journal_mode = WAL;
+            PRAGMA synchronous = NORMAL;
+            PRAGMA busy_timeout = 5000;
+            PRAGMA cache_size = -64000;
+            PRAGMA mmap_size = 268435456;
+            PRAGMA temp_store = MEMORY;
+        ")?;
+        cantos_db.set_prepared_statement_cache_capacity(64);
+        biblias_db.set_prepared_statement_cache_capacity(64);
 
         cantos_db.execute_batch("
             CREATE TABLE IF NOT EXISTS favoritos (
@@ -771,6 +806,9 @@ if !biblias_ok {
                 referencia TEXT    NOT NULL DEFAULT '',
                 titulo     TEXT    NOT NULL DEFAULT ''
             );
+            CREATE INDEX IF NOT EXISTS idx_diapositivas_canto ON diapositivas(canto_id, orden);
+            CREATE INDEX IF NOT EXISTS idx_favoritos_lookup ON favoritos(tipo, ref_id);
+            CREATE INDEX IF NOT EXISTS idx_favoritos_ref ON favoritos(tipo, referencia);
         ")?;
 
         let mut state = Self {
@@ -913,10 +951,12 @@ if !biblias_ok {
             .collect()
     }
 
-        fn insert_diapositivas_intern(&self, canto_id: i32, letra: &str) {
+    fn insert_diapositivas_intern(&self, canto_id: i32, letra: &str) {
+        let _ = self.cantos_db.execute_batch("BEGIN TRANSACTION;");
         let Ok(mut stmt) = self.cantos_db
             .prepare_cached("INSERT INTO diapositivas (canto_id, orden, texto) VALUES (?, ?, ?)")
         else {
+            let _ = self.cantos_db.execute_batch("ROLLBACK;");
             eprintln!("No se pudo preparar el INSERT de diapositivas para canto_id={}", canto_id);
             return;
         };
@@ -931,6 +971,7 @@ if !biblias_ok {
                 orden += 1;
             }
         }
+        let _ = self.cantos_db.execute_batch("COMMIT;");
     }
 
     fn add_canto(&self, titulo: &str, letra: &str) -> bool {
@@ -2490,7 +2531,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         seq_arc.fetch_add(1, Ordering::SeqCst);
         let mi_seq = seq_arc.load(Ordering::SeqCst);
         thread::spawn(move || {
-            let (cantos_slint, favs) = {
+            let cantos_slint = {
                 let estado   = state_t.lock().unwrap();
                 let fav_ids  = estado.get_favoritos_ids_cantos();
                 let cantos_db = if busqueda.is_empty() {
@@ -2510,14 +2551,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         favorito: false,
                     });
                 }
-                let favs = estado.get_all_favoritos();
-                (lista, favs)
+                lista
             };
             let _ = slint::invoke_from_event_loop(move || {
                 if seq_arc.load(Ordering::SeqCst) != mi_seq { return; }
                 if let Some(ui) = ui_t.upgrade() {
                     ui.set_cantos(ModelRc::from(Rc::new(VecModel::from(cantos_slint))));
-                    ui.set_favoritos(ModelRc::from(Rc::new(VecModel::from(favs))));
                 }
             });
         });

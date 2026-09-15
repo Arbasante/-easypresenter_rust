@@ -1601,11 +1601,20 @@ Rectangle {
                                 Rectangle { width: 66px; height: 32px; border-radius: 7px; background: root.biblias_bg_type == "imagen" ? Theme.accent_soft : rgba(0,0,0,0.03); border-width: 1px; border-color: root.biblias_bg_type == "imagen" ? Theme.accent : rgba(0,0,0,0.06); nm-bbi := TouchArea { clicked => { root.biblias_bg_type = "imagen"; root.sync_estilos(); } } Text { text: "Imagen"; font-size: 11px; font-weight: 700; color: root.biblias_bg_type == "imagen" ? #38bdf8 : Theme.text_secondary; horizontal-alignment: center; vertical-alignment: center; }  }
                                 Rectangle { width: 62px; height: 32px; border-radius: 7px; background: root.biblias_bg_type == "video" ? Theme.accent_soft : rgba(0,0,0,0.03); border-width: 1px; border-color: root.biblias_bg_type == "video" ? Theme.accent : rgba(0,0,0,0.06); nm-bbv := TouchArea { clicked => { root.biblias_bg_type = "video"; root.sync_estilos(); } } Text { text: "Video"; font-size: 9px; font-weight: 700; color: root.biblias_bg_type == "video" ? #38bdf8 : Theme.text_secondary; horizontal-alignment: center; vertical-alignment: center; } }
                             }
-                            // Opacity inline
-                            HorizontalLayout { spacing: 8px; alignment: end;
+                            // Opacity inline (solo aplica a imágenes y videos)
+                            HorizontalLayout {
+                                spacing: 8px; alignment: end;
+                                opacity: (root.biblias_bg_type == "imagen" || root.biblias_bg_type == "video") ? 1.0 : 0.3;
                                 Text { text: "Opacidad"; color: Theme.text_muted; font-size: 9px; font-weight: 700; vertical-alignment: center; }
-                                Slider { width: 100px; minimum: 0.0; maximum: 1.0; value <=> root.biblias_fondo_opacity; changed => { root.sync_estilos(); } }
-                                Text { text: round(root.biblias_fondo_opacity * 100) + "%"; color: Theme.text_secondary; font-size: 9px; font-weight: 700; vertical-alignment: center; min-width: 30px; }
+                                Slider {
+                                    width: 100px; minimum: 0.0; maximum: 1.0;
+                                    enabled: root.biblias_bg_type == "imagen" || root.biblias_bg_type == "video";
+                                    value <=> root.biblias_fondo_opacity; changed => { root.sync_estilos(); }
+                                }
+                                Text {
+                                    text: (root.biblias_bg_type == "imagen" || root.biblias_bg_type == "video") ? (round(root.biblias_fondo_opacity * 100) + "%") : "—";
+                                    color: Theme.text_secondary; font-size: 9px; font-weight: 700; vertical-alignment: center; min-width: 30px;
+                                }
                             }
                         }
 
@@ -1710,10 +1719,20 @@ Rectangle {
                                 Rectangle { width: 66px; height: 32px; border-radius: 7px; background: root.cantos_bg_type == "imagen" ? Theme.accent_soft : rgba(0,0,0,0.03); border-width: 1px; border-color: root.cantos_bg_type == "imagen" ? Theme.accent : rgba(0,0,0,0.06); nm-cbi := TouchArea { clicked => { root.cantos_bg_type = "imagen"; root.sync_estilos(); } } Text { text: "Imagen"; font-size: 11px; font-weight: 700; color: root.cantos_bg_type == "imagen" ? #38bdf8 : Theme.text_secondary; horizontal-alignment: center; vertical-alignment: center; } }
                                 Rectangle { width: 62px; height: 32px; border-radius: 7px; background: root.cantos_bg_type == "video" ? Theme.accent_soft : rgba(0,0,0,0.03); border-width: 1px; border-color: root.cantos_bg_type == "video" ? Theme.accent : rgba(0,0,0,0.06); nm-cbv := TouchArea { clicked => { root.cantos_bg_type = "video"; root.sync_estilos(); } } Text { text: "Video"; font-size: 11px; font-weight: 700; color: root.cantos_bg_type == "video" ? #38bdf8 : Theme.text_secondary; horizontal-alignment: center; vertical-alignment: center; } }
                             }
-                            HorizontalLayout { spacing: 8px; alignment: end;
+                            // Opacity inline (solo aplica a imágenes y videos)
+                            HorizontalLayout {
+                                spacing: 8px; alignment: end;
+                                opacity: (root.cantos_bg_type == "imagen" || root.cantos_bg_type == "video") ? 1.0 : 0.3;
                                 Text { text: "Opacidad"; color: Theme.text_muted; font-size: 9px; font-weight: 700; vertical-alignment: center; }
-                                Slider { width: 100px; minimum: 0.0; maximum: 1.0; value <=> root.cantos_fondo_opacity; changed => { root.sync_estilos(); } }
-                                Text { text: round(root.cantos_fondo_opacity * 100) + "%"; color: Theme.text_secondary; font-size: 9px; font-weight: 700; vertical-alignment: center; min-width: 30px; }
+                                Slider {
+                                    width: 100px; minimum: 0.0; maximum: 1.0;
+                                    enabled: root.cantos_bg_type == "imagen" || root.cantos_bg_type == "video";
+                                    value <=> root.cantos_fondo_opacity; changed => { root.sync_estilos(); }
+                                }
+                                Text {
+                                    text: (root.cantos_bg_type == "imagen" || root.cantos_bg_type == "video") ? (round(root.cantos_fondo_opacity * 100) + "%") : "—";
+                                    color: Theme.text_secondary; font-size: 9px; font-weight: 700; vertical-alignment: center; min-width: 30px;
+                                }
                             }
                         }
 

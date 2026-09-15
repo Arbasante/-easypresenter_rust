@@ -1489,7 +1489,12 @@ fn aplicar_estilos(
     let is_biblia  = modo == "biblias";
     let bg_type    = if is_biblia { ui.get_biblias_bg_type()      } else { ui.get_cantos_bg_type()      };
     let font_color = if is_biblia { ui.get_biblias_font_color()   } else { ui.get_cantos_font_color()   };
-    let opacity    = if is_biblia { ui.get_biblias_fondo_opacity() } else { ui.get_cantos_fondo_opacity() };
+    let es_medio   = bg_type == "imagen" || bg_type == "video";
+    let opacity    = if es_medio {
+        if is_biblia { ui.get_biblias_fondo_opacity() } else { ui.get_cantos_fondo_opacity() }
+    } else {
+        0.0
+    };
     p.set_text_color(font_color);
     p.set_fondo_opacity(opacity);
     //p.set_text_font_family(ui.get_proyeccion_font_family());

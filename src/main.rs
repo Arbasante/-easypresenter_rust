@@ -2878,6 +2878,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     *cb_cap.lock().unwrap() = capitulo;
                     let titulo = format!("{} {}", nombre_real, capitulo);
                     ui.set_elemento_seleccionado(SharedString::from(&titulo));
+                    ui.set_selected_bible_book(BookInfo {
+                        id: libro_id,
+                        nombre: SharedString::from(&nombre_real),
+                        capitulos: 0,
+                    });
                     let state_t = Arc::clone(&state_clone);
                     let ui_t    = ui.as_weak();
                     thread::spawn(move || {
@@ -2931,6 +2936,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     *cb_cap.lock().unwrap() = capitulo;
                     let titulo = format!("{} {}", nombre_real, capitulo);
                     ui.set_elemento_seleccionado(SharedString::from(&titulo));
+                    ui.set_selected_bible_book(BookInfo {
+                        id: libro_id,
+                        nombre: SharedString::from(&nombre_real),
+                        capitulos: 0,
+                    });
                     let state_t = Arc::clone(&state_clone);
                     let ui_t    = ui.as_weak();
                     thread::spawn(move || {
@@ -2973,15 +2983,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let lib = *cb_lib.lock().unwrap();
             let cap = *cb_cap.lock().unwrap();
             let mut versiculos_nuevos = Vec::new();
+            let mut nombre_libro = String::new();
             {
                 let mut estado = state_clone.lock().unwrap();
                 estado.set_version_by_name(version_name.as_str());
-                if lib != -1 && cap != -1 { versiculos_nuevos = estado.get_capitulo(lib, cap); }
+                if lib != -1 && cap != -1 {
+                    versiculos_nuevos = estado.get_capitulo(lib, cap);
+                    let libros = estado.get_libros_biblia();
+                    if let Some(l) = libros.iter().find(|b| b.id == lib) {
+                        nombre_libro = l.nombre.clone();
+                    }
+                }
             }
             if lib != -1 && cap != -1 && !versiculos_nuevos.is_empty() {
                 let active_idx = ui.get_active_estrofa_index();
-                let book_name  = ui.get_selected_bible_book().nombre;
-                let titulo     = format!("{} {}", book_name, cap);
+                let current_elem = ui.get_elemento_seleccionado().to_string();
+                let titulo = if !nombre_libro.is_empty() {
+                    format!("{} {}", nombre_libro, cap)
+                } else if !current_elem.is_empty() && !current_elem.starts_with(' ') {
+                    current_elem
+                } else {
+                    let book_name = ui.get_selected_bible_book().nombre.to_string();
+                    if !book_name.is_empty() {
+                        format!("{} {}", book_name, cap)
+                    } else {
+                        format!("Capítulo {}", cap)
+                    }
+                };
+                ui.set_elemento_seleccionado(SharedString::from(&titulo));
                 let fav_refs   = state_clone.lock().unwrap().get_favoritos_refs_versiculos();
                 let diapos: Vec<DiapositivaUI> = versiculos_nuevos.iter()
                     .map(|v| versiculo_a_ui_fav(v, &fav_refs, &titulo))
@@ -2995,8 +3024,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         SharedString::from(format!("{}:{}", titulo, orden)),
                     );
                 }
-                ui.invoke_focus_panel();
             }
+            ui.invoke_focus_panel();
         });
     }
 

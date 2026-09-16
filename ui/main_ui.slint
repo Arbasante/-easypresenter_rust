@@ -291,6 +291,16 @@ export component AppWindow inherits Window {
     in-out property <bool> mostrar_modal_margenes: false;
     in-out property <bool> mostrar_modal_pantallas: false;
     in-out property <bool> mostrar_modal_overlay: false;
+    in-out property <bool> mostrar_modal_db: false;
+    in-out property <string> db_modal_mensaje: "";
+    in-out property <bool> db_modal_es_error: false;
+    in-out property <bool> is_importing_db: false;
+    in-out property <string> db_import_status: "";
+    callback abrir_modal_db();
+    callback exportar_db_cantos();
+    callback exportar_db_biblias();
+    callback importar_db_cantos();
+    callback importar_db_biblias();
     in-out property <bool> overlay_servidor_activo: false;
     in-out property <int> overlay_puerto: 8090;
     in-out property <string> overlay_ip_local: "";
@@ -1895,6 +1905,8 @@ if (root.mostrar_menu_herramientas) : Rectangle {
                 text: "Importar/Exportar"; icon: "";
                 clicked => {
                     root.mostrar_menu_herramientas = false;
+                    root.mostrar_modal_db = true;
+                    root.abrir_modal_db();
                 }
             }
             
@@ -2593,6 +2605,179 @@ if (root.mostrar_acerca_de) : Rectangle {
             Text {
                 text: root.aviso_mensaje; color: Theme.text_primary; font-size: 10px; font-weight: 700;
                 vertical-alignment: center; horizontal-stretch: 1; wrap: word-wrap;
+            }
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    //  MODAL: IMPORTAR / EXPORTAR BASES DE DATOS
+    // ══════════════════════════════════════════════════════════════
+    if (root.mostrar_modal_db) : Rectangle {
+        width: 100%; height: 100%; background: Theme.overlay;
+        TouchArea { clicked => { root.mostrar_modal_db = false; } }
+
+        Rectangle {
+            width: 560px; height: 440px;
+            background: Theme.bg_popup; border-radius: 12px;
+            border-width: 2px; border-color: Theme.border_strong;
+            TouchArea {} // bloquea clics hacia el fondo
+
+            VerticalLayout {
+                padding: 22px; spacing: 12px;
+
+                // ── Cabecera ──────────────────────────────────────
+                HorizontalLayout {
+                    alignment: space-between; height: 28px;
+                    Text { text: "IMPORTAR Y EXPORTAR BASES DE DATOS"; color: Theme.text_primary; font-size: 13px; font-weight: 900; vertical-alignment: center; }
+                    Rectangle {
+                        width: 28px; height: 28px; border-radius: 6px;
+                        background: touch-close-db.has-hover ? Theme.bg_card_hover : transparent;
+                        touch-close-db := TouchArea { clicked => { root.mostrar_modal_db = false; } }
+                        Text { text: "✕"; color: Theme.text_secondary; font-size: 13px; horizontal-alignment: center; vertical-alignment: center; }
+                    }
+                }
+
+                Text {
+                    text: "Respalda o restaura tus archivos de base de datos SQLite (.db). Al importar, se validará el esquema y se aplicarán los índices optimizados automáticamente.";
+                    color: Theme.text_secondary; font-size: 10px; wrap: word-wrap;
+                }
+
+                // ── Tarjeta: Base de datos de Cantos ──────────────
+                Rectangle {
+                    height: 120px; border-radius: 8px; background: Theme.bg_list;
+                    border-width: 1px; border-color: Theme.border_subtle;
+                    VerticalLayout {
+                        padding: 12px; spacing: 6px;
+                        HorizontalLayout {
+                            spacing: 8px;
+                            Text { text: "🎵"; font-size: 14px; vertical-alignment: center; }
+                            Text { text: "Base de Datos de Cantos (cantos.db)"; color: Theme.text_primary; font-size: 12px; font-weight: 800; vertical-alignment: center; horizontal-stretch: 1; }
+                        }
+                        Text {
+                            text: "Contiene el repertorio de alabanzas, estrofas y versículos favoritos.";
+                            color: Theme.text_muted; font-size: 9px;
+                        }
+                        Rectangle { vertical-stretch: 1; }
+                        HorizontalLayout {
+                            spacing: 10px; height: 34px;
+                            Rectangle {
+                                horizontal-stretch: 1; border-radius: 6px;
+                                background: touch-exp-cantos.has-hover ? Theme.bg_card_hover : Theme.bg_card;
+                                border-width: 1px; border-color: Theme.border_strong;
+                                touch-exp-cantos := TouchArea { clicked => { root.exportar_db_cantos(); } }
+                                HorizontalLayout {
+                                    alignment: center; spacing: 6px;
+                                    Text { text: "⤓"; color: Theme.text_primary; font-size: 12px; font-weight: 900; vertical-alignment: center; }
+                                    Text { text: "Exportar Cantos"; color: Theme.text_primary; font-size: 11px; font-weight: 700; vertical-alignment: center; }
+                                }
+                            }
+                            Rectangle {
+                                horizontal-stretch: 1; border-radius: 6px;
+                                background: touch-imp-cantos.has-hover ? Theme.accent_hover : Theme.accent;
+                                touch-imp-cantos := TouchArea { clicked => { root.importar_db_cantos(); } }
+                                HorizontalLayout {
+                                    alignment: center; spacing: 6px;
+                                    Text { text: "⤒"; color: white; font-size: 12px; font-weight: 900; vertical-alignment: center; }
+                                    Text { text: "Importar Cantos"; color: white; font-size: 11px; font-weight: 800; vertical-alignment: center; }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // ── Tarjeta: Base de datos de Biblias ─────────────
+                Rectangle {
+                    height: 120px; border-radius: 8px; background: Theme.bg_list;
+                    border-width: 1px; border-color: Theme.border_subtle;
+                    VerticalLayout {
+                        padding: 12px; spacing: 6px;
+                        HorizontalLayout {
+                            spacing: 8px;
+                            Text { text: "📖"; font-size: 14px; vertical-alignment: center; }
+                            Text { text: "Base de Datos de Biblias (biblias.db)"; color: Theme.text_primary; font-size: 12px; font-weight: 800; vertical-alignment: center; horizontal-stretch: 1; }
+                        }
+                        Text {
+                            text: "Contiene todas las versiones de la Biblia, libros y versículos indexados.";
+                            color: Theme.text_muted; font-size: 9px;
+                        }
+                        Rectangle { vertical-stretch: 1; }
+                        HorizontalLayout {
+                            spacing: 10px; height: 34px;
+                            Rectangle {
+                                horizontal-stretch: 1; border-radius: 6px;
+                                background: touch-exp-biblias.has-hover ? Theme.bg_card_hover : Theme.bg_card;
+                                border-width: 1px; border-color: Theme.border_strong;
+                                touch-exp-biblias := TouchArea { clicked => { root.exportar_db_biblias(); } }
+                                HorizontalLayout {
+                                    alignment: center; spacing: 6px;
+                                    Text { text: "⤓"; color: Theme.text_primary; font-size: 12px; font-weight: 900; vertical-alignment: center; }
+                                    Text { text: "Exportar Biblias"; color: Theme.text_primary; font-size: 11px; font-weight: 700; vertical-alignment: center; }
+                                }
+                            }
+                            Rectangle {
+                                horizontal-stretch: 1; border-radius: 6px;
+                                background: touch-imp-biblias.has-hover ? Theme.accent_hover : Theme.accent;
+                                touch-imp-biblias := TouchArea { clicked => { root.importar_db_biblias(); } }
+                                HorizontalLayout {
+                                    alignment: center; spacing: 6px;
+                                    Text { text: "⤒"; color: white; font-size: 12px; font-weight: 900; vertical-alignment: center; }
+                                    Text { text: "Importar Biblias"; color: white; font-size: 11px; font-weight: 800; vertical-alignment: center; }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // ── Mensaje de estado / resultado ─────────────────
+                if (root.db_modal_mensaje != "") : Rectangle {
+                    height: 38px; border-radius: 6px;
+                    background: root.db_modal_es_error ? rgba(239, 68, 68, 0.15) : rgba(34, 197, 94, 0.15);
+                    border-width: 1px;
+                    border-color: root.db_modal_es_error ? #ef4444 : #22c55e;
+                    HorizontalLayout {
+                        padding-left: 12px; padding-right: 12px; spacing: 8px;
+                        Text {
+                            text: root.db_modal_es_error ? "⚠" : "✓";
+                            color: root.db_modal_es_error ? #ef4444 : #22c55e;
+                            font-size: 13px; font-weight: 900; vertical-alignment: center;
+                        }
+                        Text {
+                            text: root.db_modal_mensaje;
+                            color: Theme.text_primary; font-size: 10px; font-weight: 700;
+                            vertical-alignment: center; horizontal-stretch: 1; wrap: word-wrap;
+                        }
+                        Rectangle {
+                            width: 20px; height: 20px; border-radius: 4px;
+                            touch-clr-msg := TouchArea { clicked => { root.db_modal_mensaje = ""; } }
+                            Text { text: "✕"; color: Theme.text_muted; font-size: 10px; horizontal-alignment: center; vertical-alignment: center; }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    //  OVERLAY DE OSCURECIMIENTO: IMPORTANDO Y OPTIMIZANDO DB
+    // ══════════════════════════════════════════════════════════════
+    if (root.is_importing_db) : Rectangle {
+        width: 100%; height: 100%; background: rgba(0, 0, 0, 0.78);
+        TouchArea {} // Bloquea cualquier clic
+        VerticalLayout {
+            alignment: center; spacing: 14px;
+            Text {
+                text: "IMPORTANDO BASE DE DATOS";
+                color: Theme.text_primary; font-size: 16px; font-weight: 900;
+                horizontal-alignment: center; letter-spacing: 2px;
+            }
+            Text {
+                text: root.db_import_status != "" ? root.db_import_status : "Validando esquema, aplicando índices y optimizando rendimiento...";
+                color: Theme.accent; font-size: 12px; font-weight: 700;
+                horizontal-alignment: center;
+            }
+            Text {
+                text: "Por favor espera un momento, no cierres la aplicación.";
+                color: Theme.text_secondary; font-size: 11px; horizontal-alignment: center;
             }
         }
     }

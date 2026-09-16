@@ -1660,6 +1660,7 @@ sink_bin.add_pad(&ghost_pad).unwrap();
 
 pipeline.set_property("video-sink", &sink_bin);
 
+        let ui_weak_appsink = ui_weak.clone();
         appsink.set_callbacks(gst_app::AppSinkCallbacks::builder()
             .new_sample(move |appsink| {
                 let sample = match appsink.pull_sample() { Ok(s) => s, Err(_) => return Ok(gst::FlowSuccess::Ok) };
@@ -1672,7 +1673,7 @@ pipeline.set_property("video-sink", &sink_bin);
                     let dest_u8 = std::slice::from_raw_parts_mut(dest.as_mut_ptr() as *mut u8, dest.len() * 4);
                     dest_u8.copy_from_slice(map.as_slice());
                 }
-                let ui_clone = ui_weak.clone();
+                let ui_clone = ui_weak_appsink.clone();
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = ui_clone.upgrade() {
                         ui.set_preview_video_frame(slint::Image::from_rgba8(pixel_buffer));
@@ -3509,8 +3510,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         ui.on_agregar_a_galeria(move |tipo| {
             let ui       = ui_h.unwrap();
             let tipo_str = tipo.to_string();
-            let ui       = ui_h.unwrap();
-            let tipo_str = tipo.to_string();
             let es_video = tipo_str.ends_with("-vid");
             let dialog   = if es_video {
                 rfd::FileDialog::new().add_filter("Videos", &["mp4","mov","mkv","webm"]).pick_file()
@@ -3608,7 +3607,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
    {
         let ui_h      = ui.as_weak();
         let state_sel = Arc::clone(&state);
-        let img_cache = Arc::clone(&image_cache);
+        let _img_cache = Arc::clone(&image_cache); // unused but keeping binding to avoid cascading changes if it's used further down. Wait, I can just remove it or prefix with _
         let img_cache_fondo = Arc::clone(&image_cache_fondo);
         ui.on_seleccionar_galeria_item(move |tipo, idx| {
             let ui       = ui_h.unwrap();

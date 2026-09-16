@@ -1698,6 +1698,7 @@ fn aplicar_estilos(
         vp.lock().unwrap().detener();
         p.set_es_video(false);
         p.set_bg_color(slint::Color::from_rgb_u8(0, 0, 0));
+        p.set_fondo_imagen_aspecto(SharedString::from("rellenar"));
         if is_biblia && ui.get_biblias_has_image() {
             p.set_fondo_imagen(ui.get_biblias_bg_image());
             p.set_mostrar_imagen(true);

@@ -10,3 +10,4 @@ Terminal=false
 Categories=Office;Presentation;
 Keywords=presentacion;biblia;cantos;slides;
 StartupNotify=true
+StartupWMClass=ReadyShow

@@ -469,6 +469,7 @@ in property <[VideoGaleriaItem]> cantos_video_gallery: [];
     in-out property <image> preview_video_frame;
     in-out property <bool> is_preview_playing: false;
     callback toggle_preview_video(int);
+    callback seek_preview_relativo(float);
     callback seleccionar_video_lista(int);
 
     in-out property <bool> is_video_projecting: false;
@@ -1377,11 +1378,58 @@ in property <[VideoGaleriaItem]> cantos_video_gallery: [];
                                         Image { source: root.preview_video_frame; width: 100%; height: 100%; image-fit: contain; }
                                         TouchArea {
                                             clicked => { root.toggle_preview_video(root.selected_video_idx); }
-                                            if (!root.is_preview_playing) : Rectangle {
-                                                width: 110px; height: 36px; border-radius: 6px;
-                                                background: rgba(0,0,0,0.65); border-width: 1px; border-color: rgba(255,255,255,0.25);
-                                                x: (parent.width - 110px) / 2; y: (parent.height - 36px) / 2;
-                                                Text { text: "Reproducir"; color: white; font-size: 11px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                                        }
+
+                                        // ── Controles de Vista Previa (Retrasar 10s, Play/Pausa, Adelantar 10s) ──
+                                        HorizontalLayout {
+                                            alignment: center;
+                                            spacing: 12px;
+                                            y: parent.height - 52px;
+                                            height: 38px;
+
+                                            // Retrasar 10 segundos
+                                            Rectangle {
+                                                width: 88px; height: 36px; border-radius: 6px;
+                                                background: touch-prev-rewind.has-hover ? rgba(35,35,35,0.92) : rgba(0,0,0,0.75);
+                                                border-width: 1px; border-color: rgba(255,255,255,0.25);
+                                                touch-prev-rewind := TouchArea {
+                                                    clicked => { root.seek_preview_relativo(-10.0); }
+                                                }
+                                                Text {
+                                                    text: "⏪ -10s";
+                                                    color: white; font-size: 11px; font-weight: 700;
+                                                    horizontal-alignment: center; vertical-alignment: center;
+                                                }
+                                            }
+
+                                            // Reproducir / Pausar
+                                            Rectangle {
+                                                width: 108px; height: 36px; border-radius: 6px;
+                                                background: touch-prev-play.has-hover ? rgba(45,45,45,0.95) : rgba(0,0,0,0.8);
+                                                border-width: 1px; border-color: rgba(255,255,255,0.35);
+                                                touch-prev-play := TouchArea {
+                                                    clicked => { root.toggle_preview_video(root.selected_video_idx); }
+                                                }
+                                                Text {
+                                                    text: root.is_preview_playing ? "⏸ Pausar" : "▶ Reproducir";
+                                                    color: white; font-size: 11px; font-weight: 700;
+                                                    horizontal-alignment: center; vertical-alignment: center;
+                                                }
+                                            }
+
+                                            // Adelantar 10 segundos
+                                            Rectangle {
+                                                width: 88px; height: 36px; border-radius: 6px;
+                                                background: touch-prev-fwd.has-hover ? rgba(35,35,35,0.92) : rgba(0,0,0,0.75);
+                                                border-width: 1px; border-color: rgba(255,255,255,0.25);
+                                                touch-prev-fwd := TouchArea {
+                                                    clicked => { root.seek_preview_relativo(10.0); }
+                                                }
+                                                Text {
+                                                    text: "+10s ⏩";
+                                                    color: white; font-size: 11px; font-weight: 700;
+                                                    horizontal-alignment: center; vertical-alignment: center;
+                                                }
                                             }
                                         }
                                     }

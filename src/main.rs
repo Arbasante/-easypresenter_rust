@@ -1682,10 +1682,49 @@ pipeline.set_property("video-sink", &sink_bin);
             })
             .build()
         );
+
+        let bus = pipeline.bus().unwrap();
+        let pipeline_clone = pipeline.clone();
+        let mi_generacion = self.generacion.load(Ordering::Acquire);
+        let generacion_hilo = Arc::clone(&self.generacion);
+        let pausado_hilo = Arc::clone(&self.pausado_por_usuario);
+        let ui_weak_bus = ui_weak.clone();
+        thread::spawn(move || {
+            for msg in bus.iter_timed(gst::ClockTime::NONE) {
+                if generacion_hilo.load(Ordering::Acquire) != mi_generacion {
+                    break;
+                }
+                match msg.view() {
+                    gst::MessageView::Eos(..) => {
+                        if generacion_hilo.load(Ordering::Acquire) != mi_generacion {
+                            break;
+                        }
+                        let _ = pipeline_clone.seek_simple(
+                            gst::SeekFlags::FLUSH | gst::SeekFlags::KEY_UNIT,
+                            gst::ClockTime::ZERO,
+                        );
+                        let _ = pipeline_clone.set_state(gst::State::Paused);
+                        pausado_hilo.store(true, Ordering::Release);
+                        let ui_weak_bus = ui_weak_bus.clone();
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = ui_weak_bus.upgrade() {
+                                ui.set_is_preview_playing(false);
+                            }
+                        });
+                    }
+                    gst::MessageView::Error(err) => {
+                        println!("Error de reproducción preview: {}", err.error());
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+        });
+
         if let Err(e) = pipeline.set_state(gst::State::Playing) {
-    eprintln!("Error al iniciar el pipeline de video: {:?}", e);
-    return; // no reproduce, pero no tumba el programa
-}
+            eprintln!("Error al iniciar el pipeline de video: {:?}", e);
+            return;
+        }
         self.pipeline = Some(pipeline);
     }
 
@@ -1724,6 +1763,25 @@ pipeline.set_property("video-sink", &sink_bin);
                     gst::ClockTime::from_nseconds(target_ns),
                 );
             }
+        }
+    }
+
+    pub fn seek_relativo(&self, delta_secs: f64) {
+        if let Some(pipeline) = &self.pipeline {
+            let dur = pipeline.query_duration::<gst::ClockTime>().map_or(0, |t| t.nseconds());
+            let pos = pipeline.query_position::<gst::ClockTime>().map_or(0, |t| t.nseconds());
+            let delta_ns = (delta_secs * 1_000_000_000.0) as i64;
+            let target_ns = if delta_ns < 0 {
+                pos.saturating_sub((-delta_ns) as u64)
+            } else if dur > 0 {
+                (pos + delta_ns as u64).min(dur)
+            } else {
+                pos + delta_ns as u64
+            };
+            let _ = pipeline.seek_simple(
+                gst::SeekFlags::FLUSH | gst::SeekFlags::ACCURATE,
+                gst::ClockTime::from_nseconds(target_ns),
+            );
         }
     }
 
@@ -4777,13 +4835,38 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let mut player     = prev_clone.lock().unwrap();
                 let is_playing     = ui.get_is_preview_playing();
                 if !is_playing {
-                    player.reproducir_preview(&item.path, ui.as_weak());
-                    ui.set_is_preview_playing(true);
+                    if player.pipeline.is_some() {
+                        let playing = player.toggle_play_pause();
+                        ui.set_is_preview_playing(playing);
+                    } else {
+                        player.reproducir_preview(&item.path, ui.as_weak());
+                        ui.set_is_preview_playing(true);
+                    }
                 } else {
-                    player.detener();
-                    ui.set_is_preview_playing(false);
+                    let playing = player.toggle_play_pause();
+                    ui.set_is_preview_playing(playing);
                 }
             }
+        });
+    }
+
+    {
+        let vid_state   = Arc::clone(&video_state);
+        let ui_handle   = ui.as_weak();
+        let prev_clone  = Arc::clone(&preview_player);
+        ui.on_seek_preview_relativo(move |delta_secs| {
+            let ui = ui_handle.unwrap();
+            let idx = ui.get_selected_video_idx();
+            if idx < 0 { return; }
+            let mut player = prev_clone.lock().unwrap();
+            if player.pipeline.is_none() {
+                let state = vid_state.read().unwrap();
+                if let Some(item) = state.get(idx as usize) {
+                    player.reproducir_preview(&item.path, ui.as_weak());
+                    ui.set_is_preview_playing(true);
+                }
+            }
+            player.seek_relativo(delta_secs as f64);
         });
     }
 

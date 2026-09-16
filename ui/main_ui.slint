@@ -437,6 +437,7 @@ in property <[VideoGaleriaItem]> cantos_video_gallery: [];
 
     in property <[MediaItem]> multimedia_items: [];
     in-out property <int> selected_media_idx: -1;
+    in-out property <image> selected_media_full_img;
 
     in-out property <bool> mostrar_menu_media: false;
     in-out property <int> menu_media_idx: -1;
@@ -448,6 +449,7 @@ in property <[VideoGaleriaItem]> cantos_video_gallery: [];
     callback eliminar_multimedia(int);
     callback cambiar_aspecto_multimedia(int, string);
     callback proyectar_multimedia(int);
+    callback seleccionar_media_item(int);
 
     in property <[MediaItem]> video_items: [];
     in-out property <int> selected_video_idx: -1;
@@ -783,7 +785,7 @@ in property <[VideoGaleriaItem]> cantos_video_gallery: [];
                                             height: 52px; border-radius: 6px;
                                             background: root.selected_media_idx == idx ? rgba(63,111,115,0.18) : (touch-media.has-hover ? Theme.bg_card_hover : transparent);
                                             touch-media := TouchArea {
-                                                clicked => { root.selected_media_idx = idx; }
+                                                clicked => { root.selected_media_idx = idx; root.seleccionar_media_item(idx); }
                                                 double-clicked => { root.proyectar_multimedia(idx); }
                                                 pointer-event(e) => {
                                                     if (e.button == PointerEventButton.right && e.kind == PointerEventKind.up) {
@@ -1325,10 +1327,11 @@ in property <[VideoGaleriaItem]> cantos_video_gallery: [];
                                     clicked => { root.proyectar_multimedia(root.selected_media_idx); }
                                 }
                                 if (root.selected_media_idx >= 0 && root.selected_media_idx < root.multimedia_items.length) : VerticalLayout {
+                                    padding: 12px;
                                     Rectangle {
-                                        vertical-stretch: 1; horizontal-stretch: 1; clip: true;
+                                        vertical-stretch: 1; horizontal-stretch: 1; clip: true; background: #000000; border-radius: 8px;
                                         Image {
-                                            source: root.multimedia_items[root.selected_media_idx].img;
+                                            source: root.selected_media_full_img.width > 0 ? root.selected_media_full_img : root.multimedia_items[root.selected_media_idx].img;
                                             width: 100%; height: 100%;
                                             image-fit: root.multimedia_items[root.selected_media_idx].aspecto == "rellenar" ? cover : (root.multimedia_items[root.selected_media_idx].aspecto == "estirar" ? fill : contain);
                                         }

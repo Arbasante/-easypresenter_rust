@@ -451,6 +451,35 @@ fn load_image_fondo_cached(
     Some(img)
 }   
 
+/// Decodifica la vista previa a 480p para una carga ligera y fluida en la UI.
+fn load_image_preview_cached(
+    cache: &Arc<Mutex<HashMap<String, slint::Image>>>,
+    path: &str,
+) -> Option<slint::Image> {
+    {
+        let lock = cache.lock().unwrap();
+        if let Some(img) = lock.get(path) {
+            return Some(img.clone());
+        }
+    }
+    let tam = 480; // 480p exacto para vista previa
+    let decoded = image::open(path).ok()?;
+    let thumb = decoded.thumbnail(tam, tam).to_rgba8();
+    let (w, h) = (thumb.width(), thumb.height());
+    let mut pixel_buffer = SharedPixelBuffer::<slint::Rgba8Pixel>::new(w, h);
+    pixel_buffer.make_mut_bytes().copy_from_slice(thumb.as_raw());
+    let img = slint::Image::from_rgba8(pixel_buffer);
+
+    let mut lock = cache.lock().unwrap();
+    if lock.len() >= limite_cache_fondos() {
+        if let Some(first_key) = lock.keys().next().cloned() {
+            lock.remove(&first_key);
+        }
+    }
+    lock.insert(path.to_string(), img.clone());
+    Some(img)
+}
+
 /// Decodifica en paralelo (usando todos los núcleos disponibles) los
 /// thumbnails de una lista de rutas. Devuelve, en el mismo orden, los bytes
 /// RGBA crudos — NO crea slint::Image aquí porque ese tipo no es Send y no
@@ -3655,6 +3684,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let ui_handle = ui.as_weak();
         let state_arc = Arc::clone(&multimedia_state);
         let img_cache = Arc::clone(&image_cache);
+        let img_cache_fondo = Arc::clone(&image_cache_fondo);
         move || {
             let ui    = ui_handle.unwrap();
             let items = state_arc.read().unwrap();
@@ -3662,13 +3692,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let paths: Vec<String> = items.iter().map(|i| i.path.clone()).collect();
             precargar_cache_paralelo(&img_cache, &paths);
 
-            // IMPORTANTE: usamos .map (no .filter_map). Si una imagen falla
-            // al cargar, mostramos un placeholder vacío en esa posición en
-            // vez de eliminarla de la lista visible — así el índice de cada
-            // elemento SIEMPRE coincide entre la UI y el Vec real en Rust.
-            // Antes, con filter_map, un archivo roto desplazaba los índices
-            // de todo lo que venía después, causando que se proyectara o
-            // reportara como "eliminado" el elemento equivocado.
             let slint_items: Vec<MediaItem> = items.iter().enumerate()
                 .map(|(i, item)| {
                     let img = load_image_cached(&img_cache, &item.path).unwrap_or_default();
@@ -3683,6 +3706,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 })
                 .collect();
             ui.set_multimedia_items(ModelRc::from(Rc::new(VecModel::from(slint_items))));
+
+            let sel = ui.get_selected_media_idx();
+            if sel >= 0 && (sel as usize) < items.len() {
+                if let Some(img_prev) = load_image_preview_cached(&img_cache_fondo, &items[sel as usize].path) {
+                    ui.set_selected_media_full_img(img_prev);
+                }
+            }
         }
     };
 
@@ -4506,6 +4536,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ui.set_selected_media_idx(-1);
             refresh_clone();
             bsc_del_multi();
+        });
+    }
+
+    {
+        let ui_h = ui.as_weak();
+        let multi_state = Arc::clone(&multimedia_state);
+        let img_cache_fondo_sel = Arc::clone(&image_cache_fondo);
+        ui.on_seleccionar_media_item(move |idx| {
+            let ui = ui_h.unwrap();
+            let path = {
+                let state = multi_state.read().unwrap();
+                state.get(idx as usize).map(|i| i.path.clone())
+            };
+            if let Some(p) = path {
+                if let Some(img_prev) = load_image_preview_cached(&img_cache_fondo_sel, &p) {
+                    ui.set_selected_media_full_img(img_prev);
+                }
+            }
         });
     }
 

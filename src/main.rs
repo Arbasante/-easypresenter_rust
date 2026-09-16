@@ -1386,7 +1386,9 @@ fn mover_proyector_a_pantalla(p_weak: slint::Weak<ProjectorWindow>, x: i32, y: i
 // Constantes que deben coincidir exactamente con los valores del .slint
 const PROJ_PADDING: f32 = 30.0;  // padding-* del VerticalLayout en ProjectorWindow
 const REF_ZONE_H:   f32 = 90.0;  // height del bloque "if referencia != """
+#[allow(dead_code)]
 const CHAR_W:       f32 = 0.48;  // calibrado para font-weight 900 + Google Sans
+#[allow(dead_code)]
 const LINE_H:       f32 = 1.10;  // line-height efectivo del Text de Slint
 
 /// Búsqueda binaria basada en MEDICIÓN REAL del motor de layout de Slint,

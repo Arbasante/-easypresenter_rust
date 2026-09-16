@@ -1,6 +1,6 @@
 [package]
 name = "ReadyShow"
-version = "0.3.6.1"
+version = "0.3.7"
 edition = "2024"
 build = "build.rs"
 description = "Software de presentación multimedia, letras y Biblias con soporte de video nativo"

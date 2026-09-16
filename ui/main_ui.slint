@@ -652,10 +652,8 @@ in property <[VideoGaleriaItem]> cantos_video_gallery: [];
                                                 Text { text: canto.titulo; color: Theme.text_primary; font-size: 11px; font-weight: 700; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
                                                 
                                                 Rectangle {
-                                                    width: 26px; height: 22px; border-radius: 4px;
-                                                    background: canto.favorito ? rgba(251,191,36,0.18) : (star-touch.has-hover ? Theme.bg_card_hover : transparent);
-                                                    border-width: 1px;
-                                                    border-color: canto.favorito ? #fbbf24 : Theme.border_subtle;
+                                                    width: 24px; height: 24px;
+                                                    background: transparent;
                                                     star-touch := TouchArea {
                                                         clicked => { root.toggle_favorito_canto(canto.id); }
                                                     }
@@ -740,13 +738,8 @@ in property <[VideoGaleriaItem]> cantos_video_gallery: [];
                                         touch-back := TouchArea { clicked => { root.show-bible-chapters = false; } }
                                         HorizontalLayout {
                                             padding-left: 12px; spacing: 8px;
-                                            Rectangle {
-                                                width: 52px; height: 22px; border-radius: 4px;
-                                                background: touch-back.has-hover ? Theme.accent_soft : transparent;
-                                                border-width: 1px; border-color: Theme.accent;
-                                                Text { text: "Volver"; color: Theme.accent; font-size: 9px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; }
-                                            }
-                                            Text { text: root.selected-bible-book.nombre; color: Theme.text_primary; font-size: 11px; font-weight: 900; vertical-alignment: center; }
+                                            Text { text: "<"; color: Theme.accent; font-weight: 900; font-size: 14px; vertical-alignment: center; }
+                                            Text { text: root.selected-bible-book.nombre; color: Theme.accent; font-size: 11px; font-weight: 900; vertical-alignment: center; }
                                         }
                                         Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border_subtle; }
                                     }
@@ -1099,39 +1092,6 @@ in property <[VideoGaleriaItem]> cantos_video_gallery: [];
 
                                 Rectangle { horizontal-stretch: 1; }
 
-                                // Icono / Logo de ReadyShow en la parte superior derecha
-                                HorizontalLayout {
-                                    spacing: 6px;
-                                    padding-right: 4px;
-
-                                    Rectangle {
-                                        width: 28px;
-                                        height: 28px;
-                                        y: (parent.height - self.height) / 2;
-                                        border-radius: 6px;
-                                        background: Theme.bg_card;
-                                        border-width: 1px;
-                                        border-color: Theme.border_subtle;
-                                        Image {
-                                            source: @image-url("../assets/icon.png");
-                                            width: 22px;
-                                            height: 22px;
-                                            image-fit: contain;
-                                            horizontal-alignment: center;
-                                            vertical-alignment: center;
-                                        }
-                                    }
-
-                                    Text {
-                                        text: "ReadyShow";
-                                        color: Theme.text_primary;
-                                        font-size: 11px;
-                                        font-weight: 800;
-                                        letter-spacing: 0.5px;
-                                        vertical-alignment: center;
-                                    }
-                                }
-
                                 Rectangle {
                                     width: 54px;
                                     height: 28px;
@@ -1293,10 +1253,8 @@ in property <[VideoGaleriaItem]> cantos_video_gallery: [];
                                                             
                                                             // Botón favorito
                                                             Rectangle {
-                                                                width: 24px; height: 18px; border-radius: 4px;
-                                                                background: estrofa.favorito ? rgba(211,155,22,0.18) : (star-fav-touch.has-hover ? Theme.bg_card_hover : transparent);
-                                                                border-width: 1px;
-                                                                border-color: estrofa.favorito ? #d39b16 : Theme.border_subtle;
+                                                                width: 20px; height: 18px;
+                                                                background: transparent;
                                                                 star-fav-touch := TouchArea {
                                                                     mouse-cursor: pointer;
                                                                     clicked => {
@@ -1306,7 +1264,7 @@ in property <[VideoGaleriaItem]> cantos_video_gallery: [];
                                                                 Text {
                                                                     text: estrofa.favorito ? "★" : "☆";
                                                                     color: estrofa.favorito ? #d39b16 : (star-fav-touch.has-hover ? #d39b16 : Theme.text_muted);
-                                                                    font-size: 11px;
+                                                                    font-size: 13px;
                                                                     horizontal-alignment: center;
                                                                     vertical-alignment: center;
                                                                 }

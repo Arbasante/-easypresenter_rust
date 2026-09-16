@@ -381,12 +381,14 @@ fn versiculo_a_ui_fav(
     fav_refs: &std::collections::HashSet<String>,
     libro_cap: &str,
 ) -> DiapositivaUI {
-    let referencia = format!("{} {}", libro_cap, v.versiculo);
+    let referencia1 = format!("{}:{}", libro_cap, v.versiculo);
+    let referencia2 = format!("{} {}", libro_cap, v.versiculo);
+    let is_fav = fav_refs.contains(&referencia1) || fav_refs.contains(&referencia2);
     DiapositivaUI {
         orden:     SharedString::from(v.versiculo.to_string()),
         texto:     SharedString::from(v.texto.clone()),
         font_size: calcular_font_size_tarjeta(&v.texto),
-        favorito:  fav_refs.contains(&referencia),
+        favorito:  is_fav,
     }
 }
 
@@ -804,12 +806,14 @@ if !biblias_ok {
                 tipo       TEXT    NOT NULL DEFAULT 'canto',
                 ref_id     INTEGER NOT NULL DEFAULT 0,
                 referencia TEXT    NOT NULL DEFAULT '',
-                titulo     TEXT    NOT NULL DEFAULT ''
+                titulo     TEXT    NOT NULL DEFAULT '',
+                version    TEXT    NOT NULL DEFAULT ''
             );
             CREATE INDEX IF NOT EXISTS idx_diapositivas_canto ON diapositivas(canto_id, orden);
             CREATE INDEX IF NOT EXISTS idx_favoritos_lookup ON favoritos(tipo, ref_id);
             CREATE INDEX IF NOT EXISTS idx_favoritos_ref ON favoritos(tipo, referencia);
         ")?;
+        let _ = cantos_db.execute("ALTER TABLE favoritos ADD COLUMN version TEXT NOT NULL DEFAULT ''", []);
 
         let mut state = Self {
             cantos_db,
@@ -1015,11 +1019,13 @@ if !biblias_ok {
             .collect()
     }
 
-    fn get_favoritos_refs_versiculos(&self) -> std::collections::HashSet<String> {
+    fn get_favoritos_refs_versiculos_actual(&self) -> std::collections::HashSet<String> {
+        let sigla = self.get_sigla_actual();
+        let vid = self.current_version_id;
         let mut stmt = self.cantos_db
-            .prepare_cached("SELECT referencia FROM favoritos WHERE tipo='versiculo'")
+            .prepare_cached("SELECT referencia FROM favoritos WHERE tipo='versiculo' AND (ref_id = ? OR version = ? OR (ref_id = 0 AND version = ''))")
             .unwrap();
-        stmt.query_map([], |r| r.get::<_, String>(0))
+        stmt.query_map(rusqlite::params![vid, sigla], |r| r.get::<_, String>(0))
             .unwrap()
             .filter_map(Result::ok)
             .collect()
@@ -1027,14 +1033,35 @@ if !biblias_ok {
 
     fn get_all_favoritos(&self) -> Vec<FavoritoItem> {
         let mut stmt = self.cantos_db
-            .prepare_cached("SELECT tipo, ref_id, titulo, referencia FROM favoritos ORDER BY id DESC")
+            .prepare_cached("SELECT tipo, ref_id, titulo, referencia, version FROM favoritos ORDER BY id DESC")
             .unwrap();
-        stmt.query_map([], |r| Ok(FavoritoItem {
-            tipo:       SharedString::from(r.get::<_, String>(0)?),
-            id:         r.get::<_, i32>(1)?,
-            titulo:     SharedString::from(r.get::<_, String>(2)?),
-            referencia: SharedString::from(r.get::<_, String>(3)?),
-        }))
+        stmt.query_map([], |r| {
+            let tipo: String = r.get(0)?;
+            let ref_id: i32 = r.get(1)?;
+            let titulo: String = r.get(2)?;
+            let referencia: String = r.get(3)?;
+            let mut version: String = r.get(4).unwrap_or_default();
+            if tipo == "versiculo" && version.is_empty() {
+                if ref_id > 0 {
+                    if let Some(v) = self.versiones.iter().find(|v| v.id == ref_id) {
+                        version = v.sigla.clone();
+                    }
+                }
+                if version.is_empty() {
+                    version = self.get_sigla_actual();
+                    if version.is_empty() {
+                        version = "RVR".to_string();
+                    }
+                }
+            }
+            Ok(FavoritoItem {
+                tipo:       SharedString::from(tipo),
+                id:         ref_id,
+                titulo:     SharedString::from(titulo),
+                referencia: SharedString::from(referencia),
+                version:    SharedString::from(version),
+            })
+        })
         .unwrap()
         .filter_map(Result::ok)
         .collect()
@@ -1048,18 +1075,33 @@ if !biblias_ok {
             self.cantos_db.execute("DELETE FROM favoritos WHERE tipo='canto' AND ref_id=?", [id]).unwrap();
         } else {
             self.cantos_db.execute(
-                "INSERT INTO favoritos (tipo, ref_id, referencia, titulo) VALUES ('canto', ?, '', ?)",
+                "INSERT INTO favoritos (tipo, ref_id, referencia, titulo, version) VALUES ('canto', ?, '', ?, '')",
                 rusqlite::params![id, titulo],
             ).unwrap();
         }
     }
 
     fn toggle_favorito_versiculo(&self, referencia: &str, texto: &str) {
+        let vid = self.current_version_id;
+        let sigla = self.get_sigla_actual();
+        let version_str = if !sigla.is_empty() {
+            sigla
+        } else {
+            self.versiones.iter().find(|v| v.id == vid).map(|v| v.nombre_completo.clone()).unwrap_or_else(|| "BIBLIA".to_string())
+        };
+
         let exists: bool = self.cantos_db
-            .query_row("SELECT 1 FROM favoritos WHERE tipo='versiculo' AND referencia=?", [referencia], |_| Ok(true))
+            .query_row(
+                "SELECT 1 FROM favoritos WHERE tipo='versiculo' AND referencia=? AND (ref_id=? OR version=? OR (ref_id=0 AND version=''))",
+                rusqlite::params![referencia, vid, version_str],
+                |_| Ok(true)
+            )
             .unwrap_or(false);
         if exists {
-            self.cantos_db.execute("DELETE FROM favoritos WHERE tipo='versiculo' AND referencia=?", [referencia]).unwrap();
+            self.cantos_db.execute(
+                "DELETE FROM favoritos WHERE tipo='versiculo' AND referencia=? AND (ref_id=? OR version=? OR (ref_id=0 AND version=''))",
+                rusqlite::params![referencia, vid, version_str]
+            ).unwrap();
         } else {
             // Truncar a 60 chars sin iterar dos veces sobre el string
             let titulo: String = texto.char_indices()
@@ -1068,9 +1110,20 @@ if !biblias_ok {
                 .collect();
             let titulo = if texto.len() > 60 { format!("{}…", titulo) } else { titulo };
             self.cantos_db.execute(
-                "INSERT INTO favoritos (tipo, ref_id, referencia, titulo) VALUES ('versiculo', 0, ?, ?)",
-                rusqlite::params![referencia, titulo],
+                "INSERT INTO favoritos (tipo, ref_id, referencia, titulo, version) VALUES ('versiculo', ?, ?, ?, ?)",
+                rusqlite::params![vid, referencia, titulo, version_str],
             ).unwrap();
+        }
+    }
+
+    fn eliminar_favorito_item(&self, ref_id: i32, tipo: &str, referencia: &str, version: &str) {
+        if tipo == "canto" {
+            let _ = self.cantos_db.execute("DELETE FROM favoritos WHERE tipo='canto' AND ref_id=?", [ref_id]);
+        } else {
+            let _ = self.cantos_db.execute(
+                "DELETE FROM favoritos WHERE tipo='versiculo' AND referencia=? AND (ref_id=? OR version=? OR (ref_id=0 AND version=''))",
+                rusqlite::params![referencia, ref_id, version]
+            );
         }
     }
 
@@ -1138,9 +1191,11 @@ if !biblias_ok {
                 tipo       TEXT    NOT NULL DEFAULT 'canto',
                 ref_id     INTEGER NOT NULL DEFAULT 0,
                 referencia TEXT    NOT NULL DEFAULT '',
-                titulo     TEXT    NOT NULL DEFAULT ''
+                titulo     TEXT    NOT NULL DEFAULT '',
+                version    TEXT    NOT NULL DEFAULT ''
             );
         ").map_err(|e| format!("Error al preparar tabla de favoritos: {}", e))?;
+        let _ = temp_conn.execute("ALTER TABLE favoritos ADD COLUMN version TEXT NOT NULL DEFAULT ''", []);
 
         // 4. Crear índices de optimización si no están presentes
         temp_conn.execute_batch("
@@ -3024,7 +3079,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             thread::spawn(move || {
                 let (versiculos, fav_refs) = {
                     let mut estado = state_t.lock().unwrap();
-                    (estado.get_capitulo(book.id, cap), estado.get_favoritos_refs_versiculos())
+                    (estado.get_capitulo(book.id, cap), estado.get_favoritos_refs_versiculos_actual())
                 };
                 let _ = slint::invoke_from_event_loop(move || {
                     let ui    = ui_t.unwrap();
@@ -3074,7 +3129,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     thread::spawn(move || {
                         let (versiculos, fav_refs) = {
                             let mut estado = state_t.lock().unwrap();
-                            (estado.get_capitulo(libro_id, capitulo), estado.get_favoritos_refs_versiculos())
+                            (estado.get_capitulo(libro_id, capitulo), estado.get_favoritos_refs_versiculos_actual())
                         };
                         let _ = slint::invoke_from_event_loop(move || {
                             let ui = ui_t.unwrap();
@@ -3133,7 +3188,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let (versiculos, fav_refs) = {
                             let mut estado = state_t.lock().unwrap();
                             (estado.get_capitulo(libro_id, capitulo),
-                             estado.get_favoritos_refs_versiculos())
+                             estado.get_favoritos_refs_versiculos_actual())
                         };
                         let _ = slint::invoke_from_event_loop(move || {
                             let ui = ui_t.unwrap();
@@ -3197,7 +3252,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 };
                 ui.set_elemento_seleccionado(SharedString::from(&titulo));
-                let fav_refs   = state_clone.lock().unwrap().get_favoritos_refs_versiculos();
+                let fav_refs   = state_clone.lock().unwrap().get_favoritos_refs_versiculos_actual();
                 let diapos: Vec<DiapositivaUI> = versiculos_nuevos.iter()
                     .map(|v| versiculo_a_ui_fav(v, &fav_refs, &titulo))
                     .collect();
@@ -4888,7 +4943,7 @@ let vp_timer       = Arc::clone(&biblioteca_video_player);
                 let book_name     = ui.get_selected_bible_book().nombre.to_string();
                 let t             = format!("{} {}", book_name, cap);
                 let vs = if lib != -1 && cap != -1 { estado.get_capitulo(lib, cap) } else { Vec::new() };
-                let fr = estado.get_favoritos_refs_versiculos();
+                let fr = estado.get_favoritos_refs_versiculos_actual();
                 let fa = estado.get_all_favoritos();
                 (vs, fr, fa, t)
             };
@@ -4899,6 +4954,38 @@ let vp_timer       = Arc::clone(&biblioteca_video_player);
                 ui.set_estrofas_actuales(ModelRc::from(Rc::new(VecModel::from(diapos))));
             }
             ui.set_favoritos(ModelRc::from(Rc::new(VecModel::from(favs))));
+        });
+    }
+
+    // ── Eliminar favorito ───────────────────────────────────────────────────
+    {
+        let ui_h    = ui.as_weak();
+        let state   = Arc::clone(&state);
+        let c_clone = cargar_cantos.clone();
+        let cb_lib  = Arc::clone(&current_biblia_libro);
+        let cb_cap  = Arc::clone(&current_biblia_capitulo);
+        ui.on_eliminar_favorito(move |fav| {
+            let ui = ui_h.unwrap();
+            let (favs, versiculos, fav_refs, titulo_cap) = {
+                let mut estado = state.lock().unwrap();
+                estado.eliminar_favorito_item(fav.id, fav.tipo.as_str(), fav.referencia.as_str(), fav.version.as_str());
+                let fa = estado.get_all_favoritos();
+                let fr = estado.get_favoritos_refs_versiculos_actual();
+                let lib = *cb_lib.lock().unwrap();
+                let cap = *cb_cap.lock().unwrap();
+                let book_name = ui.get_selected_bible_book().nombre.to_string();
+                let t = format!("{} {}", book_name, cap);
+                let vs = if lib != -1 && cap != -1 { estado.get_capitulo(lib, cap) } else { Vec::new() };
+                (fa, vs, fr, t)
+            };
+            ui.set_favoritos(ModelRc::from(Rc::new(VecModel::from(favs))));
+            c_clone(ui.get_buscador_texto().to_string());
+            if !versiculos.is_empty() {
+                let diapos: Vec<DiapositivaUI> = versiculos.iter()
+                    .map(|v| versiculo_a_ui_fav(v, &fav_refs, &titulo_cap))
+                    .collect();
+                ui.set_estrofas_actuales(ModelRc::from(Rc::new(VecModel::from(diapos))));
+            }
         });
     }
 
@@ -4936,6 +5023,8 @@ let vp_timer       = Arc::clone(&biblioteca_video_player);
             } else {
                 ui.set_active_tab(SharedString::from("biblias"));
                 let ref_str = fav.referencia.to_string();
+                let fav_version_str = fav.version.to_string();
+                let fav_version_id = fav.id;
                 // OPT-1: RE_FAV compilada una sola vez
                 if let Some(caps) = RE_FAV.captures(&ref_str) {
                     let libro_nombre  = caps[1].to_string();
@@ -4946,15 +5035,43 @@ let vp_timer       = Arc::clone(&biblioteca_video_player);
                         *cb_cap.lock().unwrap() = capitulo;
                         let titulo = format!("{} {}", nombre_real, capitulo);
                         ui.set_elemento_seleccionado(SharedString::from(&titulo));
+                        ui.set_selected_bible_book(BookInfo {
+                            id: libro_id,
+                            nombre: SharedString::from(&nombre_real),
+                            capitulos: 0,
+                        });
                         let state_t = Arc::clone(&state);
                         let ui_t    = ui.as_weak();
                         thread::spawn(move || {
-                            let (versiculos, fav_refs) = {
+                            let (versiculos, fav_refs, nombre_version_completo) = {
                                 let mut estado = state_t.lock().unwrap();
-                                (estado.get_capitulo(libro_id, capitulo), estado.get_favoritos_refs_versiculos())
+                                
+                                let matched_version = if fav_version_id > 0 {
+                                    estado.versiones.iter().find(|v| v.id == fav_version_id).cloned()
+                                } else {
+                                    None
+                                }.or_else(|| {
+                                    if !fav_version_str.is_empty() {
+                                        estado.versiones.iter().find(|v| v.sigla.eq_ignore_ascii_case(&fav_version_str) || v.nombre_completo.eq_ignore_ascii_case(&fav_version_str)).cloned()
+                                    } else {
+                                        None
+                                    }
+                                });
+
+                                if let Some(v_info) = &matched_version {
+                                    estado.current_version_id = v_info.id;
+                                }
+
+                                let ver_name = matched_version.map(|v| v.nombre_completo).unwrap_or_default();
+                                let vs = estado.get_capitulo(libro_id, capitulo);
+                                let fr = estado.get_favoritos_refs_versiculos_actual();
+                                (vs, fr, ver_name)
                             };
                             let _ = slint::invoke_from_event_loop(move || {
                                 let ui = ui_t.unwrap();
+                                if !nombre_version_completo.is_empty() {
+                                    ui.set_current_bible_version(SharedString::from(&nombre_version_completo));
+                                }
                                 let mut target_idx = 0i32;
                                 let diapos: Vec<DiapositivaUI> = versiculos.iter().enumerate().map(|(i, v)| {
                                     if v.versiculo == versiculo_num { target_idx = i as i32; }
@@ -4962,6 +5079,8 @@ let vp_timer       = Arc::clone(&biblioteca_video_player);
                                 }).collect();
                                 ui.set_estrofas_actuales(ModelRc::from(Rc::new(VecModel::from(diapos.clone()))));
                                 ui.set_active_estrofa_index(target_idx);
+                                let offset = target_idx as f32 * 115.0;
+                                ui.set_scroll_to_y(if offset > 150.0 { -(offset - 150.0) } else { 0.0 });
                                 if (target_idx as usize) < diapos.len() {
                                     let text = diapos[target_idx as usize].texto.clone();
                                     let ord  = diapos[target_idx as usize].orden.clone();

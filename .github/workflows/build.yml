@@ -744,11 +744,30 @@ jobs:
 
     if: |
       always() &&
-      startsWith(github.ref, 'refs/tags/') &&
+      (startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch') &&
       needs.build-linux.result == 'success'
 
 
     steps:
+
+      # --------------------------------------------------------
+      # OBTENER CÓDIGO (Para leer Cargo.toml en caso manual)
+      # --------------------------------------------------------
+      - name: Obtener código
+        uses: actions/checkout@v4
+
+      # --------------------------------------------------------
+      # DETERMINAR VERSIÓN
+      # --------------------------------------------------------
+      - name: Determinar versión
+        id: get_version
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            VERSION=$(grep '^version' Cargo.toml | head -n 1 | awk -F '"' '{print $2}')
+            echo "TAG_NAME=v$VERSION" >> $GITHUB_ENV
+          else
+            echo "TAG_NAME=${{ github.ref_name }}" >> $GITHUB_ENV
+          fi
 
       # --------------------------------------------------------
       # DESCARGAR ARTEFACTOS
@@ -778,6 +797,8 @@ jobs:
       - name: Crear Release en GitHub
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ env.TAG_NAME }}
+          name: Release ${{ env.TAG_NAME }}
           files: |
             artifacts/ReadyShow -linux-deb/*.deb
             artifacts/ReadyShow -windows-installer/*.exe

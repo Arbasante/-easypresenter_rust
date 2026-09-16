@@ -43,6 +43,7 @@ export struct PdfItem { id: int, nombre: string, miniatura: image, total_paginas
 export component SplashWindow inherits Window {
     width: 500px;
     height: 300px;
+    icon: @image-url("../assets/icon.png");
     no-frame: true;
     always-on-top: true;
     
@@ -208,7 +209,7 @@ component TopMenuItem inherits Rectangle {
 
 component MenuItem inherits Rectangle {
     in property <string> text;
-    in property <string> icon;
+    in property <string> icon: "";
     in property <bool> has_submenu: false;
     in property <color> text_color: Theme.menu_text;
     in property <color> icon_color: Theme.menu_icon;
@@ -221,11 +222,11 @@ component MenuItem inherits Rectangle {
     touch := TouchArea { clicked => { root.clicked(); } }
 
     HorizontalLayout {
-        padding-left: 10px; padding-right: 10px; spacing: 10px;
+        padding-left: 12px; padding-right: 12px; spacing: 10px;
         alignment: space-between;
         HorizontalLayout {
             spacing: 8px;
-            Text { text: root.icon; color: touch.has-hover ? Theme.accent : root.icon_color; font-size: 14px; vertical-alignment: center; }
+            if (root.icon != "") : Text { text: root.icon; color: touch.has-hover ? Theme.accent : root.icon_color; font-size: 14px; vertical-alignment: center; }
             Text { text: root.text; color: touch.has-hover ? Theme.text_primary : root.text_color; font-size: 11px; vertical-alignment: center; font-weight: 600; }
         }
         if (root.has_submenu) : Text { text: ">"; color: touch.has-hover ? Theme.accent : Theme.menu_icon; font-size: 11px; vertical-alignment: center; font-weight: 600; }
@@ -285,6 +286,7 @@ export component IdentifyWindow inherits Window {
 // ─────────────────────────────────────────────────────────────
 export component AppWindow inherits Window {
     title: "ReadyShow";
+    icon: @image-url("../assets/icon.png");
     min-width: 800px; min-height: 600px; background: Theme.bg_main; default-font-family: "Google Sans";
     forward-focus: panel-focus;
 
@@ -646,22 +648,24 @@ in property <[VideoGaleriaItem]> cantos_video_gallery: [];
                                                 }
                                             }
                                             HorizontalLayout {
-        padding-left: 10px; padding-right: 4px; spacing: 4px;
-        Text { text: canto.titulo; color: Theme.text_primary; font-size: 11px; font-weight: 700; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
-        
-        Rectangle {
-            width: 28px; height: 28px; border-radius: 6px;
-            background: star-touch.has-hover ? rgba(255,200,0,0.12) : transparent;
-            star-touch := TouchArea {
-                clicked => { root.toggle_favorito_canto(canto.id); }
-            }
-            Text {
-                text: canto.favorito ? "★" : "☆";
-                color: canto.favorito ? #fbbf24 : (star-touch.has-hover ? #fbbf24 : Theme.text_muted);
-                font-size: 13px; horizontal-alignment: center; vertical-alignment: center;
-            }
-        }
-    }
+                                                padding-left: 10px; padding-right: 6px; spacing: 6px;
+                                                Text { text: canto.titulo; color: Theme.text_primary; font-size: 11px; font-weight: 700; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
+                                                
+                                                Rectangle {
+                                                    width: 34px; height: 22px; border-radius: 4px;
+                                                    background: canto.favorito ? rgba(251,191,36,0.18) : (star-touch.has-hover ? Theme.bg_card_hover : transparent);
+                                                    border-width: 1px;
+                                                    border-color: canto.favorito ? #fbbf24 : Theme.border_subtle;
+                                                    star-touch := TouchArea {
+                                                        clicked => { root.toggle_favorito_canto(canto.id); }
+                                                    }
+                                                    Text {
+                                                        text: canto.favorito ? "Fav" : "+Fav";
+                                                        color: canto.favorito ? #fbbf24 : (star-touch.has-hover ? #fbbf24 : Theme.text_muted);
+                                                        font-size: 9px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center;
+                                                    }
+                                                }
+                                            }
                                             Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border_subtle; }
                                         }
                                     }
@@ -734,7 +738,16 @@ in property <[VideoGaleriaItem]> cantos_video_gallery: [];
                                     Rectangle {
                                         height: 36px;
                                         touch-back := TouchArea { clicked => { root.show-bible-chapters = false; } }
-                                        HorizontalLayout { padding-left: 12px; spacing: 8px; Text { text: "<"; color: Theme.accent; font-weight: 900; vertical-alignment: center;} Text { text: root.selected-bible-book.nombre; color: Theme.accent; font-size: 11px; font-weight: 900; vertical-alignment: center; } }
+                                        HorizontalLayout {
+                                            padding-left: 12px; spacing: 8px;
+                                            Rectangle {
+                                                width: 52px; height: 22px; border-radius: 4px;
+                                                background: touch-back.has-hover ? Theme.accent_soft : transparent;
+                                                border-width: 1px; border-color: Theme.accent;
+                                                Text { text: "Volver"; color: Theme.accent; font-size: 9px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; }
+                                            }
+                                            Text { text: root.selected-bible-book.nombre; color: Theme.text_primary; font-size: 11px; font-weight: 900; vertical-alignment: center; }
+                                        }
                                         Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border_subtle; }
                                     }
                                     ScrollView {
@@ -919,7 +932,7 @@ in property <[VideoGaleriaItem]> cantos_video_gallery: [];
                                 height: 28px;
                                 HorizontalLayout {
                                     padding-left: 12px; padding-right: 12px;
-                                    Text { text: "★  FAVORITOS"; color: #fbbf24; font-size: 9px; font-weight: 700; letter-spacing: 0.4px; vertical-alignment: center; horizontal-stretch: 1; }
+                                    Text { text: "FAVORITOS"; color: #fbbf24; font-size: 9px; font-weight: 700; letter-spacing: 0.8px; vertical-alignment: center; horizontal-stretch: 1; }
                                     Text { text: root.favoritos.length > 0 ? root.favoritos.length + "" : ""; color: Theme.text_muted; font-size: 9px; font-weight: 700; vertical-alignment: center; }
                                 }
                                 Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border_subtle; }
@@ -929,7 +942,7 @@ in property <[VideoGaleriaItem]> cantos_video_gallery: [];
                             Rectangle {
                                 vertical-stretch: 1; clip: true;
                                 if (root.favoritos.length == 0) : Text {
-                                    text: "Pulsa ☆ en un canto o versículo\npara añadirlo aquí";
+                                    text: "Haz clic en Fav en un canto o versículo\npara fijarlo aquí";
                                     color: Theme.text_muted; font-size: 9px; font-weight: 600;
                                     horizontal-alignment: center; vertical-alignment: center;
                                     wrap: word-wrap; width: 100%; height: 100%;
@@ -945,12 +958,17 @@ in property <[VideoGaleriaItem]> cantos_video_gallery: [];
                                             }
                                             HorizontalLayout {
                                                 padding-left: 10px; padding-right: 8px; spacing: 8px;
-                                                // Icono tipo
-                                                Text {
-                                                    text: fav.tipo == "canto" ? "♪" : "✝";
-                                                    color: fav.tipo == "canto" ? Theme.accent : #7c5cbf;
-                                                    font-size: 10px; vertical-alignment: center;
-                                                    width: 14px;
+                                                // Etiqueta tipo
+                                                Rectangle {
+                                                    width: 44px; height: 18px; border-radius: 3px;
+                                                    background: fav.tipo == "canto" ? Theme.accent_soft : rgba(251,191,36,0.15);
+                                                    Text {
+                                                        text: fav.tipo == "canto" ? "CANTO" : "BIBLIA";
+                                                        color: fav.tipo == "canto" ? Theme.accent : #d97706;
+                                                        font-size: 8px; font-weight: 800;
+                                                        horizontal-alignment: center; vertical-alignment: center;
+                                                        width: 100%; height: 100%;
+                                                    }
                                                 }
                                                 // Título
                                                 Text {
@@ -960,17 +978,24 @@ in property <[VideoGaleriaItem]> cantos_video_gallery: [];
                                                     vertical-alignment: center; horizontal-stretch: 1;
                                                     overflow: elide;
                                                 }
-                                                // Estrella para quitar
+                                                // Botón quitar
                                                 Rectangle {
-                                                    width: 22px; height: 22px; border-radius: 4px;
-                                                    background: del-fav.has-hover ? rgba(0,0,0,0.06) : transparent;
+                                                    width: 40px; height: 20px; border-radius: 4px;
+                                                    background: del-fav.has-hover ? rgba(239,68,68,0.15) : Theme.bg_card;
+                                                    border-width: 1px;
+                                                    border-color: del-fav.has-hover ? #ef4444 : Theme.border_subtle;
                                                     del-fav := TouchArea {
                                                         clicked => {
                                                             if (fav.tipo == "canto") { root.toggle_favorito_canto(fav.id); }
                                                             else { root.toggle_favorito_estrofa(fav.referencia, fav.titulo); }
                                                         }
                                                     }
-                                                    Text { text: "★"; color: del-fav.has-hover ? Theme.text_muted : #d39b16; font-size: 11px; horizontal-alignment: center; vertical-alignment: center; }
+                                                    Text {
+                                                        text: "Quitar";
+                                                        color: del-fav.has-hover ? #ef4444 : Theme.text_muted;
+                                                        font-size: 8px; font-weight: 700;
+                                                        horizontal-alignment: center; vertical-alignment: center;
+                                                    }
                                                 }
                                             }
                                         }
@@ -1073,6 +1098,24 @@ in property <[VideoGaleriaItem]> cantos_video_gallery: [];
                             }
 
                                 Rectangle { horizontal-stretch: 1; }
+
+                                // Icono / Logo de ReadyShow en la parte superior derecha
+                                Rectangle {
+                                    width: 28px;
+                                    height: 28px;
+                                    border-radius: 6px;
+                                    background: Theme.bg_card;
+                                    border-width: 1px;
+                                    border-color: Theme.border_subtle;
+                                    Image {
+                                        source: @image-url("../assets/icon.png");
+                                        width: 20px;
+                                        height: 20px;
+                                        image-fit: contain;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                    }
+                                }
 
                                 Rectangle {
                                     width: 52px;
@@ -1232,33 +1275,37 @@ in property <[VideoGaleriaItem]> cantos_video_gallery: [];
                                                                 vertical-alignment: center;
                                                             }
                                                             
-                                                            // Aquí está la estrellita nueva
+                                                            // Botón favorito
                                                             Rectangle {
-                                                                width: 20px;
-                                                                TouchArea {
+                                                                width: 32px; height: 18px; border-radius: 4px;
+                                                                background: estrofa.favorito ? rgba(211,155,22,0.18) : (star-fav-touch.has-hover ? Theme.bg_card_hover : transparent);
+                                                                border-width: 1px;
+                                                                border-color: estrofa.favorito ? #d39b16 : Theme.border_subtle;
+                                                                star-fav-touch := TouchArea {
                                                                     mouse-cursor: pointer;
                                                                     clicked => {
                                                                         root.toggle_favorito_estrofa(root.elemento_seleccionado + ":" + estrofa.orden, estrofa.texto);
                                                                     }
-                                                                    Text {
-                                                                        text: estrofa.favorito ? "★" : "☆";
-                                                                        color: estrofa.favorito ? #d39b16 : Theme.text_muted;
-                                                                        font-size: 14px;
-                                                                        horizontal-alignment: center;
-                                                                        vertical-alignment: center;
-                                                                    }
+                                                                }
+                                                                Text {
+                                                                    text: estrofa.favorito ? "Fav" : "+Fav";
+                                                                    color: estrofa.favorito ? #d39b16 : Theme.text_muted;
+                                                                    font-size: 8px;
+                                                                    font-weight: 800;
+                                                                    horizontal-alignment: center;
+                                                                    vertical-alignment: center;
                                                                 }
                                                             }
                                                         }
 
                                                         Rectangle {
-                                                            width: 54px; height: 18px; border-radius: 4px; border-width: 1px;
+                                                            width: 58px; height: 18px; border-radius: 4px; border-width: 1px;
                                                             background: idx == root.active_estrofa_index ? #dc2626 : transparent;
                                                             border-color: idx == root.active_estrofa_index
                                                                 ? #dc2626
                                                                 : (touch-estrofa.has-hover ? rgba(63,111,115,0.45) : Theme.border_subtle);
                                                             Text {
-                                                                text: idx == root.active_estrofa_index ? "EN VIVO" : "CLIC";
+                                                                text: idx == root.active_estrofa_index ? "EN VIVO" : "PROYECTAR";
                                                                 color: idx == root.active_estrofa_index ? white : (touch-estrofa.has-hover ? Theme.accent : Theme.text_muted);
                                                                 font-size: 8px; font-weight: 800;
                                                                 horizontal-alignment: center; vertical-alignment: center;
@@ -1344,8 +1391,8 @@ in property <[VideoGaleriaItem]> cantos_video_gallery: [];
                                             }
                                         }
                                         Text {
-                                            text: root.is_video_projecting ? "🔴 VIDEO EN PROYECCIÓN" : "▶ PROYECTAR VIDEO";
-                                            color: white; font-weight: 700; font-size: 14px;
+                                            text: root.is_video_projecting ? "VIDEO EN PROYECCIÓN" : "PROYECTAR VIDEO";
+                                            color: white; font-weight: 700; font-size: 13px;
                                             horizontal-alignment: center; vertical-alignment: center;
                                         }
                                     }
@@ -1355,24 +1402,24 @@ in property <[VideoGaleriaItem]> cantos_video_gallery: [];
                                         TouchArea {
                                             clicked => { root.toggle_preview_video(root.selected_video_idx); }
                                             if (!root.is_preview_playing) : Rectangle {
-                                                width: 60px; height: 60px; border-radius: 30px;
-                                                background: rgba(0,0,0,0.6); border-width: 2px; border-color: rgba(255,255,255,0.2);
-                                                x: (parent.width - 60px) / 2; y: (parent.height - 60px) / 2;
-                                                Text { text: "▶"; color: white; font-size: 24px; horizontal-alignment: center; vertical-alignment: center; }
+                                                width: 110px; height: 36px; border-radius: 6px;
+                                                background: rgba(0,0,0,0.65); border-width: 1px; border-color: rgba(255,255,255,0.25);
+                                                x: (parent.width - 110px) / 2; y: (parent.height - 36px) / 2;
+                                                Text { text: "Reproducir"; color: white; font-size: 11px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
                                             }
                                         }
                                     }
                                     if (root.is_video_projecting) : HorizontalLayout {
-                                        height: 40px; spacing: 16px; padding-left: 16px; padding-right: 16px;
+                                        height: 40px; spacing: 12px; padding-left: 16px; padding-right: 16px;
                                         Rectangle {
-                                            width: 40px; height: 40px; border-radius: 20px; background: Theme.bg_card; border-width: 1px; border-color: Theme.border_subtle;
+                                            width: 86px; height: 32px; border-radius: 6px; background: Theme.bg_card; border-width: 1px; border-color: Theme.border_subtle;
                                             TouchArea { clicked => { root.toggle_proyector_play(); } }
-                                            Text { text: root.is_proyector_playing ? "⏸" : "▶"; color: Theme.text_primary; font-size: 18px; horizontal-alignment: center; vertical-alignment: center; }
+                                            Text { text: root.is_proyector_playing ? "Pausar" : "Reproducir"; color: Theme.text_primary; font-size: 10px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
                                         }
                                         Rectangle {
-                                            width: 40px; height: 40px; border-radius: 20px; background: Theme.bg_card; border-width: 1px; border-color: Theme.border_subtle;
+                                            width: 86px; height: 32px; border-radius: 6px; background: Theme.bg_card; border-width: 1px; border-color: Theme.border_subtle;
                                             TouchArea { clicked => { root.toggle_proyector_mute(); } }
-                                            Text { text: root.is_proyector_muted ? "🔇" : "🔊"; color: Theme.text_primary; font-size: 18px; horizontal-alignment: center; vertical-alignment: center; }
+                                            Text { text: root.is_proyector_muted ? "Activar Audio" : "Silenciar"; color: Theme.text_primary; font-size: 10px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
                                         }
                                         VerticalLayout {
                                             alignment: center; horizontal-stretch: 1;
@@ -1447,14 +1494,14 @@ in property <[VideoGaleriaItem]> cantos_video_gallery: [];
             TouchArea {}
             VerticalLayout {
                 padding: 4px; spacing: 2px;
-                MenuItem { text: "Agregar Imagen"; icon: "+"; clicked => { root.mostrar_menu_media = false; root.mostrar_submenu_aspecto = false; root.agregar_multimedia(); } }
+                MenuItem { text: "Agregar Imagen"; icon: ""; clicked => { root.mostrar_menu_media = false; root.mostrar_submenu_aspecto = false; root.agregar_multimedia(); } }
                 if (root.menu_media_idx != -1) : HorizontalLayout { padding-left: 6px; padding-right: 6px; padding-top: 2px; padding-bottom: 2px; Rectangle { height: 1px; background: Theme.separator; } }
                 if (root.menu_media_idx != -1) : VerticalLayout {
                     spacing: 2px;
-                    MenuItem { text: "Aspecto de Imagen"; icon: "⛶"; has_submenu: true; clicked => { root.mostrar_submenu_aspecto = !root.mostrar_submenu_aspecto; } }
+                    MenuItem { text: "Aspecto de Imagen"; icon: ""; has_submenu: true; clicked => { root.mostrar_submenu_aspecto = !root.mostrar_submenu_aspecto; } }
                     
                     // NUEVO BOTON PREDETERMINADO
-                    MenuItem { text: "Fondo Predeterminado"; icon: "★"; text_color: #eab308; icon_color: #eab308; clicked => { root.default_bg_type = "imagen"; root.default_bg_idx = root.menu_media_idx; root.mostrar_menu_media = false; } }
+                    MenuItem { text: "Fondo Predeterminado"; icon: ""; text_color: #eab308; icon_color: #eab308; clicked => { root.default_bg_type = "imagen"; root.default_bg_idx = root.menu_media_idx; root.mostrar_menu_media = false; } }
                     
                     HorizontalLayout { padding-left: 6px; padding-right: 6px; padding-top: 2px; padding-bottom: 2px; Rectangle { height: 1px; background: Theme.separator; } }
                     MenuItem { text: "Eliminar Imagen"; icon: ""; text_color: #f87171; icon_color: #f87171; clicked => { root.mostrar_menu_media = false; root.mostrar_submenu_aspecto = false; root.eliminar_multimedia(root.menu_media_idx); } }
@@ -1468,9 +1515,9 @@ in property <[VideoGaleriaItem]> cantos_video_gallery: [];
             TouchArea {}
             VerticalLayout {
                 padding: 4px; spacing: 2px;
-                MenuItem { text: "Ajustar al centro"; icon: "⛶"; clicked => { root.mostrar_menu_media = false; root.mostrar_submenu_aspecto = false; root.cambiar_aspecto_multimedia(root.menu_media_idx, "centro"); } }
-                MenuItem { text: "Rellenar pantalla"; icon: "⛶"; clicked => { root.mostrar_menu_media = false; root.mostrar_submenu_aspecto = false; root.cambiar_aspecto_multimedia(root.menu_media_idx, "rellenar"); } }
-                MenuItem { text: "Estirar"; icon: "T"; text_color: Theme.accent; icon_color: Theme.accent; clicked => { root.mostrar_menu_media = false; root.mostrar_submenu_aspecto = false; root.cambiar_aspecto_multimedia(root.menu_media_idx, "estirar"); } }
+                MenuItem { text: "Ajustar al centro"; icon: ""; clicked => { root.mostrar_menu_media = false; root.mostrar_submenu_aspecto = false; root.cambiar_aspecto_multimedia(root.menu_media_idx, "centro"); } }
+                MenuItem { text: "Rellenar pantalla"; icon: ""; clicked => { root.mostrar_menu_media = false; root.mostrar_submenu_aspecto = false; root.cambiar_aspecto_multimedia(root.menu_media_idx, "rellenar"); } }
+                MenuItem { text: "Estirar"; icon: ""; text_color: Theme.accent; icon_color: Theme.accent; clicked => { root.mostrar_menu_media = false; root.mostrar_submenu_aspecto = false; root.cambiar_aspecto_multimedia(root.menu_media_idx, "estirar"); } }
             }
         }
     }
@@ -1506,20 +1553,20 @@ in property <[VideoGaleriaItem]> cantos_video_gallery: [];
             TouchArea {}
             VerticalLayout {
                 padding: 4px; spacing: 2px;
-                MenuItem { text: "Agregar Video"; icon: "+"; clicked => { root.mostrar_menu_video = false; root.mostrar_submenu_reproduccion = false; root.agregar_video(); } }
+                MenuItem { text: "Agregar Video"; icon: ""; clicked => { root.mostrar_menu_video = false; root.mostrar_submenu_reproduccion = false; root.agregar_video(); } }
                 if (root.menu_video_idx != -1) : HorizontalLayout { padding-left: 6px; padding-right: 6px; padding-top: 2px; padding-bottom: 2px; Rectangle { height: 1px; background: Theme.separator; } }
                 if (root.menu_video_idx != -1) : Rectangle {
                     height: 30px; border-radius: 4px; background: touch_rep.has-hover ? Theme.bg_card_hover : transparent;
                     touch_rep := TouchArea { clicked => { root.mostrar_submenu_reproduccion = !root.mostrar_submenu_reproduccion; } }
                     HorizontalLayout {
-                        padding-left: 8px; padding-right: 8px; alignment: space-between;
-                        Text { text: " Reproducción"; color: Theme.text_primary; font-size: 13px; vertical-alignment: center; }
-                        Text { text: "›"; color: Theme.accent; font-size: 16px; vertical-alignment: center; font-weight: 700; }
+                        padding-left: 12px; padding-right: 12px; alignment: space-between;
+                        Text { text: "Reproducción"; color: Theme.text_primary; font-size: 11px; font-weight: 600; vertical-alignment: center; }
+                        Text { text: ">"; color: Theme.accent; font-size: 11px; vertical-alignment: center; font-weight: 600; }
                     }
                 }
                 
                 // NUEVO BOTON PREDETERMINADO
-                if (root.menu_video_idx != -1) : MenuItem { text: "Fondo Predeterminado"; icon: "★"; text_color: #eab308; icon_color: #eab308; clicked => { root.default_bg_type = "video"; root.default_bg_idx = root.menu_video_idx; root.mostrar_menu_video = false; } }
+                if (root.menu_video_idx != -1) : MenuItem { text: "Fondo Predeterminado"; icon: ""; text_color: #eab308; icon_color: #eab308; clicked => { root.default_bg_type = "video"; root.default_bg_idx = root.menu_video_idx; root.mostrar_menu_video = false; } }
                 
                 if (root.menu_video_idx != -1) : HorizontalLayout { padding-left: 6px; padding-right: 6px; padding-top: 2px; padding-bottom: 2px; Rectangle { height: 1px; background: Theme.separator; } }
                 if (root.menu_video_idx != -1) : MenuItem { text: "Eliminar Video"; icon: ""; text_color: #f87171; icon_color: #f87171; clicked => { root.mostrar_menu_video = false; root.mostrar_submenu_reproduccion = false; root.eliminar_video(root.menu_video_idx); } }
@@ -1653,16 +1700,16 @@ Rectangle {
                                     // Lila
                                     Rectangle { width: 28px; height: 28px; border-radius: 14px; background: root.biblias_font_color == #d8b4fe ? rgba(63,111,115,0.18) : transparent; border-width: 2px; border-color: root.biblias_font_color == #d8b4fe ? Theme.accent : transparent; Rectangle { width: 20px; height: 20px; border-radius: 10px; x: 2px; y: 2px; background: #d8b4fe; } nm-bfc6 := TouchArea { clicked => { root.biblias_font_color = #d8b4fe; root.sync_estilos(); } } }
                                     // Más colores
-                                    Rectangle { width: 28px; height: 28px; border-radius: 14px; background: rgba(0,0,0,0.04); border-width: 1px; border-color: Theme.border_subtle; nm-bfcc := TouchArea { clicked => { root.color_target = "biblias"; root.mostrar_selector_color = true; } } Text { text: "+"; color: Theme.text_secondary; font-size: 13px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; } }
+                                    Rectangle { width: 38px; height: 28px; border-radius: 6px; background: rgba(0,0,0,0.04); border-width: 1px; border-color: Theme.border_subtle; nm-bfcc := TouchArea { clicked => { root.color_target = "biblias"; root.mostrar_selector_color = true; } } Text { text: "Color"; color: Theme.text_secondary; font-size: 9px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; } }
                                 }
                             }
                             // Tamaño de letra
                             VerticalLayout { spacing: 8px; alignment: start; horizontal-stretch: 0;
                                 Text { text: "TAMAÑO"; color: Theme.text_muted; font-size: 10px; font-weight: 900; letter-spacing: 2px; }
                                 HorizontalLayout { spacing: 4px; alignment: start;
-                                    Rectangle { width: 30px; height: 28px; border-radius: 6px; background: nm-bsm.has-hover ? rgba(0,0,0,0.07) : rgba(0,0,0,0.03); border-width: 1px; border-color: Theme.border_subtle; nm-bsm := TouchArea { clicked => { root.biblias_font_scale = max(0.5, root.biblias_font_scale - 0.1); root.sync_font_scale(); } } Text { text: "−"; color: Theme.text_secondary; font-size: 14px; horizontal-alignment: center; vertical-alignment: center; } }
-                                    Rectangle { width: 52px; height: 28px; border-radius: 6px; background: rgba(0,0,0,0.02); border-width: 1px; border-color: Theme.border_subtle; Text { text: round(root.biblias_font_scale * 100) + "%"; color: Theme.text_secondary; font-size: 10px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; width: 100%; height: 100%; } }
-                                    Rectangle { width: 30px; height: 28px; border-radius: 6px; background: nm-bsp.has-hover ? rgba(0,0,0,0.07) : rgba(0,0,0,0.03); border-width: 1px; border-color: Theme.border_subtle; nm-bsp := TouchArea { clicked => { root.biblias_font_scale = min(2.0, root.biblias_font_scale + 0.1); root.sync_font_scale(); } } Text { text: "+"; color: Theme.text_secondary; font-size: 14px; horizontal-alignment: center; vertical-alignment: center; } }
+                                    Rectangle { width: 38px; height: 28px; border-radius: 6px; background: nm-bsm.has-hover ? rgba(0,0,0,0.07) : rgba(0,0,0,0.03); border-width: 1px; border-color: Theme.border_subtle; nm-bsm := TouchArea { clicked => { root.biblias_font_scale = max(0.5, root.biblias_font_scale - 0.1); root.sync_font_scale(); } } Text { text: "Menor"; color: Theme.text_secondary; font-size: 9px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; } }
+                                    Rectangle { width: 46px; height: 28px; border-radius: 6px; background: rgba(0,0,0,0.02); border-width: 1px; border-color: Theme.border_subtle; Text { text: round(root.biblias_font_scale * 100) + "%"; color: Theme.text_secondary; font-size: 10px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; width: 100%; height: 100%; } }
+                                    Rectangle { width: 38px; height: 28px; border-radius: 6px; background: nm-bsp.has-hover ? rgba(0,0,0,0.07) : rgba(0,0,0,0.03); border-width: 1px; border-color: Theme.border_subtle; nm-bsp := TouchArea { clicked => { root.biblias_font_scale = min(2.0, root.biblias_font_scale + 0.1); root.sync_font_scale(); } } Text { text: "Mayor"; color: Theme.text_secondary; font-size: 9px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; } }
                                 }
                             }
                         }
@@ -1686,14 +1733,14 @@ Rectangle {
                             if (current_gal_tab == "imagenes") : ScrollView {
                                 width: 100%; height: 100%;
                                 HorizontalLayout { padding: 2px; spacing: 8px; alignment: start;
-                                    Rectangle { width: 92px; height: 64px; border-radius: 8px; border-width: 1px; border-color: Theme.border_subtle; background: nm-bagi.has-hover ? rgba(0,0,0,0.05) : rgba(0,0,0,0.02); nm-bagi := TouchArea { clicked => { root.agregar_a_galeria("biblias-img"); } } VerticalLayout { alignment: center; spacing: 3px; Text { text: "+"; color: Theme.text_muted; font-size: 20px; horizontal-alignment: center; } Text { text: "Agregar"; color: Theme.text_muted; font-size: 8px; horizontal-alignment: center; font-weight: 700; } } }
+                                    Rectangle { width: 92px; height: 64px; border-radius: 8px; border-width: 1px; border-color: Theme.border_subtle; background: nm-bagi.has-hover ? rgba(0,0,0,0.05) : rgba(0,0,0,0.02); nm-bagi := TouchArea { clicked => { root.agregar_a_galeria("biblias-img"); } } VerticalLayout { alignment: center; spacing: 0px; Text { text: "Agregar"; color: Theme.text_muted; font-size: 11px; horizontal-alignment: center; font-weight: 700; } } }
                                     for img[idx] in root.biblias_image_data : Rectangle { width: 92px; height: 64px; border-radius: 8px; border-width: 2px; border-color: root.biblias_selected_img == idx ? Theme.accent : rgba(0,0,0,0.04); clip: true; Image { source: img; width: 100%; height: 100%; image-fit: cover; } TouchArea { clicked => { root.seleccionar_galeria_item("biblias-img", idx); } } Rectangle { width: 16px; height: 16px; x: parent.width - 20px; y: 4px; border-radius: 8px; background: rgba(0,0,0,0.75); TouchArea { clicked => { root.eliminar_galeria_item("biblias-img", idx); } } Text { text: "✕"; color: #f87171; font-size: 8px; horizontal-alignment: center; vertical-alignment: center; font-weight: 900; } } }
                                 }
                             }
                             if (current_gal_tab == "videos") : ScrollView {
                                 width: 100%; height: 100%;
                                 HorizontalLayout { padding: 2px; spacing: 8px; alignment: start;
-                                    Rectangle { width: 92px; height: 64px; border-radius: 8px; border-width: 1px; border-color: Theme.border_subtle; background: nm-bagv.has-hover ? rgba(0,0,0,0.05) : rgba(0,0,0,0.02); nm-bagv := TouchArea { clicked => { root.agregar_a_galeria("biblias-vid"); } } VerticalLayout { alignment: center; spacing: 3px; Text { text: "+"; color: Theme.text_muted; font-size: 20px; horizontal-alignment: center; } Text { text: "Agregar"; color: Theme.text_muted; font-size: 8px; horizontal-alignment: center; font-weight: 700; } } }
+                                    Rectangle { width: 92px; height: 64px; border-radius: 8px; border-width: 1px; border-color: Theme.border_subtle; background: nm-bagv.has-hover ? rgba(0,0,0,0.05) : rgba(0,0,0,0.02); nm-bagv := TouchArea { clicked => { root.agregar_a_galeria("biblias-vid"); } } VerticalLayout { alignment: center; spacing: 0px; Text { text: "Agregar"; color: Theme.text_muted; font-size: 11px; horizontal-alignment: center; font-weight: 700; } } }
                                     for vid[idx] in root.biblias_video_gallery : Rectangle {
     width: 92px; height: 64px; border-radius: 8px; border-width: 2px; clip: true;
     background: #080808;
@@ -1762,15 +1809,15 @@ Rectangle {
                                     Rectangle { width: 28px; height: 28px; border-radius: 14px; background: root.cantos_font_color == #93c5fd ? rgba(63,111,115,0.18) : transparent; border-width: 2px; border-color: root.cantos_font_color == #93c5fd ? Theme.accent : transparent; Rectangle { width: 20px; height: 20px; border-radius: 10px; x: 2px; y: 2px; background: #93c5fd; } nm-cfc4 := TouchArea { clicked => { root.cantos_font_color = #93c5fd; root.sync_estilos(); } } }
                                     Rectangle { width: 28px; height: 28px; border-radius: 14px; background: root.cantos_font_color == #fca5a5 ? rgba(63,111,115,0.18) : transparent; border-width: 2px; border-color: root.cantos_font_color == #fca5a5 ? Theme.accent : transparent; Rectangle { width: 20px; height: 20px; border-radius: 10px; x: 2px; y: 2px; background: #fca5a5; } nm-cfc5 := TouchArea { clicked => { root.cantos_font_color = #fca5a5; root.sync_estilos(); } } }
                                     Rectangle { width: 28px; height: 28px; border-radius: 14px; background: root.cantos_font_color == #d8b4fe ? rgba(63,111,115,0.18) : transparent; border-width: 2px; border-color: root.cantos_font_color == #d8b4fe ? Theme.accent : transparent; Rectangle { width: 20px; height: 20px; border-radius: 10px; x: 2px; y: 2px; background: #d8b4fe; } nm-cfc6 := TouchArea { clicked => { root.cantos_font_color = #d8b4fe; root.sync_estilos(); } } }
-                                    Rectangle { width: 28px; height: 28px; border-radius: 14px; background: rgba(0,0,0,0.04); border-width: 1px; border-color: Theme.border_subtle; nm-cfcc := TouchArea { clicked => { root.color_target = "cantos"; root.mostrar_selector_color = true; } } Text { text: "+"; color: Theme.text_secondary; font-size: 13px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; } }
+                                    Rectangle { width: 38px; height: 28px; border-radius: 6px; background: rgba(0,0,0,0.04); border-width: 1px; border-color: Theme.border_subtle; nm-cfcc := TouchArea { clicked => { root.color_target = "cantos"; root.mostrar_selector_color = true; } } Text { text: "Color"; color: Theme.text_secondary; font-size: 9px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; } }
                                 }
                             }
                             VerticalLayout { spacing: 8px; alignment: start; horizontal-stretch: 0;
                                 Text { text: "TAMAÑO"; color: Theme.text_muted; font-size: 10px; font-weight: 900; letter-spacing: 2px; }
                                 HorizontalLayout { spacing: 4px; alignment: start;
-                                    Rectangle { width: 30px; height: 28px; border-radius: 6px; background: nm-csm.has-hover ? rgba(0,0,0,0.07) : rgba(0,0,0,0.03); border-width: 1px; border-color: Theme.border_subtle; nm-csm := TouchArea { clicked => { root.cantos_font_scale = max(0.5, root.cantos_font_scale - 0.1); root.sync_font_scale(); } } Text { text: "−"; color: Theme.text_secondary; font-size: 14px; horizontal-alignment: center; vertical-alignment: center; } }
-                                    Rectangle { width: 52px; height: 28px; border-radius: 6px; background: rgba(0,0,0,0.02); border-width: 1px; border-color: Theme.border_subtle; Text { text: round(root.cantos_font_scale * 100) + "%"; color: Theme.text_secondary; font-size: 10px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; width: 100%; height: 100%; } }
-                                    Rectangle { width: 30px; height: 28px; border-radius: 6px; background: nm-csp.has-hover ? rgba(0,0,0,0.07) : rgba(0,0,0,0.03); border-width: 1px; border-color: Theme.border_subtle; nm-csp := TouchArea { clicked => { root.cantos_font_scale = min(2.0, root.cantos_font_scale + 0.1); root.sync_font_scale(); } } Text { text: "+"; color: Theme.text_secondary; font-size: 14px; horizontal-alignment: center; vertical-alignment: center; } }
+                                    Rectangle { width: 38px; height: 28px; border-radius: 6px; background: nm-csm.has-hover ? rgba(0,0,0,0.07) : rgba(0,0,0,0.03); border-width: 1px; border-color: Theme.border_subtle; nm-csm := TouchArea { clicked => { root.cantos_font_scale = max(0.5, root.cantos_font_scale - 0.1); root.sync_font_scale(); } } Text { text: "Menor"; color: Theme.text_secondary; font-size: 9px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; } }
+                                    Rectangle { width: 46px; height: 28px; border-radius: 6px; background: rgba(0,0,0,0.02); border-width: 1px; border-color: Theme.border_subtle; Text { text: round(root.cantos_font_scale * 100) + "%"; color: Theme.text_secondary; font-size: 10px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; width: 100%; height: 100%; } }
+                                    Rectangle { width: 38px; height: 28px; border-radius: 6px; background: nm-csp.has-hover ? rgba(0,0,0,0.07) : rgba(0,0,0,0.03); border-width: 1px; border-color: Theme.border_subtle; nm-csp := TouchArea { clicked => { root.cantos_font_scale = min(2.0, root.cantos_font_scale + 0.1); root.sync_font_scale(); } } Text { text: "Mayor"; color: Theme.text_secondary; font-size: 9px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; } }
                                 }
                             }
                         }
@@ -1793,7 +1840,7 @@ Rectangle {
                             if (current_gal_tab == "imagenes") : ScrollView {
                                 width: 100%; height: 100%;
                                 HorizontalLayout { padding: 2px; spacing: 8px; alignment: start;
-                                    Rectangle { width: 92px; height: 64px; border-radius: 8px; border-width: 1px; border-color: Theme.border_subtle; background: nm-cagi.has-hover ? rgba(0,0,0,0.05) : rgba(0,0,0,0.02); nm-cagi := TouchArea { clicked => { root.agregar_a_galeria("cantos-img"); } } VerticalLayout { alignment: center; spacing: 3px; Text { text: "+"; color: Theme.text_muted; font-size: 20px; horizontal-alignment: center; } Text { text: "Agregar"; color: Theme.text_muted; font-size: 8px; horizontal-alignment: center; font-weight: 700; } } }
+                                    Rectangle { width: 92px; height: 64px; border-radius: 8px; border-width: 1px; border-color: Theme.border_subtle; background: nm-cagi.has-hover ? rgba(0,0,0,0.05) : rgba(0,0,0,0.02); nm-cagi := TouchArea { clicked => { root.agregar_a_galeria("cantos-img"); } } VerticalLayout { alignment: center; spacing: 0px; Text { text: "Agregar"; color: Theme.text_muted; font-size: 11px; horizontal-alignment: center; font-weight: 700; } } }
                                     for img[idx] in root.cantos_image_data : Rectangle { width: 92px; height: 64px; border-radius: 8px; border-width: 2px; border-color: root.cantos_selected_img == idx ? Theme.accent : rgba(0,0,0,0.04); clip: true; Image { source: img; width: 100%; height: 100%; image-fit: cover; } TouchArea { clicked => { root.seleccionar_galeria_item("cantos-img", idx); } } Rectangle { width: 16px; height: 16px; x: parent.width - 20px; y: 4px; border-radius: 8px; background: rgba(0,0,0,0.75); TouchArea { clicked => { root.eliminar_galeria_item("cantos-img", idx); } } Text { text: "✕"; color: #f87171; font-size: 8px; horizontal-alignment: center; vertical-alignment: center; font-weight: 900; } } }
                                 }
                             }
@@ -2071,10 +2118,10 @@ if (root.mostrar_acerca_de) : Rectangle {
             touch-block := TouchArea {}
             VerticalLayout {
                 padding: 4px; spacing: 0px;
-                Rectangle { height: 34px; border-radius: 6px; background: touch-add.has-hover ? rgba(63,111,115,0.15) : transparent; touch-add := TouchArea { clicked => { root.mostrar_menu_canto = false; root.abrir_formulario_nuevo(); } } HorizontalLayout { padding-left: 12px; spacing: 10px; Text { text: "+"; color: Theme.accent; font-size: 15px; font-weight: 900; vertical-alignment: center; } Text { text: "Agregar canto"; color: Theme.text_primary; font-size: 11px; font-weight: 600; vertical-alignment: center; } } }
-                Rectangle { height: 34px; border-radius: 6px; background: touch-edit.has-hover ? rgba(63,111,115,0.15) : transparent; touch-edit := TouchArea { clicked => { root.mostrar_menu_canto = false; root.abrir_formulario_editar(root.menu_canto_id, root.menu_canto_titulo); } } HorizontalLayout { padding-left: 12px; spacing: 10px; Text { text: "✎"; color: Theme.text_secondary; font-size: 13px; vertical-alignment: center; } Text { text: "Editar canto"; color: Theme.text_primary; font-size: 11px; font-weight: 600; vertical-alignment: center; } } }
+                Rectangle { height: 34px; border-radius: 6px; background: touch-add.has-hover ? rgba(63,111,115,0.15) : transparent; touch-add := TouchArea { clicked => { root.mostrar_menu_canto = false; root.abrir_formulario_nuevo(); } } HorizontalLayout { padding-left: 12px; Text { text: "Agregar canto"; color: Theme.text_primary; font-size: 11px; font-weight: 600; vertical-alignment: center; } } }
+                Rectangle { height: 34px; border-radius: 6px; background: touch-edit.has-hover ? rgba(63,111,115,0.15) : transparent; touch-edit := TouchArea { clicked => { root.mostrar_menu_canto = false; root.abrir_formulario_editar(root.menu_canto_id, root.menu_canto_titulo); } } HorizontalLayout { padding-left: 12px; Text { text: "Editar canto"; color: Theme.text_primary; font-size: 11px; font-weight: 600; vertical-alignment: center; } } }
                 Rectangle { height: 1px; background: Theme.separator; }
-                Rectangle { height: 34px; border-radius: 6px; background: touch-del.has-hover ? rgba(220, 38, 38, 0.15) : transparent; touch-del := TouchArea { clicked => { root.mostrar_menu_canto = false; root.confirmar_eliminar_canto(root.menu_canto_id, root.menu_canto_titulo); } } HorizontalLayout { padding-left: 12px; spacing: 10px; Text { text: "✕"; color: #f87171; font-size: 12px; font-weight: 900; vertical-alignment: center; } Text { text: "Eliminar canto"; color: #f87171; font-size: 11px; font-weight: 600; vertical-alignment: center; } } }
+                Rectangle { height: 34px; border-radius: 6px; background: touch-del.has-hover ? rgba(220, 38, 38, 0.15) : transparent; touch-del := TouchArea { clicked => { root.mostrar_menu_canto = false; root.confirmar_eliminar_canto(root.menu_canto_id, root.menu_canto_titulo); } } HorizontalLayout { padding-left: 12px; Text { text: "Eliminar canto"; color: #f87171; font-size: 11px; font-weight: 600; vertical-alignment: center; } } }
             }
         }
     }
@@ -2433,7 +2480,7 @@ if (root.mostrar_acerca_de) : Rectangle {
                 Rectangle {
                     height: 48px; border-radius: 8px; background: Theme.bg_list; border-width: 1px; border-color: Theme.border_subtle;
                     HorizontalLayout {
-                        padding-left: 14px; padding-right: 6px; spacing: 8px;
+                        padding-left: 14px; padding-right: 8px; spacing: 8px;
                         Text {
                             text: "http://" + root.overlay_ip_local + ":" + root.overlay_puerto;
                             color: Theme.accent; font-size: 13px; font-weight: 800;
@@ -2441,13 +2488,14 @@ if (root.mostrar_acerca_de) : Rectangle {
                             overflow: elide;
                         }
                         Rectangle {
-                            width: 36px; height: 36px; border-radius: 6px;
+                            width: 64px; height: 32px; border-radius: 6px;
                             background: touch-copiar-url.has-hover ? Theme.accent_soft : rgba(0,0,0,0.04);
+                            border-width: 1px; border-color: Theme.border_subtle;
                             touch-copiar-url := TouchArea { clicked => { root.copiar_url_overlay(); } }
                             Text {
-                                text: "⧉";
+                                text: "Copiar";
                                 color: touch-copiar-url.has-hover ? Theme.accent : Theme.text_secondary;
-                                font-size: 15px; font-weight: 900;
+                                font-size: 11px; font-weight: 700;
                                 horizontal-alignment: center; vertical-alignment: center;
                                 width: 100%; height: 100%;
                             }
@@ -2650,7 +2698,6 @@ if (root.mostrar_acerca_de) : Rectangle {
                         padding: 12px; spacing: 6px;
                         HorizontalLayout {
                             spacing: 8px;
-                            Text { text: "🎵"; font-size: 14px; vertical-alignment: center; }
                             Text { text: "Base de Datos de Cantos (cantos.db)"; color: Theme.text_primary; font-size: 12px; font-weight: 800; vertical-alignment: center; horizontal-stretch: 1; }
                         }
                         Text {
@@ -2666,8 +2713,7 @@ if (root.mostrar_acerca_de) : Rectangle {
                                 border-width: 1px; border-color: Theme.border_strong;
                                 touch-exp-cantos := TouchArea { clicked => { root.exportar_db_cantos(); } }
                                 HorizontalLayout {
-                                    alignment: center; spacing: 6px;
-                                    Text { text: "⤓"; color: Theme.text_primary; font-size: 12px; font-weight: 900; vertical-alignment: center; }
+                                    alignment: center;
                                     Text { text: "Exportar Cantos"; color: Theme.text_primary; font-size: 11px; font-weight: 700; vertical-alignment: center; }
                                 }
                             }
@@ -2676,8 +2722,7 @@ if (root.mostrar_acerca_de) : Rectangle {
                                 background: touch-imp-cantos.has-hover ? Theme.accent_hover : Theme.accent;
                                 touch-imp-cantos := TouchArea { clicked => { root.importar_db_cantos(); } }
                                 HorizontalLayout {
-                                    alignment: center; spacing: 6px;
-                                    Text { text: "⤒"; color: white; font-size: 12px; font-weight: 900; vertical-alignment: center; }
+                                    alignment: center;
                                     Text { text: "Importar Cantos"; color: white; font-size: 11px; font-weight: 800; vertical-alignment: center; }
                                 }
                             }
@@ -2693,7 +2738,6 @@ if (root.mostrar_acerca_de) : Rectangle {
                         padding: 12px; spacing: 6px;
                         HorizontalLayout {
                             spacing: 8px;
-                            Text { text: "📖"; font-size: 14px; vertical-alignment: center; }
                             Text { text: "Base de Datos de Biblias (biblias.db)"; color: Theme.text_primary; font-size: 12px; font-weight: 800; vertical-alignment: center; horizontal-stretch: 1; }
                         }
                         Text {
@@ -2709,8 +2753,7 @@ if (root.mostrar_acerca_de) : Rectangle {
                                 border-width: 1px; border-color: Theme.border_strong;
                                 touch-exp-biblias := TouchArea { clicked => { root.exportar_db_biblias(); } }
                                 HorizontalLayout {
-                                    alignment: center; spacing: 6px;
-                                    Text { text: "⤓"; color: Theme.text_primary; font-size: 12px; font-weight: 900; vertical-alignment: center; }
+                                    alignment: center;
                                     Text { text: "Exportar Biblias"; color: Theme.text_primary; font-size: 11px; font-weight: 700; vertical-alignment: center; }
                                 }
                             }
@@ -2719,8 +2762,7 @@ if (root.mostrar_acerca_de) : Rectangle {
                                 background: touch-imp-biblias.has-hover ? Theme.accent_hover : Theme.accent;
                                 touch-imp-biblias := TouchArea { clicked => { root.importar_db_biblias(); } }
                                 HorizontalLayout {
-                                    alignment: center; spacing: 6px;
-                                    Text { text: "⤒"; color: white; font-size: 12px; font-weight: 900; vertical-alignment: center; }
+                                    alignment: center;
                                     Text { text: "Importar Biblias"; color: white; font-size: 11px; font-weight: 800; vertical-alignment: center; }
                                 }
                             }

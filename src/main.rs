@@ -1073,6 +1073,191 @@ if !biblias_ok {
             ).unwrap();
         }
     }
+
+    fn exportar_cantos_db(&self, dest_path: &std::path::Path) -> std::result::Result<(), String> {
+        let _ = self.cantos_db.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+        let cantos_path = self.user_data_dir.join("cantos.db");
+        if !cantos_path.exists() {
+            return Err("El archivo cantos.db no existe en la carpeta de datos.".to_string());
+        }
+        std::fs::copy(&cantos_path, dest_path)
+            .map_err(|e| format!("No se pudo exportar la base de datos de cantos: {}", e))?;
+        Ok(())
+    }
+
+    fn exportar_biblias_db(&self, dest_path: &std::path::Path) -> std::result::Result<(), String> {
+        let _ = self.biblias_db.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+        let biblias_path = self.user_data_dir.join("biblias.db");
+        if !biblias_path.exists() {
+            return Err("El archivo biblias.db no existe en la carpeta de datos.".to_string());
+        }
+        std::fs::copy(&biblias_path, dest_path)
+            .map_err(|e| format!("No se pudo exportar la base de datos de biblias: {}", e))?;
+        Ok(())
+    }
+
+    fn importar_cantos_db(&mut self, src_path: &std::path::Path) -> std::result::Result<(), String> {
+        if !src_path.exists() {
+            return Err("El archivo seleccionado no existe.".to_string());
+        }
+
+        // 1. Abrir temporalmente para verificar integridad y esquema
+        let temp_conn = Connection::open_with_flags(
+            src_path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_CREATE,
+        ).map_err(|e| format!("No se pudo abrir el archivo como base de datos SQLite: {}", e))?;
+
+        if !verificar_integridad_db(&temp_conn) {
+            return Err("La base de datos está dañada (falló la verificación de integridad SQLite).".to_string());
+        }
+
+        // 2. Verificar tablas necesarias
+        let tiene_cantos: bool = temp_conn.query_row(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='cantos'", [], |_| Ok(true)
+        ).unwrap_or(false);
+        if !tiene_cantos {
+            return Err("El archivo no es una base de datos de cantos válida (falta la tabla 'cantos').".to_string());
+        }
+
+        let tiene_diapos: bool = temp_conn.query_row(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='diapositivas'", [], |_| Ok(true)
+        ).unwrap_or(false);
+        if !tiene_diapos {
+            return Err("El archivo no es una base de datos de cantos válida (falta la tabla 'diapositivas').".to_string());
+        }
+
+        // Verificar datos mínimos coherentes
+        if !verificar_datos_cantos(&temp_conn) {
+            return Err("La base de datos de cantos no contiene registros coherentes en las tablas de cantos o diapositivas.".to_string());
+        }
+
+        // 3. Crear tabla de favoritos si no existe
+        temp_conn.execute_batch("
+            CREATE TABLE IF NOT EXISTS favoritos (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                tipo       TEXT    NOT NULL DEFAULT 'canto',
+                ref_id     INTEGER NOT NULL DEFAULT 0,
+                referencia TEXT    NOT NULL DEFAULT '',
+                titulo     TEXT    NOT NULL DEFAULT ''
+            );
+        ").map_err(|e| format!("Error al preparar tabla de favoritos: {}", e))?;
+
+        // 4. Crear índices de optimización si no están presentes
+        temp_conn.execute_batch("
+            CREATE INDEX IF NOT EXISTS idx_titulo ON cantos(titulo);
+            CREATE INDEX IF NOT EXISTS idx_diapositivas_canto ON diapositivas(canto_id, orden);
+            CREATE INDEX IF NOT EXISTS idx_favoritos_lookup ON favoritos(tipo, ref_id);
+            CREATE INDEX IF NOT EXISTS idx_favoritos_ref ON favoritos(tipo, referencia);
+            PRAGMA optimize;
+            PRAGMA wal_checkpoint(TRUNCATE);
+        ").map_err(|e| format!("Error al optimizar índices de cantos: {}", e))?;
+
+        drop(temp_conn);
+
+        // 5. Reemplazar la base de datos activa
+        let cantos_path = self.user_data_dir.join("cantos.db");
+        let _ = std::fs::remove_file(self.user_data_dir.join("cantos.db-wal"));
+        let _ = std::fs::remove_file(self.user_data_dir.join("cantos.db-shm"));
+        let _ = std::fs::remove_file(&cantos_path);
+
+        std::fs::copy(src_path, &cantos_path)
+            .map_err(|e| format!("No se pudo copiar el archivo a la carpeta de datos: {}", e))?;
+
+        // Reabrir conexión SQLite
+        let new_conn = Connection::open(&cantos_path)
+            .map_err(|e| format!("No se pudo reconectar a la nueva base de datos de cantos: {}", e))?;
+
+        new_conn.execute_batch("
+            PRAGMA journal_mode = WAL;
+            PRAGMA synchronous = NORMAL;
+            PRAGMA busy_timeout = 5000;
+            PRAGMA cache_size = -64000;
+            PRAGMA mmap_size = 268435456;
+            PRAGMA temp_store = MEMORY;
+        ").map_err(|e| format!("Error configurando pragmas de SQLite: {}", e))?;
+        new_conn.set_prepared_statement_cache_capacity(64);
+
+        self.cantos_db = new_conn;
+        Ok(())
+    }
+
+    fn importar_biblias_db(&mut self, src_path: &std::path::Path) -> std::result::Result<(), String> {
+        if !src_path.exists() {
+            return Err("El archivo seleccionado no existe.".to_string());
+        }
+
+        // 1. Abrir temporalmente para verificar integridad y esquema
+        let temp_conn = Connection::open_with_flags(
+            src_path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_CREATE,
+        ).map_err(|e| format!("No se pudo abrir el archivo como base de datos SQLite: {}", e))?;
+
+        if !verificar_integridad_db(&temp_conn) {
+            return Err("La base de datos está dañada (falló la verificación de integridad SQLite).".to_string());
+        }
+
+        // 2. Verificar tablas necesarias
+        let tiene_versiones: bool = temp_conn.query_row(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='versiones'", [], |_| Ok(true)
+        ).unwrap_or(false);
+        if !tiene_versiones {
+            return Err("El archivo no es una base de datos de biblias válida (falta la tabla 'versiones').".to_string());
+        }
+
+        let tiene_versiculos: bool = temp_conn.query_row(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='versiculos'", [], |_| Ok(true)
+        ).unwrap_or(false);
+        if !tiene_versiculos {
+            return Err("El archivo no es una base de datos de biblias válida (falta la tabla 'versiculos').".to_string());
+        }
+
+        let total_versiculos: i64 = temp_conn.query_row(
+            "SELECT COUNT(*) FROM versiculos", [], |r| r.get(0)
+        ).unwrap_or(0);
+        if total_versiculos == 0 {
+            return Err("La base de datos no contiene versículos bíblicos.".to_string());
+        }
+
+        // 3. Crear índices de optimización si no están presentes
+        temp_conn.execute_batch("
+            CREATE INDEX IF NOT EXISTS idx_versiculos_capitulo ON versiculos(version_id, libro_numero, capitulo, versiculo);
+            CREATE INDEX IF NOT EXISTS idx_versiculos_libros ON versiculos(version_id, libro_numero);
+            CREATE INDEX IF NOT EXISTS idx_versiones_id ON versiones(id);
+            PRAGMA optimize;
+            PRAGMA wal_checkpoint(TRUNCATE);
+        ").map_err(|e| format!("Error al optimizar índices de biblias: {}", e))?;
+
+        drop(temp_conn);
+
+        // 4. Reemplazar la base de datos activa
+        let biblias_path = self.user_data_dir.join("biblias.db");
+        let _ = std::fs::remove_file(self.user_data_dir.join("biblias.db-wal"));
+        let _ = std::fs::remove_file(self.user_data_dir.join("biblias.db-shm"));
+        let _ = std::fs::remove_file(&biblias_path);
+
+        std::fs::copy(src_path, &biblias_path)
+            .map_err(|e| format!("No se pudo copiar el archivo a la carpeta de datos: {}", e))?;
+
+        // Reabrir conexión SQLite
+        let new_conn = Connection::open(&biblias_path)
+            .map_err(|e| format!("No se pudo reconectar a la nueva base de datos de biblias: {}", e))?;
+
+        new_conn.execute_batch("
+            PRAGMA journal_mode = WAL;
+            PRAGMA synchronous = NORMAL;
+            PRAGMA busy_timeout = 5000;
+            PRAGMA cache_size = -64000;
+            PRAGMA mmap_size = 268435456;
+            PRAGMA temp_store = MEMORY;
+        ").map_err(|e| format!("Error configurando pragmas de SQLite: {}", e))?;
+        new_conn.set_prepared_statement_cache_capacity(64);
+
+        self.biblias_db = new_conn;
+        self.chapter_cache.clear();
+        self.versiones.clear();
+        self.procesar_versiones();
+        Ok(())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -3700,6 +3885,201 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let modo_actual = modo_ov.lock().unwrap().clone();
             if !modo_actual.is_empty() {
                 actualizar_overlay_estilos(&ui, &state_ov, &overlay_ov, &modo_actual, valor);
+            }
+        });
+    }
+
+    // ── Gestión de bases de datos: Importar / Exportar ───────────────────────
+    {
+        let ui_h = ui.as_weak();
+        ui.on_abrir_modal_db(move || {
+            if let Some(ui) = ui_h.upgrade() {
+                ui.set_db_modal_mensaje(SharedString::from(""));
+                ui.set_db_modal_es_error(false);
+            }
+        });
+    }
+
+    {
+        let ui_h = ui.as_weak();
+        let state_c = Arc::clone(&state);
+        ui.on_exportar_db_cantos(move || {
+            let dialog = rfd::FileDialog::new()
+                .set_file_name("cantos.db")
+                .add_filter("Base de datos SQLite (*.db)", &["db", "sqlite", "sqlite3"]);
+            if let Some(dest_path) = dialog.save_file() {
+                let st = state_c.lock().unwrap();
+                match st.exportar_cantos_db(&dest_path) {
+                    Ok(_) => {
+                        if let Some(ui) = ui_h.upgrade() {
+                            ui.set_db_modal_es_error(false);
+                            ui.set_db_modal_mensaje(SharedString::from(format!(
+                                "Base de datos de cantos exportada correctamente a: {}",
+                                dest_path.file_name().unwrap_or_default().to_string_lossy()
+                            )));
+                        }
+                    }
+                    Err(e) => {
+                        if let Some(ui) = ui_h.upgrade() {
+                            ui.set_db_modal_es_error(true);
+                            ui.set_db_modal_mensaje(SharedString::from(e));
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    {
+        let ui_h = ui.as_weak();
+        let state_c = Arc::clone(&state);
+        ui.on_exportar_db_biblias(move || {
+            let dialog = rfd::FileDialog::new()
+                .set_file_name("biblias.db")
+                .add_filter("Base de datos SQLite (*.db)", &["db", "sqlite", "sqlite3"]);
+            if let Some(dest_path) = dialog.save_file() {
+                let st = state_c.lock().unwrap();
+                match st.exportar_biblias_db(&dest_path) {
+                    Ok(_) => {
+                        if let Some(ui) = ui_h.upgrade() {
+                            ui.set_db_modal_es_error(false);
+                            ui.set_db_modal_mensaje(SharedString::from(format!(
+                                "Base de datos de biblias exportada correctamente a: {}",
+                                dest_path.file_name().unwrap_or_default().to_string_lossy()
+                            )));
+                        }
+                    }
+                    Err(e) => {
+                        if let Some(ui) = ui_h.upgrade() {
+                            ui.set_db_modal_es_error(true);
+                            ui.set_db_modal_mensaje(SharedString::from(e));
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    {
+        let ui_h = ui.as_weak();
+        let state_c = Arc::clone(&state);
+        ui.on_importar_db_cantos(move || {
+            let dialog = rfd::FileDialog::new()
+                .add_filter("Base de datos SQLite (*.db)", &["db", "sqlite", "sqlite3"]);
+            if let Some(src_path) = dialog.pick_file() {
+                if let Some(ui) = ui_h.upgrade() {
+                    ui.set_is_importing_db(true);
+                    ui.set_db_import_status(SharedString::from("Validando estructura de cantos y aplicando índices de optimización..."));
+                    ui.set_db_modal_mensaje(SharedString::from(""));
+                }
+                let ui_t = ui_h.clone();
+                let state_t = Arc::clone(&state_c);
+                thread::spawn(move || {
+                    let resultado = {
+                        let mut st = state_t.lock().unwrap();
+                        st.importar_cantos_db(&src_path)
+                    };
+                    let (cantos_slint, favs) = if resultado.is_ok() {
+                        let st = state_t.lock().unwrap();
+                        let fav_ids = st.get_favoritos_ids_cantos();
+                        let cantos_db = st.get_all_cantos();
+                        let mut list: Vec<Canto> = cantos_db.into_iter().map(|c| {
+                            let is_fav = fav_ids.contains(&c.id);
+                            Canto { id: c.id, titulo: SharedString::from(c.titulo), letra: SharedString::from(""), favorito: is_fav }
+                        }).collect();
+                        if list.is_empty() {
+                            list.push(Canto {
+                                id: 0,
+                                titulo: SharedString::from("Click derecho para agregar canto"),
+                                letra: SharedString::from(""),
+                                favorito: false,
+                            });
+                        }
+                        let favs = st.get_all_favoritos();
+                        (list, favs)
+                    } else {
+                        (Vec::new(), Vec::new())
+                    };
+
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = ui_t.upgrade() {
+                            ui.set_is_importing_db(false);
+                            match resultado {
+                                Ok(_) => {
+                                    ui.set_cantos(ModelRc::from(Rc::new(VecModel::from(cantos_slint))));
+                                    ui.set_favoritos(ModelRc::from(Rc::new(VecModel::from(favs))));
+                                    ui.set_db_modal_es_error(false);
+                                    ui.set_db_modal_mensaje(SharedString::from(
+                                        "Base de datos de cantos importada y optimizada con éxito."
+                                    ));
+                                }
+                                Err(e) => {
+                                    ui.set_db_modal_es_error(true);
+                                    ui.set_db_modal_mensaje(SharedString::from(e));
+                                }
+                            }
+                        }
+                    });
+                });
+            }
+        });
+    }
+
+    {
+        let ui_h = ui.as_weak();
+        let state_c = Arc::clone(&state);
+        ui.on_importar_db_biblias(move || {
+            let dialog = rfd::FileDialog::new()
+                .add_filter("Base de datos SQLite (*.db)", &["db", "sqlite", "sqlite3"]);
+            if let Some(src_path) = dialog.pick_file() {
+                if let Some(ui) = ui_h.upgrade() {
+                    ui.set_is_importing_db(true);
+                    ui.set_db_import_status(SharedString::from("Validando estructura de biblias y aplicando índices de optimización..."));
+                    ui.set_db_modal_mensaje(SharedString::from(""));
+                }
+                let ui_t = ui_h.clone();
+                let state_t = Arc::clone(&state_c);
+                thread::spawn(move || {
+                    let resultado = {
+                        let mut st = state_t.lock().unwrap();
+                        st.importar_biblias_db(&src_path)
+                    };
+                    let (versiones_slint, primera_version, libros_slint) = if resultado.is_ok() {
+                        let st = state_t.lock().unwrap();
+                        let v_slint: Vec<SharedString> = st.versiones.iter()
+                            .map(|v| SharedString::from(v.nombre_completo.as_str()))
+                            .collect();
+                        let primera = st.versiones.first().map(|v| SharedString::from(v.nombre_completo.as_str())).unwrap_or_default();
+                        let libros = st.get_libros_biblia();
+                        let l_slint: Vec<BookInfo> = libros.into_iter()
+                            .map(|l| BookInfo { id: l.id, nombre: SharedString::from(l.nombre), capitulos: l.capitulos })
+                            .collect();
+                        (v_slint, primera, l_slint)
+                    } else {
+                        (Vec::new(), SharedString::default(), Vec::new())
+                    };
+
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = ui_t.upgrade() {
+                            ui.set_is_importing_db(false);
+                            match resultado {
+                                Ok(_) => {
+                                    ui.set_bible_versions(ModelRc::from(Rc::new(VecModel::from(versiones_slint))));
+                                    ui.set_current_bible_version(primera_version);
+                                    ui.set_bible_books(ModelRc::from(Rc::new(VecModel::from(libros_slint))));
+                                    ui.set_db_modal_es_error(false);
+                                    ui.set_db_modal_mensaje(SharedString::from(
+                                        "Base de datos de biblias importada y optimizada con éxito."
+                                    ));
+                                }
+                                Err(e) => {
+                                    ui.set_db_modal_es_error(true);
+                                    ui.set_db_modal_mensaje(SharedString::from(e));
+                                }
+                            }
+                        }
+                    });
+                });
             }
         });
     }

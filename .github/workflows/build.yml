@@ -99,6 +99,30 @@ jobs:
 
 
       # --------------------------------------------------------
+      # PREPARAR ARCHIVOS DE DATOS Y RECURSOS
+      # --------------------------------------------------------
+      - name: Preparar archivos de datos y recursos
+        run: |
+          mkdir -p data
+          # Si cantos.db está en la raíz pero no en data/, copiarlo
+          if [ -f cantos.db ] && [ ! -f data/cantos.db ]; then
+            echo "Copiando cantos.db de la raíz a data/..."
+            cp cantos.db data/cantos.db
+          fi
+          # Asegurar que data tenga al menos una base de datos o verificar
+          ls -la data/
+
+          # Si libpdfium.so no está en el repo, descargarlo automáticamente
+          if [ ! -f libpdfium.so ]; then
+            echo "libpdfium.so no encontrado. Descargando desde pdfium-binaries..."
+            curl -sL -o pdfium.tgz https://github.com/bblanchon/pdfium-binaries/releases/latest/download/pdfium-linux-x64.tgz || true
+            if [ -f pdfium.tgz ]; then
+              tar -xzf pdfium.tgz lib/libpdfium.so 2>/dev/null && mv lib/libpdfium.so . || true
+              rm -f pdfium.tgz
+            fi
+          fi
+
+      # --------------------------------------------------------
       # CARGO-DEB
       # --------------------------------------------------------
       - name: Instalar cargo-deb

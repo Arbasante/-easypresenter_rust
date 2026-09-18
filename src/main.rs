@@ -238,7 +238,7 @@ fn llamar_gemini_imagen_api(api_key: &str, prompt: &str) -> std::result::Result<
 
     let resp = client.post(&url)
         .header("Content-Type", "application/json")
-        .json(&payload)
+        .body(payload.to_string())
         .send()
         .map_err(|e| format!("Error al conectar con Google Gemini: {}", e))?;
 
@@ -4395,6 +4395,85 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let img_cache_fondo_ia = Arc::clone(&image_cache_fondo);
         let bsc_ia = build_and_save_config.clone();
         let refresh_mm_ia = refresh_multimedia.clone();
+
+        ui.on_aplicar_imagen_generada_ia(move |tipo, file_path_str| {
+            let ui = match ui_h.upgrade() { Some(u) => u, None => return };
+            let path_str = file_path_str.to_string();
+            let tipo_str = tipo.to_string();
+
+            match tipo_str.as_str() {
+                "cantos" => {
+                    let mut estado = state_ia.lock().unwrap();
+                    estado.cantos_image_paths.push(path_str.clone());
+                    let idx = estado.cantos_image_paths.len() as i32 - 1;
+                    let paths_copia = estado.cantos_image_paths.clone();
+                    drop(estado);
+
+                    let images: Vec<slint::Image> = paths_copia.iter()
+                        .filter_map(|p| load_image_cached(&img_cache_ia, p))
+                        .collect();
+                    ui.set_cantos_image_data(ModelRc::from(Rc::new(VecModel::from(images))));
+                    ui.set_cantos_selected_img(idx);
+                    if let Some(img_fondo) = load_image_fondo_cached(&img_cache_fondo_ia, &path_str) {
+                        ui.set_cantos_bg_image(img_fondo);
+                        ui.set_cantos_has_image(true);
+                        ui.set_cantos_bg_type(SharedString::from("imagen"));
+                        ui.invoke_sync_estilos();
+                    }
+                    bsc_ia();
+                    ui.set_ia_generando(false);
+                    ui.set_ia_es_error(false);
+                    ui.set_ia_status_msg(SharedString::from("¡Imagen lista! Fondo aplicado en Cantos."));
+                },
+                "biblias" => {
+                    let mut estado = state_ia.lock().unwrap();
+                    estado.biblias_image_paths.push(path_str.clone());
+                    let idx = estado.biblias_image_paths.len() as i32 - 1;
+                    let paths_copia = estado.biblias_image_paths.clone();
+                    drop(estado);
+
+                    let images: Vec<slint::Image> = paths_copia.iter()
+                        .filter_map(|p| load_image_cached(&img_cache_ia, p))
+                        .collect();
+                    ui.set_biblias_image_data(ModelRc::from(Rc::new(VecModel::from(images))));
+                    ui.set_biblias_selected_img(idx);
+                    if let Some(img_fondo) = load_image_fondo_cached(&img_cache_fondo_ia, &path_str) {
+                        ui.set_biblias_bg_image(img_fondo);
+                        ui.set_biblias_has_image(true);
+                        ui.set_biblias_bg_type(SharedString::from("imagen"));
+                        ui.invoke_sync_estilos();
+                    }
+                    bsc_ia();
+                    ui.set_ia_generando(false);
+                    ui.set_ia_es_error(false);
+                    ui.set_ia_status_msg(SharedString::from("¡Imagen lista! Fondo aplicado en Biblias."));
+                },
+                _ => {
+                    let timestamp = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs();
+                    let name = format!("IA Informativa {}", timestamp);
+                    mm_ia.write().unwrap().push(MediaData {
+                        path: path_str,
+                        name,
+                        aspecto: "centro".to_string(),
+                        is_loop: false,
+                    });
+                    refresh_mm_ia();
+                    bsc_ia();
+                    ui.set_active_tab(SharedString::from("imagenes"));
+                    ui.set_scroll_to_y(0.0);
+                    ui.set_ia_generando(false);
+                    ui.set_ia_es_error(false);
+                    ui.set_ia_status_msg(SharedString::from("¡Imagen lista! Añadida a la sección de Imágenes (IMGS)."));
+                }
+            }
+        });
+    }
+
+    {
+        let ui_h = ui.as_weak();
         let udd_ia = user_data_dir_cfg.clone();
 
         ui.on_generar_imagen_ia(move |tipo, prompt| {
@@ -4419,12 +4498,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ui.set_ia_status_msg(SharedString::from("Generando imagen con Google Gemini (Imagen 3)..."));
 
             let ui_weak = ui.as_weak();
-            let state_c = Arc::clone(&state_ia);
-            let mm_c = Arc::clone(&mm_ia);
-            let img_cache_c = Arc::clone(&img_cache_ia);
-            let img_cache_fondo_c = Arc::clone(&img_cache_fondo_ia);
-            let bsc_c = bsc_ia.clone();
-            let refresh_mm_c = refresh_mm_ia.clone();
             let udd_c = udd_ia.clone();
 
             thread::spawn(move || {
@@ -4478,73 +4551,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
 
                         let file_path_str = file_path.to_string_lossy().to_string();
+                        let tipo_slint = SharedString::from(&tipo_str);
+                        let path_slint = SharedString::from(&file_path_str);
 
                         let _ = slint::invoke_from_event_loop(move || {
                             if let Some(ui) = ui_weak.upgrade() {
-                                match tipo_str.as_str() {
-                                    "cantos" => {
-                                        let mut estado = state_c.lock().unwrap();
-                                        estado.cantos_image_paths.push(file_path_str.clone());
-                                        let idx = estado.cantos_image_paths.len() as i32 - 1;
-                                        let paths_copia = estado.cantos_image_paths.clone();
-                                        drop(estado);
-
-                                        let images: Vec<slint::Image> = paths_copia.iter()
-                                            .filter_map(|p| load_image_cached(&img_cache_c, p))
-                                            .collect();
-                                        ui.set_cantos_image_data(ModelRc::from(Rc::new(VecModel::from(images))));
-                                        ui.set_cantos_selected_img(idx);
-                                        if let Some(img_fondo) = load_image_fondo_cached(&img_cache_fondo_c, &file_path_str) {
-                                            ui.set_cantos_bg_image(img_fondo);
-                                            ui.set_cantos_has_image(true);
-                                            ui.set_cantos_bg_type(SharedString::from("imagen"));
-                                            ui.invoke_sync_estilos();
-                                        }
-                                        bsc_c();
-                                        ui.set_ia_generando(false);
-                                        ui.set_ia_es_error(false);
-                                        ui.set_ia_status_msg(SharedString::from("¡Imagen lista! Fondo aplicado en Cantos."));
-                                    },
-                                    "biblias" => {
-                                        let mut estado = state_c.lock().unwrap();
-                                        estado.biblias_image_paths.push(file_path_str.clone());
-                                        let idx = estado.biblias_image_paths.len() as i32 - 1;
-                                        let paths_copia = estado.biblias_image_paths.clone();
-                                        drop(estado);
-
-                                        let images: Vec<slint::Image> = paths_copia.iter()
-                                            .filter_map(|p| load_image_cached(&img_cache_c, p))
-                                            .collect();
-                                        ui.set_biblias_image_data(ModelRc::from(Rc::new(VecModel::from(images))));
-                                        ui.set_biblias_selected_img(idx);
-                                        if let Some(img_fondo) = load_image_fondo_cached(&img_cache_fondo_c, &file_path_str) {
-                                            ui.set_biblias_bg_image(img_fondo);
-                                            ui.set_biblias_has_image(true);
-                                            ui.set_biblias_bg_type(SharedString::from("imagen"));
-                                            ui.invoke_sync_estilos();
-                                        }
-                                        bsc_c();
-                                        ui.set_ia_generando(false);
-                                        ui.set_ia_es_error(false);
-                                        ui.set_ia_status_msg(SharedString::from("¡Imagen lista! Fondo aplicado en Biblias."));
-                                    },
-                                    _ => { // "informativa"
-                                        let name = format!("IA Informativa {}", timestamp);
-                                        mm_c.write().unwrap().push(MediaData {
-                                            path: file_path_str.clone(),
-                                            name,
-                                            aspecto: "centro".to_string(),
-                                            is_loop: false,
-                                        });
-                                        refresh_mm_c();
-                                        bsc_c();
-                                        ui.set_active_tab(SharedString::from("imagenes"));
-                                        ui.set_scroll_to_y(0.0);
-                                        ui.set_ia_generando(false);
-                                        ui.set_ia_es_error(false);
-                                        ui.set_ia_status_msg(SharedString::from("¡Imagen lista! Añadida a la sección de Imágenes (IMGS)."));
-                                    }
-                                }
+                                ui.invoke_aplicar_imagen_generada_ia(tipo_slint, path_slint);
                             }
                         });
                     },

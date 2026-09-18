@@ -342,6 +342,7 @@ export component AppWindow inherits Window {
 
     callback guardar_gemini_api_key(string);
     callback generar_imagen_ia(string, string);
+    callback aplicar_imagen_generada_ia(string, string);
     callback click_boton_ia();
 
     in property <[FavoritoItem]> favoritos: [];
@@ -1266,7 +1267,7 @@ in property <[VideoGaleriaItem]> cantos_video_gallery: [];
                                     Text { text: root.elemento_seleccionado == "" ? "SELECCIONA UN ARCHIVO DE LA BIBLIOTECA" : root.elemento_seleccionado; color: Theme.text_muted; font-size: 13px; font-weight: 700; horizontal-alignment: center; }
                                 }
                                 if (root.estrofas_actuales.length > 0) : ScrollView {
-                                    viewport-y <=> root.scroll_to_y;
+                                    content-y <=> root.scroll_to_y;
                                     VerticalLayout {
                                         padding: 16px; spacing: 12px;
                                         // ── CUADRÍCULA 3×N ──

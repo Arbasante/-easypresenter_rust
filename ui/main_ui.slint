@@ -560,6 +560,7 @@ in property <[VideoGaleriaItem]> cantos_video_gallery: [];
                                     root.elemento_seleccionado = ""; 
                                     root.estrofas_actuales = []; 
                                     root.active_estrofa_index = -1;
+                                    root.scroll_to_y = 0px;
                                     root.sync_estilos(); 
                                 }
                             }
@@ -572,6 +573,7 @@ in property <[VideoGaleriaItem]> cantos_video_gallery: [];
                                     root.elemento_seleccionado = ""; 
                                     root.estrofas_actuales = []; 
                                     root.active_estrofa_index = -1;
+                                    root.scroll_to_y = 0px;
                                     root.sync_estilos(); 
                                 }
                             }
@@ -582,6 +584,7 @@ in property <[VideoGaleriaItem]> cantos_video_gallery: [];
                                 clicked => { 
                                     root.active-tab = "imagenes"; 
                                     root.elemento_seleccionado = "";
+                                    root.scroll_to_y = 0px;
                                     root.sync_estilos(); 
                                 }
                             }
@@ -592,6 +595,7 @@ in property <[VideoGaleriaItem]> cantos_video_gallery: [];
                                 clicked => { 
                                     root.active-tab = "videos"; 
                                     root.elemento_seleccionado = "";
+                                    root.scroll_to_y = 0px;
                                     root.sync_estilos(); 
                                 }
                             }
@@ -602,6 +606,7 @@ in property <[VideoGaleriaItem]> cantos_video_gallery: [];
                                 clicked => { 
                                     root.active-tab = "pdf"; 
                                     root.elemento_seleccionado = "";
+                                    root.scroll_to_y = 0px;
                                     root.sync_estilos(); 
                                 }
                             }
@@ -640,7 +645,10 @@ in property <[VideoGaleriaItem]> cantos_video_gallery: [];
                                             property <bool> fila_resaltada: touch-canto.has-hover || star-touch.has-hover;
                                             background: fila_resaltada ? rgba(63,111,115,0.18) : transparent;
                                             touch-canto := TouchArea {
-                                                clicked => { root.seleccionar_canto(canto.id); }
+                                                clicked => { 
+                                                    root.scroll_to_y = 0px;
+                                                    root.seleccionar_canto(canto.id); 
+                                                }
                                                 pointer-event(e) => {
                                                     if (e.button == PointerEventButton.right && e.kind == PointerEventKind.up) {
                                                         root.menu_canto_id = canto.id;
@@ -755,7 +763,12 @@ in property <[VideoGaleriaItem]> cantos_video_gallery: [];
                                                 for cap in row.caps : Rectangle {
                                                     width: 42px; border-radius: 6px; border-width: 1px; border-color: Theme.border_subtle;
                                                     background: touch-cap.has-hover ? Theme.accent : Theme.bg_input;
-                                                    touch-cap := TouchArea { clicked => { root.bible-chapter-selected(cap); } }
+                                                    touch-cap := TouchArea { 
+                                                        clicked => { 
+                                                            root.scroll_to_y = 0px;
+                                                            root.bible-chapter-selected(cap); 
+                                                        } 
+                                                    }
                                                     Text { text: cap; color: touch-cap.has-hover ? white : Theme.text_secondary; font-size: 12px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
                                                 }
                                                 Rectangle { horizontal-stretch: 1; }
@@ -951,7 +964,10 @@ in property <[VideoGaleriaItem]> cantos_video_gallery: [];
                                             height: 34px; border-radius: 4px;
                                             background: touch-fav.has-hover ? rgba(251,191,36,0.12) : transparent;
                                             touch-fav := TouchArea {
-                                                clicked => { root.abrir_favorito(fav); }
+                                                clicked => { 
+                                                    root.scroll_to_y = 0px;
+                                                    root.abrir_favorito(fav); 
+                                                }
                                             }
                                             HorizontalLayout {
                                                 padding-left: 10px; padding-right: 8px; spacing: 8px;

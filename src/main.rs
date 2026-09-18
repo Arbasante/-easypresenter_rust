@@ -2906,7 +2906,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let cb_lib      = Arc::clone(&current_biblia_libro);
         let cb_cap      = Arc::clone(&current_biblia_capitulo);
         ui.on_seleccionar_canto(move |id| {
-            if id == 0 { return; }
+            if id <= 0 { return; }
             *cb_lib.lock().unwrap() = -1;
             *cb_cap.lock().unwrap() = -1;
             let ui     = ui_handle.unwrap();
@@ -2916,8 +2916,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .iter()
                 .map(diapositiva_a_ui)
                 .collect();
+            ui.set_scroll_to_y(0.0);
             ui.set_estrofas_actuales(ModelRc::from(Rc::new(VecModel::from(diapos))));
             ui.set_active_estrofa_index(-1);
+            ui.set_scroll_to_y(0.0);
             ui.invoke_focus_panel();
         });
     }
@@ -3176,8 +3178,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let diapos: Vec<DiapositivaUI> = versiculos.iter()
                         .map(|v| versiculo_a_ui_fav(v, &fav_refs, &titulo2))
                         .collect();
+                    ui.set_scroll_to_y(0.0);
                     ui.set_estrofas_actuales(ModelRc::from(Rc::new(VecModel::from(diapos.clone()))));
                     ui.set_active_estrofa_index(0);
+                    ui.set_scroll_to_y(0.0);
                     if !diapos.is_empty() {
                         ui.invoke_proyectar_estrofa(
                             diapos[0].texto.clone(),
@@ -5130,25 +5134,43 @@ let vp_timer       = Arc::clone(&biblioteca_video_player);
         ui.on_abrir_favorito(move |fav| {
             let ui = ui_h.unwrap();
             if fav.tipo == "canto" {
+                *cb_lib.lock().unwrap() = -1;
+                *cb_cap.lock().unwrap() = -1;
                 ui.set_active_tab(SharedString::from("cantos"));
+                ui.set_scroll_to_y(0.0);
                 let id = fav.id;
-                // Se mueve a un hilo, igual que la rama de biblia: evita
-                // congelar el hilo de eventos de Slint si el Mutex<AppState>
-                // está momentáneamente ocupado por otra operación (búsqueda
-                // en curso, guardado de un canto, etc.).
                 let state_t = Arc::clone(&state);
                 let ui_t    = ui.as_weak();
+                let fav_titulo = fav.titulo.to_string();
                 thread::spawn(move || {
                     let (titulo, diapos_db) = {
                         let estado = state_t.lock().unwrap();
-                        (estado.get_canto_titulo(id), estado.get_canto_diapositivas(id))
+                        let mut diapos = estado.get_canto_diapositivas(id);
+                        let mut tit = estado.get_canto_titulo(id);
+                        if diapos.is_empty() && !fav_titulo.is_empty() {
+                            if let Ok(canto_id) = estado.cantos_db.query_row(
+                                "SELECT id FROM cantos WHERE titulo = ? LIMIT 1",
+                                [&fav_titulo],
+                                |r| r.get::<_, i32>(0)
+                            ) {
+                                diapos = estado.get_canto_diapositivas(canto_id);
+                                tit = estado.get_canto_titulo(canto_id);
+                            }
+                        }
+                        if tit.is_empty() && !fav_titulo.is_empty() {
+                            tit = fav_titulo;
+                        }
+                        (tit, diapos)
                     };
                     let diapos: Vec<DiapositivaUI> = diapos_db.iter().map(diapositiva_a_ui).collect();
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(ui) = ui_t.upgrade() {
                             ui.set_elemento_seleccionado(SharedString::from(&titulo));
+                            ui.set_scroll_to_y(0.0);
                             ui.set_estrofas_actuales(ModelRc::from(Rc::new(VecModel::from(diapos))));
                             ui.set_active_estrofa_index(-1);
+                            ui.set_scroll_to_y(0.0);
+                            ui.invoke_focus_panel();
                         }
                     });
                 });

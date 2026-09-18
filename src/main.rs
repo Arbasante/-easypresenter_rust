@@ -72,6 +72,8 @@ struct ConfigApp {
     #[serde(default = "default_font")]
     proyeccion_font_family: String,
 
+    #[serde(default)]
+    gemini_api_key: String,
 }
 
 fn default_true() -> bool { true }
@@ -166,6 +168,125 @@ fn guardar_config(user_data_dir: &std::path::Path, cfg: &ConfigApp) {
     if let Ok(data) = serde_json::to_string_pretty(cfg) {
         let _ = std::fs::write(config_path(user_data_dir), data);
     }
+}
+
+// ── Decodificador Base64 e Integración con Gemini Imagen ─────────────────────
+fn decode_base64_data(s: &str) -> std::result::Result<Vec<u8>, String> {
+    let mut clean: Vec<u8> = s.bytes().filter(|b| !b.is_ascii_whitespace()).collect();
+    while clean.last() == Some(&b'=') {
+        clean.pop();
+    }
+    if clean.is_empty() {
+        return Err("Cadena base64 vacía".to_string());
+    }
+    let decode_char = |b: u8| -> std::result::Result<u8, String> {
+        match b {
+            b'A'..=b'Z' => Ok(b - b'A'),
+            b'a'..=b'z' => Ok(b - b'a' + 26),
+            b'0'..=b'9' => Ok(b - b'0' + 52),
+            b'+' | b'-' => Ok(62),
+            b'/' | b'_' => Ok(63),
+            _ => Err(format!("Carácter base64 inválido: {}", b as char)),
+        }
+    };
+    let mut out = Vec::with_capacity(clean.len() * 3 / 4);
+    for chunk in clean.chunks(4) {
+        let b0 = decode_char(chunk[0])?;
+        let b1 = if chunk.len() > 1 { decode_char(chunk[1])? } else { 0 };
+        let b2 = if chunk.len() > 2 { decode_char(chunk[2])? } else { 0 };
+        let b3 = if chunk.len() > 3 { decode_char(chunk[3])? } else { 0 };
+
+        out.push((b0 << 2) | (b1 >> 4));
+        if chunk.len() > 2 {
+            out.push(((b1 & 0x0F) << 4) | (b2 >> 2));
+        }
+        if chunk.len() > 3 {
+            out.push(((b2 & 0x03) << 6) | b3);
+        }
+    }
+    Ok(out)
+}
+
+fn llamar_gemini_imagen_api(api_key: &str, prompt: &str) -> std::result::Result<Vec<u8>, String> {
+    let key = api_key.trim();
+    if key.is_empty() {
+        return Err("API Key de Gemini no configurada. Ve a Configuración > Configuración IA.".to_string());
+    }
+
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(90))
+        .build()
+        .map_err(|e| format!("Error inicializando cliente HTTP: {}", e))?;
+
+    let url = format!(
+        "https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:predict?key={}",
+        key
+    );
+
+    let payload = serde_json::json!({
+        "instances": [
+            {
+                "prompt": prompt
+            }
+        ],
+        "parameters": {
+            "sampleCount": 1,
+            "aspectRatio": "16:9",
+            "outputMimeType": "image/jpeg"
+        }
+    });
+
+    let resp = client.post(&url)
+        .header("Content-Type", "application/json")
+        .json(&payload)
+        .send()
+        .map_err(|e| format!("Error al conectar con Google Gemini: {}", e))?;
+
+    let status = resp.status();
+    let text = resp.text().map_err(|e| format!("Error leyendo respuesta de Gemini: {}", e))?;
+
+    if !status.is_success() {
+        if let Ok(json_err) = serde_json::from_str::<serde_json::Value>(&text) {
+            if let Some(msg) = json_err.get("error").and_then(|e| e.get("message")).and_then(|m| m.as_str()) {
+                return Err(format!("Gemini API: {}", msg));
+            }
+        }
+        return Err(format!("Error de Gemini API (código {})", status.as_u16()));
+    }
+
+    let json_resp: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|e| format!("Error procesando respuesta JSON de Gemini: {}", e))?;
+
+    if let Some(predictions) = json_resp.get("predictions").and_then(|p| p.as_array()) {
+        if let Some(pred) = predictions.first() {
+            if let Some(b64) = pred.get("bytesBase64Encoded").and_then(|b| b.as_str()) {
+                return decode_base64_data(b64);
+            }
+            if let Some(b64) = pred.get("b64").and_then(|b| b.as_str()) {
+                return decode_base64_data(b64);
+            }
+            if let Some(url_img) = pred.get("url").and_then(|u| u.as_str()) {
+                let img_resp = client.get(url_img).send().map_err(|e| format!("Error descargando imagen: {}", e))?;
+                return img_resp.bytes().map(|b| b.to_vec()).map_err(|e| format!("Error procesando bytes de imagen: {}", e));
+            }
+        }
+    }
+
+    if let Some(candidates) = json_resp.get("candidates").and_then(|c| c.as_array()) {
+        if let Some(cand) = candidates.first() {
+            if let Some(parts) = cand.get("content").and_then(|c| c.get("parts")).and_then(|p| p.as_array()) {
+                for part in parts {
+                    if let Some(inline) = part.get("inlineData") {
+                        if let Some(data) = inline.get("data").and_then(|d| d.as_str()) {
+                            return decode_base64_data(data);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Err("Gemini completó la solicitud pero no devolvió datos de imagen legibles.".to_string())
 }
 
 use pdfium_render::prelude::*;
@@ -2656,6 +2777,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ui.global::<Theme>().set_is_dark(cfg.tema_oscuro);
     ui.set_auto_proyectar_inicio(cfg.auto_proyectar_inicio);
     ui.set_libreoffice_listo(libreoffice_disponible());
+    ui.set_gemini_api_key(SharedString::from(&cfg.gemini_api_key));
+    ui.set_temp_gemini_api_key(SharedString::from(&cfg.gemini_api_key));
 
     ui.set_acerca_version(SharedString::from(env!("CARGO_PKG_VERSION")));
     let accel_texto = match DECODIFICADOR_HW.as_deref() {
@@ -2770,6 +2893,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 tema_oscuro: ui.global::<Theme>().get_is_dark(),
                 pantallas_roles: roles_cfg.lock().unwrap().iter().map(|(k, v)| (*k, *v)).collect(),
                 auto_proyectar_inicio: ui.get_auto_proyectar_inicio(),
+                gemini_api_key: ui.get_gemini_api_key().to_string(),
             };
             guardar_config(&udd, &cfg);
         }
@@ -4230,6 +4354,211 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     });
                 });
             }
+        });
+    }
+
+    // ── Integración de Inteligencia Artificial (Google Gemini) ───────────────
+    {
+        let ui_h = ui.as_weak();
+        ui.on_click_boton_ia(move || {
+            let ui = match ui_h.upgrade() { Some(u) => u, None => return };
+            let key = ui.get_gemini_api_key().to_string();
+            if key.trim().is_empty() {
+                ui.set_mostrar_modal_aviso_ia(true);
+            } else {
+                ui.set_ia_status_msg(SharedString::from(""));
+                ui.set_ia_es_error(false);
+                ui.set_mostrar_modal_generar_ia(true);
+            }
+        });
+    }
+
+    {
+        let ui_h = ui.as_weak();
+        let bsc_ia = build_and_save_config.clone();
+        ui.on_guardar_gemini_api_key(move |nueva_key| {
+            let ui = match ui_h.upgrade() { Some(u) => u, None => return };
+            let key_str = nueva_key.to_string().trim().to_string();
+            ui.set_gemini_api_key(SharedString::from(&key_str));
+            ui.set_temp_gemini_api_key(SharedString::from(&key_str));
+            bsc_ia();
+            ui.set_config_ia_es_error(false);
+            ui.set_config_ia_status_msg(SharedString::from("✓ API Key guardada correctamente"));
+        });
+    }
+
+    {
+        let ui_h = ui.as_weak();
+        let state_ia = Arc::clone(&state);
+        let mm_ia = Arc::clone(&multimedia_state);
+        let img_cache_ia = Arc::clone(&image_cache);
+        let img_cache_fondo_ia = Arc::clone(&image_cache_fondo);
+        let bsc_ia = build_and_save_config.clone();
+        let refresh_mm_ia = refresh_multimedia.clone();
+        let udd_ia = user_data_dir_cfg.clone();
+
+        ui.on_generar_imagen_ia(move |tipo, prompt| {
+            let ui = match ui_h.upgrade() { Some(u) => u, None => return };
+            let prompt_str = prompt.to_string().trim().to_string();
+            if prompt_str.is_empty() {
+                ui.set_ia_es_error(true);
+                ui.set_ia_status_msg(SharedString::from("Por favor ingresa una descripción para la imagen."));
+                return;
+            }
+
+            let api_key = ui.get_gemini_api_key().to_string().trim().to_string();
+            if api_key.is_empty() {
+                ui.set_ia_es_error(true);
+                ui.set_ia_status_msg(SharedString::from("No hay API Key configurada. Ve a Configuración > Configuración IA."));
+                return;
+            }
+
+            let tipo_str = tipo.to_string();
+            ui.set_ia_generando(true);
+            ui.set_ia_es_error(false);
+            ui.set_ia_status_msg(SharedString::from("Generando imagen con Google Gemini (Imagen 3)..."));
+
+            let ui_weak = ui.as_weak();
+            let state_c = Arc::clone(&state_ia);
+            let mm_c = Arc::clone(&mm_ia);
+            let img_cache_c = Arc::clone(&img_cache_ia);
+            let img_cache_fondo_c = Arc::clone(&img_cache_fondo_ia);
+            let bsc_c = bsc_ia.clone();
+            let refresh_mm_c = refresh_mm_ia.clone();
+            let udd_c = udd_ia.clone();
+
+            thread::spawn(move || {
+                let prompt_final = match tipo_str.as_str() {
+                    "cantos" => format!(
+                        "Worship lyric background slide for church presentation, 16:9 widescreen, subtle atmospheric cinematic lighting, dark or clean uncluttered center area for song lyric text overlay, no text, no words, no letters, high quality 4k wallpaper, {}",
+                        prompt_str
+                    ),
+                    "biblias" => format!(
+                        "Church scripture reading background slide, 16:9 widescreen, elegant subtle reverent texture, gentle soft lighting, dark or muted center space optimized for reading white holy bible text, no text, no typography, high quality, {}",
+                        prompt_str
+                    ),
+                    _ => format!(
+                        "Church announcement slide graphic, presentation slide, 16:9 widescreen, clean modern professional composition, vibrant inspiring atmosphere: {}",
+                        prompt_str
+                    ),
+                };
+
+                let res = llamar_gemini_imagen_api(&api_key, &prompt_final);
+                match res {
+                    Ok(bytes) => {
+                        let ia_dir = udd_c.join("fondos_ia");
+                        if let Err(e) = std::fs::create_dir_all(&ia_dir) {
+                            let err_msg = format!("Error creando carpeta de fondos IA: {}", e);
+                            let _ = slint::invoke_from_event_loop(move || {
+                                if let Some(ui) = ui_weak.upgrade() {
+                                    ui.set_ia_generando(false);
+                                    ui.set_ia_es_error(true);
+                                    ui.set_ia_status_msg(SharedString::from(err_msg));
+                                }
+                            });
+                            return;
+                        }
+
+                        let timestamp = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs();
+                        let file_name = format!("ia_{}_{}.jpg", tipo_str, timestamp);
+                        let file_path = ia_dir.join(&file_name);
+                        if let Err(e) = std::fs::write(&file_path, &bytes) {
+                            let err_msg = format!("Error guardando archivo de imagen: {}", e);
+                            let _ = slint::invoke_from_event_loop(move || {
+                                if let Some(ui) = ui_weak.upgrade() {
+                                    ui.set_ia_generando(false);
+                                    ui.set_ia_es_error(true);
+                                    ui.set_ia_status_msg(SharedString::from(err_msg));
+                                }
+                            });
+                            return;
+                        }
+
+                        let file_path_str = file_path.to_string_lossy().to_string();
+
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = ui_weak.upgrade() {
+                                match tipo_str.as_str() {
+                                    "cantos" => {
+                                        let mut estado = state_c.lock().unwrap();
+                                        estado.cantos_image_paths.push(file_path_str.clone());
+                                        let idx = estado.cantos_image_paths.len() as i32 - 1;
+                                        let paths_copia = estado.cantos_image_paths.clone();
+                                        drop(estado);
+
+                                        let images: Vec<slint::Image> = paths_copia.iter()
+                                            .filter_map(|p| load_image_cached(&img_cache_c, p))
+                                            .collect();
+                                        ui.set_cantos_image_data(ModelRc::from(Rc::new(VecModel::from(images))));
+                                        ui.set_cantos_selected_img(idx);
+                                        if let Some(img_fondo) = load_image_fondo_cached(&img_cache_fondo_c, &file_path_str) {
+                                            ui.set_cantos_bg_image(img_fondo);
+                                            ui.set_cantos_has_image(true);
+                                            ui.set_cantos_bg_type(SharedString::from("imagen"));
+                                            ui.invoke_sync_estilos();
+                                        }
+                                        bsc_c();
+                                        ui.set_ia_generando(false);
+                                        ui.set_ia_es_error(false);
+                                        ui.set_ia_status_msg(SharedString::from("¡Imagen lista! Fondo aplicado en Cantos."));
+                                    },
+                                    "biblias" => {
+                                        let mut estado = state_c.lock().unwrap();
+                                        estado.biblias_image_paths.push(file_path_str.clone());
+                                        let idx = estado.biblias_image_paths.len() as i32 - 1;
+                                        let paths_copia = estado.biblias_image_paths.clone();
+                                        drop(estado);
+
+                                        let images: Vec<slint::Image> = paths_copia.iter()
+                                            .filter_map(|p| load_image_cached(&img_cache_c, p))
+                                            .collect();
+                                        ui.set_biblias_image_data(ModelRc::from(Rc::new(VecModel::from(images))));
+                                        ui.set_biblias_selected_img(idx);
+                                        if let Some(img_fondo) = load_image_fondo_cached(&img_cache_fondo_c, &file_path_str) {
+                                            ui.set_biblias_bg_image(img_fondo);
+                                            ui.set_biblias_has_image(true);
+                                            ui.set_biblias_bg_type(SharedString::from("imagen"));
+                                            ui.invoke_sync_estilos();
+                                        }
+                                        bsc_c();
+                                        ui.set_ia_generando(false);
+                                        ui.set_ia_es_error(false);
+                                        ui.set_ia_status_msg(SharedString::from("¡Imagen lista! Fondo aplicado en Biblias."));
+                                    },
+                                    _ => { // "informativa"
+                                        let name = format!("IA Informativa {}", timestamp);
+                                        mm_c.write().unwrap().push(MediaData {
+                                            path: file_path_str.clone(),
+                                            name,
+                                            aspecto: "centro".to_string(),
+                                            is_loop: false,
+                                        });
+                                        refresh_mm_c();
+                                        bsc_c();
+                                        ui.set_active_tab(SharedString::from("imagenes"));
+                                        ui.set_scroll_to_y(0.0);
+                                        ui.set_ia_generando(false);
+                                        ui.set_ia_es_error(false);
+                                        ui.set_ia_status_msg(SharedString::from("¡Imagen lista! Añadida a la sección de Imágenes (IMGS)."));
+                                    }
+                                }
+                            }
+                        });
+                    },
+                    Err(e) => {
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = ui_weak.upgrade() {
+                                ui.set_ia_generando(false);
+                                ui.set_ia_es_error(true);
+                                ui.set_ia_status_msg(SharedString::from(format!("Error: {}", e)));
+                            }
+                        });
+                    }
+                }
+            });
         });
     }
 

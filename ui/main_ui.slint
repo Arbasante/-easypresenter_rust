@@ -326,6 +326,24 @@ export component AppWindow inherits Window {
     
     callback actualizar_margenes(float, float, float, float);
 
+    // ── Inteligencia Artificial (Gemini) ──
+    in-out property <bool> mostrar_modal_config_ia: false;
+    in-out property <bool> mostrar_modal_aviso_ia: false;
+    in-out property <bool> mostrar_modal_generar_ia: false;
+    in-out property <string> gemini_api_key: "";
+    in-out property <string> temp_gemini_api_key: "";
+    in-out property <string> config_ia_status_msg: "";
+    in-out property <bool> config_ia_es_error: false;
+    in-out property <string> ia_tipo_seleccionado: "cantos";
+    in-out property <string> ia_prompt_usuario: "";
+    in-out property <bool> ia_generando: false;
+    in-out property <string> ia_status_msg: "";
+    in-out property <bool> ia_es_error: false;
+
+    callback guardar_gemini_api_key(string);
+    callback generar_imagen_ia(string, string);
+    callback click_boton_ia();
+
     in property <[FavoritoItem]> favoritos: [];
     callback toggle_favorito_canto(int);
     callback toggle_favorito_estrofa(string, string);  // referencia, texto
@@ -1110,6 +1128,35 @@ in property <[VideoGaleriaItem]> cantos_video_gallery: [];
                             }
 
                                 Rectangle { horizontal-stretch: 1; }
+
+                                // Botón Generador IA
+                                Rectangle {
+                                    width: 36px;
+                                    height: 28px;
+                                    y: (parent.height - self.height) / 2;
+                                    border-radius: 6px;
+                                    background: touch-ia.has-hover ? #0284c7 : #0ea5e9;
+                                    border-width: 1px;
+                                    border-color: rgba(14, 165, 233, 0.6);
+
+                                    touch-ia := TouchArea {
+                                        clicked => {
+                                            root.click_boton_ia();
+                                        }
+                                    }
+
+                                    Text {
+                                        text: "IA";
+                                        font-size: 11px;
+                                        font-weight: 900;
+                                        letter-spacing: 0.8px;
+                                        color: white;
+                                        horizontal-alignment: center;
+                                        vertical-alignment: center;
+                                    }
+                                }
+
+                                Rectangle { width: 6px; }
 
                                 Rectangle {
                                     width: 54px;
@@ -1946,7 +1993,7 @@ if (root.mostrar_menu_configuracion) : Rectangle {
     TouchArea { clicked => { root.mostrar_menu_configuracion = false; } }
     Rectangle {
         x: root.menu_configuracion_x; y: root.menu_configuracion_y;
-        width: 160px; height: 110px;
+        width: 175px; height: 145px;
         background: Theme.bg_popup; border-radius: 8px; border-width: 2px; border-color: Theme.border_strong;
         TouchArea {}
         VerticalLayout {
@@ -1961,6 +2008,16 @@ if (root.mostrar_menu_configuracion) : Rectangle {
                     root.mostrar_menu_configuracion = false;
                     root.mostrar_modal_pantallas = true;
                     root.abrir_modal_pantallas();
+                }
+            }
+            MenuItem {
+                text: "Configuración IA"; icon: "";
+                clicked => {
+                    root.mostrar_menu_configuracion = false;
+                    root.temp_gemini_api_key = root.gemini_api_key;
+                    root.config_ia_status_msg = "";
+                    root.config_ia_es_error = false;
+                    root.mostrar_modal_config_ia = true;
                 }
             }
             MenuItem {
@@ -2860,6 +2917,362 @@ if (root.mostrar_acerca_de) : Rectangle {
             Text {
                 text: "Por favor espera un momento, no cierres la aplicación.";
                 color: Theme.text_secondary; font-size: 11px; horizontal-alignment: center;
+            }
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    //  MODAL: AVISO IA (API KEY NO CONFIGURADA)
+    // ══════════════════════════════════════════════════════════════
+    if (root.mostrar_modal_aviso_ia) : Rectangle {
+        width: 100%; height: 100%; background: Theme.overlay;
+        TouchArea { clicked => { root.mostrar_modal_aviso_ia = false; } }
+
+        Rectangle {
+            width: 480px; height: 230px;
+            background: Theme.bg_popup; border-radius: 12px;
+            border-width: 2px; border-color: Theme.border_strong;
+            TouchArea {} // Evita propagar clic al fondo
+
+            VerticalLayout {
+                padding: 22px; spacing: 14px;
+
+                HorizontalLayout {
+                    alignment: space-between; height: 28px;
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Text { text: "⚠"; color: #f59e0b; font-size: 16px; font-weight: 900; vertical-alignment: center; }
+                        Text { text: "CONFIGURACIÓN DE IA REQUERIDA"; color: Theme.text_primary; font-size: 13px; font-weight: 900; vertical-alignment: center; }
+                    }
+                    Rectangle {
+                        width: 28px; height: 28px; border-radius: 6px;
+                        background: touch-close-aviso-ia.has-hover ? Theme.bg_card_hover : transparent;
+                        touch-close-aviso-ia := TouchArea { clicked => { root.mostrar_modal_aviso_ia = false; } }
+                        Text { text: "✕"; color: Theme.text_secondary; font-size: 13px; horizontal-alignment: center; vertical-alignment: center; }
+                    }
+                }
+
+                Text {
+                    text: "Para generar imágenes con Inteligencia Artificial, primero debes establecer tu API Key de Google Gemini en la configuración del sistema.";
+                    color: Theme.text_secondary; font-size: 12px; wrap: word-wrap;
+                }
+
+                Rectangle { vertical-stretch: 1; }
+
+                HorizontalLayout {
+                    alignment: end; spacing: 10px; height: 36px;
+                    Rectangle {
+                        width: 100px; border-radius: 6px;
+                        background: touch-cancel-aviso.has-hover ? Theme.bg_card_hover : Theme.bg_card;
+                        border-width: 1px; border-color: Theme.border_strong;
+                        touch-cancel-aviso := TouchArea { clicked => { root.mostrar_modal_aviso_ia = false; } }
+                        HorizontalLayout { alignment: center; Text { text: "Cerrar"; color: Theme.text_primary; font-size: 11px; font-weight: 700; vertical-alignment: center; } }
+                    }
+                    Rectangle {
+                        width: 170px; border-radius: 6px;
+                        background: touch-ir-cfg.has-hover ? #0284c7 : #0ea5e9;
+                        touch-ir-cfg := TouchArea {
+                            clicked => {
+                                root.mostrar_modal_aviso_ia = false;
+                                root.temp_gemini_api_key = root.gemini_api_key;
+                                root.config_ia_status_msg = "";
+                                root.config_ia_es_error = false;
+                                root.mostrar_modal_config_ia = true;
+                            }
+                        }
+                        HorizontalLayout { alignment: center; Text { text: "Configurar API Key"; color: white; font-size: 11px; font-weight: 800; vertical-alignment: center; } }
+                    }
+                }
+            }
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    //  MODAL: CONFIGURACIÓN IA (API KEY DE GEMINI)
+    // ══════════════════════════════════════════════════════════════
+    if (root.mostrar_modal_config_ia) : Rectangle {
+        width: 100%; height: 100%; background: Theme.overlay;
+        TouchArea { clicked => { root.mostrar_modal_config_ia = false; } }
+
+        Rectangle {
+            width: 520px; height: 320px;
+            background: Theme.bg_popup; border-radius: 12px;
+            border-width: 2px; border-color: Theme.border_strong;
+            TouchArea {}
+
+            VerticalLayout {
+                padding: 22px; spacing: 14px;
+
+                HorizontalLayout {
+                    alignment: space-between; height: 28px;
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Text { text: "✨"; font-size: 15px; vertical-alignment: center; }
+                        Text { text: "CONFIGURACIÓN IA (GOOGLE GEMINI)"; color: Theme.text_primary; font-size: 13px; font-weight: 900; vertical-alignment: center; }
+                    }
+                    Rectangle {
+                        width: 28px; height: 28px; border-radius: 6px;
+                        background: touch-close-cfg-ia.has-hover ? Theme.bg_card_hover : transparent;
+                        touch-close-cfg-ia := TouchArea { clicked => { root.mostrar_modal_config_ia = false; } }
+                        Text { text: "✕"; color: Theme.text_secondary; font-size: 13px; horizontal-alignment: center; vertical-alignment: center; }
+                    }
+                }
+
+                Text {
+                    text: "Ingresa tu API Key de Gemini para activar la creación de fondos para cantos, biblias e imágenes informativas con IA.";
+                    color: Theme.text_secondary; font-size: 11px; wrap: word-wrap;
+                }
+
+                VerticalLayout {
+                    spacing: 6px;
+                    Text { text: "GEMINI API KEY"; color: Theme.text_secondary; font-size: 9px; font-weight: 800; letter-spacing: 0.5px; }
+                    Rectangle {
+                        height: 38px; border-radius: 6px;
+                        background: Theme.bg_input; border-width: 1px; border-color: Theme.border_subtle;
+                        TextInput {
+                            x: 12px; width: parent.width - 24px; height: 100%;
+                            text <=> root.temp_gemini_api_key;
+                            color: Theme.text_primary; font-size: 12px; vertical-alignment: center;
+                        }
+                    }
+                }
+
+                Text {
+                    text: "💡 Puedes obtener tu API Key gratuita en Google AI Studio (aistudio.google.com). Se guarda en tu equipo local.";
+                    color: Theme.text_muted; font-size: 9px; wrap: word-wrap;
+                }
+
+                if (root.config_ia_status_msg != "") : Rectangle {
+                    height: 32px; border-radius: 6px;
+                    background: root.config_ia_es_error ? rgba(239, 68, 68, 0.15) : rgba(34, 197, 94, 0.15);
+                    border-width: 1px; border-color: root.config_ia_es_error ? #ef4444 : #22c55e;
+                    HorizontalLayout {
+                        padding-left: 10px; padding-right: 10px;
+                        Text { text: root.config_ia_status_msg; color: root.config_ia_es_error ? #ef4444 : #22c55e; font-size: 10px; font-weight: 700; vertical-alignment: center; }
+                    }
+                }
+
+                Rectangle { vertical-stretch: 1; }
+
+                HorizontalLayout {
+                    alignment: end; spacing: 10px; height: 36px;
+                    Rectangle {
+                        width: 100px; border-radius: 6px;
+                        background: touch-can-cfgia.has-hover ? Theme.bg_card_hover : Theme.bg_card;
+                        border-width: 1px; border-color: Theme.border_strong;
+                        touch-can-cfgia := TouchArea { clicked => { root.mostrar_modal_config_ia = false; } }
+                        HorizontalLayout { alignment: center; Text { text: "Cerrar"; color: Theme.text_primary; font-size: 11px; font-weight: 700; vertical-alignment: center; } }
+                    }
+                    Rectangle {
+                        width: 130px; border-radius: 6px;
+                        background: touch-sav-cfgia.has-hover ? #0284c7 : #0ea5e9;
+                        touch-sav-cfgia := TouchArea { clicked => { root.guardar_gemini_api_key(root.temp_gemini_api_key); } }
+                        HorizontalLayout { alignment: center; Text { text: "Guardar API Key"; color: white; font-size: 11px; font-weight: 800; vertical-alignment: center; } }
+                    }
+                }
+            }
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    //  MODAL: GENERADOR DE IMÁGENES IA (GEMINI)
+    // ══════════════════════════════════════════════════════════════
+    if (root.mostrar_modal_generar_ia) : Rectangle {
+        width: 100%; height: 100%; background: Theme.overlay;
+        TouchArea { 
+            clicked => { 
+                if (!root.ia_generando) {
+                    root.mostrar_modal_generar_ia = false; 
+                }
+            } 
+        }
+
+        Rectangle {
+            width: 620px; height: 500px;
+            background: Theme.bg_popup; border-radius: 12px;
+            border-width: 2px; border-color: Theme.border_strong;
+            TouchArea {}
+
+            VerticalLayout {
+                padding: 22px; spacing: 14px;
+
+                // ── Encabezado ──
+                HorizontalLayout {
+                    alignment: space-between; height: 28px;
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Text { text: "✨"; font-size: 16px; vertical-alignment: center; }
+                        Text { text: "GENERADOR DE IMÁGENES CON IA"; color: Theme.text_primary; font-size: 13px; font-weight: 900; vertical-alignment: center; }
+                    }
+                    Rectangle {
+                        width: 28px; height: 28px; border-radius: 6px;
+                        background: touch-close-gen-ia.has-hover ? Theme.bg_card_hover : transparent;
+                        touch-close-gen-ia := TouchArea { 
+                            clicked => { 
+                                if (!root.ia_generando) {
+                                    root.mostrar_modal_generar_ia = false; 
+                                }
+                            } 
+                        }
+                        Text { text: "✕"; color: Theme.text_secondary; font-size: 13px; horizontal-alignment: center; vertical-alignment: center; }
+                    }
+                }
+
+                // ── Selector de Tipo de Imagen (3 Botones) ──
+                Text { text: "¿QUÉ DESEAS GENERAR?"; color: Theme.text_secondary; font-size: 9px; font-weight: 800; letter-spacing: 0.5px; }
+
+                HorizontalLayout {
+                    spacing: 10px; height: 56px;
+
+                    // Opción 1: Fondo de Cantos
+                    Rectangle {
+                        horizontal-stretch: 1; border-radius: 8px;
+                        background: root.ia_tipo_seleccionado == "cantos" ? rgba(14, 165, 233, 0.15) : (touch-opt-c.has-hover ? Theme.bg_card_hover : Theme.bg_card);
+                        border-width: root.ia_tipo_seleccionado == "cantos" ? 2px : 1px;
+                        border-color: root.ia_tipo_seleccionado == "cantos" ? #0ea5e9 : Theme.border_strong;
+                        touch-opt-c := TouchArea {
+                            clicked => { root.ia_tipo_seleccionado = "cantos"; }
+                        }
+                        VerticalLayout {
+                            alignment: center; spacing: 2px;
+                            HorizontalLayout {
+                                alignment: center; spacing: 4px;
+                                Text { text: "🎵"; font-size: 12px; vertical-alignment: center; }
+                                Text { text: "Fondo de Cantos"; color: root.ia_tipo_seleccionado == "cantos" ? #0ea5e9 : Theme.text_primary; font-size: 11px; font-weight: 800; vertical-alignment: center; }
+                            }
+                            Text { text: "Para alabanzas y letras"; color: Theme.text_muted; font-size: 9px; horizontal-alignment: center; }
+                        }
+                    }
+
+                    // Opción 2: Fondo de Biblias
+                    Rectangle {
+                        horizontal-stretch: 1; border-radius: 8px;
+                        background: root.ia_tipo_seleccionado == "biblias" ? rgba(14, 165, 233, 0.15) : (touch-opt-b.has-hover ? Theme.bg_card_hover : Theme.bg_card);
+                        border-width: root.ia_tipo_seleccionado == "biblias" ? 2px : 1px;
+                        border-color: root.ia_tipo_seleccionado == "biblias" ? #0ea5e9 : Theme.border_strong;
+                        touch-opt-b := TouchArea {
+                            clicked => { root.ia_tipo_seleccionado = "biblias"; }
+                        }
+                        VerticalLayout {
+                            alignment: center; spacing: 2px;
+                            HorizontalLayout {
+                                alignment: center; spacing: 4px;
+                                Text { text: "📖"; font-size: 12px; vertical-alignment: center; }
+                                Text { text: "Fondo de Biblias"; color: root.ia_tipo_seleccionado == "biblias" ? #0ea5e9 : Theme.text_primary; font-size: 11px; font-weight: 800; vertical-alignment: center; }
+                            }
+                            Text { text: "Para lectura y versículos"; color: Theme.text_muted; font-size: 9px; horizontal-alignment: center; }
+                        }
+                    }
+
+                    // Opción 3: Imagen Informativa
+                    Rectangle {
+                        horizontal-stretch: 1; border-radius: 8px;
+                        background: root.ia_tipo_seleccionado == "informativa" ? rgba(14, 165, 233, 0.15) : (touch-opt-i.has-hover ? Theme.bg_card_hover : Theme.bg_card);
+                        border-width: root.ia_tipo_seleccionado == "informativa" ? 2px : 1px;
+                        border-color: root.ia_tipo_seleccionado == "informativa" ? #0ea5e9 : Theme.border_strong;
+                        touch-opt-i := TouchArea {
+                            clicked => { root.ia_tipo_seleccionado = "informativa"; }
+                        }
+                        VerticalLayout {
+                            alignment: center; spacing: 2px;
+                            HorizontalLayout {
+                                alignment: center; spacing: 4px;
+                                Text { text: "🖼️"; font-size: 12px; vertical-alignment: center; }
+                                Text { text: "Informativa"; color: root.ia_tipo_seleccionado == "informativa" ? #0ea5e9 : Theme.text_primary; font-size: 11px; font-weight: 800; vertical-alignment: center; }
+                            }
+                            Text { text: "Avisos y eventos (IMGS)"; color: Theme.text_muted; font-size: 9px; horizontal-alignment: center; }
+                        }
+                    }
+                }
+
+                // ── Explicación de destino / optimización de prompt ──
+                Rectangle {
+                    height: 38px; border-radius: 6px;
+                    background: Theme.bg_list; border-width: 1px; border-color: Theme.border_subtle;
+                    HorizontalLayout {
+                        padding-left: 10px; padding-right: 10px;
+                        Text {
+                            text: root.ia_tipo_seleccionado == "cantos" ? "🎵 Se creará un fondo 16:9 con iluminación cinematográfica y centro despejado para letras legibles. Se aplicará a Cantos." : (root.ia_tipo_seleccionado == "biblias" ? "📖 Se creará un fondo sobrio y reverente en alta definición optimizado para lectura bíblica. Se aplicará a Biblias." : "🖼️ Se creará una imagen informativa completa para presentaciones o avisos. Se añadirá a la sección IMGS.");
+                            color: Theme.text_secondary; font-size: 10px; vertical-alignment: center; wrap: word-wrap;
+                        }
+                    }
+                }
+
+                // ── Campo de Prompt ──
+                VerticalLayout {
+                    spacing: 6px;
+                    Text { text: "DESCRIBE LA IMAGEN QUE DESEAS (PROMPT)"; color: Theme.text_secondary; font-size: 9px; font-weight: 800; letter-spacing: 0.5px; }
+                    Rectangle {
+                        height: 70px; border-radius: 6px;
+                        background: Theme.bg_input; border-width: 1px; border-color: Theme.border_subtle;
+                        TextInput {
+                            x: 10px; y: 6px; width: parent.width - 20px; height: parent.height - 12px;
+                            text <=> root.ia_prompt_usuario;
+                            color: Theme.text_primary; font-size: 12px;
+                        }
+                    }
+                }
+
+                Text {
+                    text: "Sugerencia: Puedes indicar colores, iluminación o elementos como 'Atardecer cálido con silueta de montañas', 'Cielo nocturno con estrellas y nebulosa suave', o 'Reunión de jóvenes con estilo moderno'.";
+                    color: Theme.text_muted; font-size: 9px; wrap: word-wrap;
+                }
+
+                // ── Mensaje de estado / resultado ──
+                if (root.ia_status_msg != "") : Rectangle {
+                    height: 36px; border-radius: 6px;
+                    background: root.ia_generando ? rgba(14, 165, 233, 0.15) : (root.ia_es_error ? rgba(239, 68, 68, 0.15) : rgba(34, 197, 94, 0.15));
+                    border-width: 1px;
+                    border-color: root.ia_generando ? #0ea5e9 : (root.ia_es_error ? #ef4444 : #22c55e);
+                    HorizontalLayout {
+                        padding-left: 12px; padding-right: 12px; spacing: 8px;
+                        Text {
+                            text: root.ia_generando ? "⏳" : (root.ia_es_error ? "⚠" : "✓");
+                            color: root.ia_generando ? #0ea5e9 : (root.ia_es_error ? #ef4444 : #22c55e);
+                            font-size: 13px; font-weight: 900; vertical-alignment: center;
+                        }
+                        Text {
+                            text: root.ia_status_msg;
+                            color: Theme.text_primary; font-size: 11px; font-weight: 700;
+                            vertical-alignment: center; horizontal-stretch: 1; wrap: word-wrap;
+                        }
+                    }
+                }
+
+                Rectangle { vertical-stretch: 1; }
+
+                // ── Botones de Acción ──
+                HorizontalLayout {
+                    alignment: end; spacing: 10px; height: 38px;
+                    Rectangle {
+                        width: 100px; border-radius: 6px;
+                        background: touch-can-genia.has-hover ? Theme.bg_card_hover : Theme.bg_card;
+                        border-width: 1px; border-color: Theme.border_strong;
+                        touch-can-genia := TouchArea { 
+                            clicked => { 
+                                if (!root.ia_generando) {
+                                    root.mostrar_modal_generar_ia = false; 
+                                }
+                            } 
+                        }
+                        HorizontalLayout { alignment: center; Text { text: "Cerrar"; color: Theme.text_primary; font-size: 11px; font-weight: 700; vertical-alignment: center; } }
+                    }
+                    Rectangle {
+                        width: 160px; border-radius: 6px;
+                        background: root.ia_generando ? #64748b : (touch-gen-btn.has-hover ? #0284c7 : #0ea5e9);
+                        touch-gen-btn := TouchArea { 
+                            clicked => { 
+                                if (!root.ia_generando && root.ia_prompt_usuario != "") {
+                                    root.generar_imagen_ia(root.ia_tipo_seleccionado, root.ia_prompt_usuario);
+                                }
+                            } 
+                        }
+                        HorizontalLayout { 
+                            alignment: center; spacing: 6px;
+                            Text { text: root.ia_generando ? "⏳ Generando..." : "✨ Generar Imagen"; color: white; font-size: 11px; font-weight: 800; vertical-alignment: center; }
+                        }
+                    }
+                }
             }
         }
     }

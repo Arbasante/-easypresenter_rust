@@ -5,3 +5,4 @@ data/*.db-shm
 node_modules/
 dist/
 */.json
+data/*:Zone.Identifier

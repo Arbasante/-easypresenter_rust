@@ -1,47 +1,69 @@
 #![windows_subsystem = "windows"]
-use rusqlite::{Connection, Result};
-use slint::{ModelRc, SharedString, VecModel, ComponentHandle, SharedPixelBuffer};
-use slint::Model;
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex, RwLock};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::LazyLock;
-use std::rc::Rc;
-use std::cell::RefCell;
-use std::thread;
-use regex::Regex;
-use rayon::prelude::*;
+use directories::ProjectDirs;
 use display_info::DisplayInfo;
 use lru::LruCache;
-use directories::ProjectDirs;
+use rayon::prelude::*;
+use regex::Regex;
+use rusqlite::{Connection, Result};
 use serde::{Deserialize, Serialize};
+use slint::Model;
+use slint::{ComponentHandle, ModelRc, SharedPixelBuffer, SharedString, VecModel};
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::rc::Rc;
+use std::sync::LazyLock;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, RwLock};
+use std::thread;
 
 // ── Configuración persistente ────────────────────────────────────────────────
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum TemaInterfaz {
+    Blanco,
+    AzulOscuro,
+    Negro,
+}
+
+impl TemaInterfaz {
+    fn desde_flags(oscuro: bool, negro: bool) -> Self {
+        if negro {
+            Self::Negro
+        } else if oscuro {
+            Self::AzulOscuro
+        } else {
+            Self::Blanco
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Default, Clone)]
 struct ConfigApp {
     // Galería de fondos
     biblias_image_paths: Vec<String>,
-    cantos_image_paths:  Vec<String>,
+    cantos_image_paths: Vec<String>,
     biblias_video_paths: Vec<String>,
-    cantos_video_paths:  Vec<String>,
+    cantos_video_paths: Vec<String>,
     #[serde(default)]
     tema_oscuro: bool,
+    #[serde(default)]
+    tema: Option<TemaInterfaz>,
     biblias_selected_img: i32,
-    cantos_selected_img:  i32,
+    cantos_selected_img: i32,
     biblias_selected_vid: i32,
-    cantos_selected_vid:  i32,
-    biblias_video_path:  String,
-    cantos_video_path:   String,
+    cantos_selected_vid: i32,
+    biblias_video_path: String,
+    cantos_video_path: String,
 
     // Apariencia
-    biblias_bg_type:      String,
-    cantos_bg_type:       String,
-    biblias_font_color:   [u8; 3],   // [r, g, b]
-    cantos_font_color:    [u8; 3],
+    biblias_bg_type: String,
+    cantos_bg_type: String,
+    biblias_font_color: [u8; 3], // [r, g, b]
+    cantos_font_color: [u8; 3],
     biblias_fondo_opacity: f32,
-    cantos_fondo_opacity:  f32,
-    biblias_font_scale:   f32,
-    cantos_font_scale:    f32,
+    cantos_fondo_opacity: f32,
+    biblias_font_scale: f32,
+    cantos_font_scale: f32,
 
     // Multimedia proyectable (imágenes y vídeos)
     multimedia_paths: Vec<String>,
@@ -53,13 +75,13 @@ struct ConfigApp {
 
     // Márgenes del proyector
     margen_izquierdo: f32,
-    margen_derecho:   f32,
-    margen_superior:  f32,
-    margen_inferior:  f32,
+    margen_derecho: f32,
+    margen_superior: f32,
+    margen_inferior: f32,
 
     // Fondo predeterminado
     default_bg_type: String,
-    default_bg_idx:  i32,
+    default_bg_idx: i32,
 
     // Roles de pantallas para Stage Display: (id_pantalla, rol)
     #[serde(default)]
@@ -76,8 +98,12 @@ struct ConfigApp {
     gemini_api_key: String,
 }
 
-fn default_true() -> bool { true }
-fn default_font() -> String { "Google Sans".to_string() }
+fn default_true() -> bool {
+    true
+}
+fn default_font() -> String {
+    "Google Sans".to_string()
+}
 
 fn config_path(user_data_dir: &std::path::Path) -> std::path::PathBuf {
     user_data_dir.join("config.json")
@@ -89,15 +115,14 @@ fn cargar_config(user_data_dir: &std::path::Path) -> ConfigApp {
         serde_json::from_str(&data).unwrap_or_default()
     } else {
         let mut cfg = ConfigApp::default();
-        cfg.biblias_bg_type   = "negro".to_string();
-        cfg.cantos_bg_type    = "negro".to_string();
+        cfg.biblias_bg_type = "negro".to_string();
+        cfg.cantos_bg_type = "negro".to_string();
         cfg.biblias_font_color = [255, 255, 255];
-        cfg.cantos_font_color  = [255, 255, 255];
+        cfg.cantos_font_color = [255, 255, 255];
         cfg.biblias_font_scale = 1.0;
-        cfg.cantos_font_scale  = 1.0;
+        cfg.cantos_font_scale = 1.0;
         cfg.proyeccion_font_family = "Google Sans".to_string();
         cfg
-       
     }
 }
 
@@ -141,24 +166,36 @@ fn verificar_datos_cantos(conn: &Connection) -> bool {
     let total_cantos: i64 = conn
         .query_row("SELECT COUNT(*) FROM cantos", [], |r| r.get(0))
         .unwrap_or(0);
-    if total_cantos == 0 { return false; }
+    if total_cantos == 0 {
+        return false;
+    }
 
     let total_diapositivas: i64 = conn
         .query_row("SELECT COUNT(*) FROM diapositivas", [], |r| r.get(0))
         .unwrap_or(0);
-    if total_diapositivas == 0 { return false; }
+    if total_diapositivas == 0 {
+        return false;
+    }
 
     // Chequeo de coherencia: al menos el primer canto debe tener estrofas.
     // Si esto da 0, es exactamente el síntoma reportado: la lista carga
     // pero al hacer clic no aparece nada.
     let primer_canto_id: Option<i32> = conn
-        .query_row("SELECT id FROM cantos ORDER BY id LIMIT 1", [], |r| r.get(0))
+        .query_row("SELECT id FROM cantos ORDER BY id LIMIT 1", [], |r| {
+            r.get(0)
+        })
         .ok();
     if let Some(id) = primer_canto_id {
         let estrofas_primero: i64 = conn
-            .query_row("SELECT COUNT(*) FROM diapositivas WHERE canto_id = ?", [id], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM diapositivas WHERE canto_id = ?",
+                [id],
+                |r| r.get(0),
+            )
             .unwrap_or(0);
-        if estrofas_primero == 0 { return false; }
+        if estrofas_primero == 0 {
+            return false;
+        }
     }
 
     true
@@ -192,9 +229,21 @@ fn decode_base64_data(s: &str) -> std::result::Result<Vec<u8>, String> {
     let mut out = Vec::with_capacity(clean.len() * 3 / 4);
     for chunk in clean.chunks(4) {
         let b0 = decode_char(chunk[0])?;
-        let b1 = if chunk.len() > 1 { decode_char(chunk[1])? } else { 0 };
-        let b2 = if chunk.len() > 2 { decode_char(chunk[2])? } else { 0 };
-        let b3 = if chunk.len() > 3 { decode_char(chunk[3])? } else { 0 };
+        let b1 = if chunk.len() > 1 {
+            decode_char(chunk[1])?
+        } else {
+            0
+        };
+        let b2 = if chunk.len() > 2 {
+            decode_char(chunk[2])?
+        } else {
+            0
+        };
+        let b3 = if chunk.len() > 3 {
+            decode_char(chunk[3])?
+        } else {
+            0
+        };
 
         out.push((b0 << 2) | (b1 >> 4));
         if chunk.len() > 2 {
@@ -210,7 +259,9 @@ fn decode_base64_data(s: &str) -> std::result::Result<Vec<u8>, String> {
 fn llamar_gemini_imagen_api(api_key: &str, prompt: &str) -> std::result::Result<Vec<u8>, String> {
     let key = api_key.trim();
     if key.is_empty() {
-        return Err("API Key de Gemini no configurada. Ve a Configuración > Configuración IA.".to_string());
+        return Err(
+            "API Key de Gemini no configurada. Ve a Configuración > Configuración IA.".to_string(),
+        );
     }
 
     let client = reqwest::blocking::Client::builder()
@@ -236,18 +287,25 @@ fn llamar_gemini_imagen_api(api_key: &str, prompt: &str) -> std::result::Result<
         }
     });
 
-    let resp = client.post(&url)
+    let resp = client
+        .post(&url)
         .header("Content-Type", "application/json")
         .body(payload.to_string())
         .send()
         .map_err(|e| format!("Error al conectar con Google Gemini: {}", e))?;
 
     let status = resp.status();
-    let text = resp.text().map_err(|e| format!("Error leyendo respuesta de Gemini: {}", e))?;
+    let text = resp
+        .text()
+        .map_err(|e| format!("Error leyendo respuesta de Gemini: {}", e))?;
 
     if !status.is_success() {
         if let Ok(json_err) = serde_json::from_str::<serde_json::Value>(&text) {
-            if let Some(msg) = json_err.get("error").and_then(|e| e.get("message")).and_then(|m| m.as_str()) {
+            if let Some(msg) = json_err
+                .get("error")
+                .and_then(|e| e.get("message"))
+                .and_then(|m| m.as_str())
+            {
                 return Err(format!("Gemini API: {}", msg));
             }
         }
@@ -266,15 +324,25 @@ fn llamar_gemini_imagen_api(api_key: &str, prompt: &str) -> std::result::Result<
                 return decode_base64_data(b64);
             }
             if let Some(url_img) = pred.get("url").and_then(|u| u.as_str()) {
-                let img_resp = client.get(url_img).send().map_err(|e| format!("Error descargando imagen: {}", e))?;
-                return img_resp.bytes().map(|b| b.to_vec()).map_err(|e| format!("Error procesando bytes de imagen: {}", e));
+                let img_resp = client
+                    .get(url_img)
+                    .send()
+                    .map_err(|e| format!("Error descargando imagen: {}", e))?;
+                return img_resp
+                    .bytes()
+                    .map(|b| b.to_vec())
+                    .map_err(|e| format!("Error procesando bytes de imagen: {}", e));
             }
         }
     }
 
     if let Some(candidates) = json_resp.get("candidates").and_then(|c| c.as_array()) {
         if let Some(cand) = candidates.first() {
-            if let Some(parts) = cand.get("content").and_then(|c| c.get("parts")).and_then(|p| p.as_array()) {
+            if let Some(parts) = cand
+                .get("content")
+                .and_then(|c| c.get("parts"))
+                .and_then(|p| p.as_array())
+            {
                 for part in parts {
                     if let Some(inline) = part.get("inlineData") {
                         if let Some(data) = inline.get("data").and_then(|d| d.as_str()) {
@@ -293,32 +361,114 @@ use pdfium_render::prelude::*;
 use std::fs;
 use std::path::PathBuf;
 
+use gst::prelude::*;
 use gstreamer as gst;
 use gstreamer_app as gst_app;
 use gstreamer_video as gst_video;
-use gst::prelude::*;
 slint::include_modules!();
 
 // ---------------------------------------------------------------------------
 // Estructuras de datos
 // ---------------------------------------------------------------------------
-struct CantoDB        { pub id: i32, pub titulo: String }
-struct DiapositivaDB  { pub orden: i32, pub texto: String }
-struct LibroBibliaDB  { pub id: i32, pub nombre: String, pub capitulos: i32 }
-#[derive(Clone)] struct VersiculoDB  { pub versiculo: i32, pub texto: String }
-#[derive(Clone)] struct VersionInfo  { pub id: i32, pub sigla: String, pub nombre_completo: String, pub prioridad: i32 }
-#[derive(Hash, Eq, PartialEq, Clone, Debug)] struct CacheKey { version_id: i32, libro_numero: i32, capitulo: i32 }
+struct CantoDB {
+    pub id: i32,
+    pub titulo: String,
+}
+struct DiapositivaDB {
+    pub orden: i32,
+    pub texto: String,
+}
+struct LibroBibliaDB {
+    pub id: i32,
+    pub nombre: String,
+    pub capitulos: i32,
+}
+#[derive(Clone)]
+struct VersiculoDB {
+    pub versiculo: i32,
+    pub texto: String,
+}
+#[derive(Clone)]
+struct VersionInfo {
+    pub id: i32,
+    pub sigla: String,
+    pub nombre_completo: String,
+    pub prioridad: i32,
+}
+#[derive(Hash, Eq, PartialEq, Clone, Debug)]
+struct CacheKey {
+    version_id: i32,
+    libro_numero: i32,
+    capitulo: i32,
+}
 
 const NOMBRES_LIBROS: [&str; 66] = [
-    "Génesis","Éxodo","Levítico","Números","Deuteronomio","Josué","Jueces","Rut",
-    "1 Samuel","2 Samuel","1 Reyes","2 Reyes","1 Crónicas","2 Crónicas","Esdras",
-    "Nehemías","Ester","Job","Salmos","Proverbios","Eclesiastés","Cantares","Isaías",
-    "Jeremías","Lamentaciones","Ezequiel","Daniel","Oseas","Joel","Amós","Abdías",
-    "Jonás","Miqueas","Nahúm","Habacuc","Sofonías","Hageo","Zacarías","Malaquías",
-    "Mateo","Marcos","Lucas","Juan","Hechos","Romanos","1 Corintios","2 Corintios",
-    "Gálatas","Efesios","Filipenses","Colosenses","1 Tesalonicenses","2 Tesalonicenses",
-    "1 Timoteo","2 Timoteo","Tito","Filemón","Hebreos","Santiago","1 Pedro","2 Pedro",
-    "1 Juan","2 Juan","3 Juan","Judas","Apocalipsis",
+    "Génesis",
+    "Éxodo",
+    "Levítico",
+    "Números",
+    "Deuteronomio",
+    "Josué",
+    "Jueces",
+    "Rut",
+    "1 Samuel",
+    "2 Samuel",
+    "1 Reyes",
+    "2 Reyes",
+    "1 Crónicas",
+    "2 Crónicas",
+    "Esdras",
+    "Nehemías",
+    "Ester",
+    "Job",
+    "Salmos",
+    "Proverbios",
+    "Eclesiastés",
+    "Cantares",
+    "Isaías",
+    "Jeremías",
+    "Lamentaciones",
+    "Ezequiel",
+    "Daniel",
+    "Oseas",
+    "Joel",
+    "Amós",
+    "Abdías",
+    "Jonás",
+    "Miqueas",
+    "Nahúm",
+    "Habacuc",
+    "Sofonías",
+    "Hageo",
+    "Zacarías",
+    "Malaquías",
+    "Mateo",
+    "Marcos",
+    "Lucas",
+    "Juan",
+    "Hechos",
+    "Romanos",
+    "1 Corintios",
+    "2 Corintios",
+    "Gálatas",
+    "Efesios",
+    "Filipenses",
+    "Colosenses",
+    "1 Tesalonicenses",
+    "2 Tesalonicenses",
+    "1 Timoteo",
+    "2 Timoteo",
+    "Tito",
+    "Filemón",
+    "Hebreos",
+    "Santiago",
+    "1 Pedro",
+    "2 Pedro",
+    "1 Juan",
+    "2 Juan",
+    "3 Juan",
+    "Judas",
+    "Apocalipsis",
 ];
 
 // ---------------------------------------------------------------------------
@@ -326,21 +476,18 @@ const NOMBRES_LIBROS: [&str; 66] = [
 //        En el E1-6015, compilar una regex cada pulsación de teclado costaba
 //        varios milisegundos de CPU; ahora es cero.
 // ---------------------------------------------------------------------------
-static RE_BUSQUEDA: LazyLock<Regex> = LazyLock::new(||
-    Regex::new(r"^\s*(.*?)\s+(\d+)(?:\s+(\d+))?\s*$").unwrap()
-);
-static RE_FAV: LazyLock<Regex> = LazyLock::new(||
-    Regex::new(r"^(.*?)\s+(\d+)\s*[: ]\s*(\d+)$").unwrap()
-);
+static RE_BUSQUEDA: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\s*(.*?)\s+(\d+)(?:\s+(\d+))?\s*$").unwrap());
+static RE_FAV: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^(.*?)\s+(\d+)\s*[: ]\s*(\d+)$").unwrap());
 
 // ---------------------------------------------------------------------------
 // OPT-2: Tabla de nombres normalizados pre-calculada.
 //        `buscar_libro_inteligente` se llama en cada keystroke; antes normalizaba
 //        los 66 nombres cada vez (66 allocations). Ahora es una búsqueda pura.
 // ---------------------------------------------------------------------------
-static LIBROS_NORMALIZADOS: LazyLock<Vec<String>> = LazyLock::new(||
-    NOMBRES_LIBROS.iter().map(|n| normalizar(n)).collect()
-);
+static LIBROS_NORMALIZADOS: LazyLock<Vec<String>> =
+    LazyLock::new(|| NOMBRES_LIBROS.iter().map(|n| normalizar(n)).collect());
 
 // ---------------------------------------------------------------------------
 // Detección adaptativa de hardware — un solo punto de verdad.
@@ -357,7 +504,7 @@ static NIVEL_HARDWARE: LazyLock<u8> = LazyLock::new(|| {
     match nucleos {
         0..=2 => 1,
         3..=4 => 2,
-        _     => 3,
+        _ => 3,
     }
 });
 
@@ -372,11 +519,11 @@ static NIVEL_HARDWARE: LazyLock<u8> = LazyLock::new(|| {
 /// software automáticamente (comportamiento actual, sin cambios).
 static DECODIFICADOR_HW: LazyLock<Option<String>> = LazyLock::new(|| {
     let candidatos = [
-        "vah264dec",       // VA-API moderno (GStreamer 1.20+)
-        "vaapih264dec",    // VA-API clásico (nombre anterior)
-        "nvh264dec",       // NVIDIA NVDEC
-        "d3d11h264dec",    // Windows Direct3D11
-        "vtdec",           // macOS VideoToolbox
+        "vah264dec",    // VA-API moderno (GStreamer 1.20+)
+        "vaapih264dec", // VA-API clásico (nombre anterior)
+        "nvh264dec",    // NVIDIA NVDEC
+        "d3d11h264dec", // Windows Direct3D11
+        "vtdec",        // macOS VideoToolbox
     ];
 
     for nombre in candidatos {
@@ -392,47 +539,78 @@ static DECODIFICADOR_HW: LazyLock<Option<String>> = LazyLock::new(|| {
 
 /// Resolución de miniaturas (galería de imágenes/multimedia).
 fn resolucion_miniatura() -> u32 {
-    match *NIVEL_HARDWARE { 1 => 240, 2 => 360, _ => 480 }
+    match *NIVEL_HARDWARE {
+        1 => 240,
+        2 => 360,
+        _ => 480,
+    }
 }
 
 fn resolucion_fondo_proyeccion() -> u32 {
-    match *NIVEL_HARDWARE { 1 => 1280, 2 => 1600, _ => 1920 }
+    match *NIVEL_HARDWARE {
+        1 => 1280,
+        2 => 1600,
+        _ => 1920,
+    }
 }
 
 /// Ancho de renderizado para páginas de PDF/PPTX importadas.
 fn resolucion_pdf() -> i32 {
-    match *NIVEL_HARDWARE { 1 => 1280, 2 => 1600, _ => 1920 }
+    match *NIVEL_HARDWARE {
+        1 => 1280,
+        2 => 1600,
+        _ => 1920,
+    }
 }
 
 /// Tamaño del LRU cache de capítulos bíblicos.
 fn tamano_cache_capitulos() -> usize {
-    match *NIVEL_HARDWARE { 1 => 100, 2 => 200, _ => 400 }
+    match *NIVEL_HARDWARE {
+        1 => 100,
+        2 => 200,
+        _ => 400,
+    }
 }
 
 /// Límite máximo de imágenes en memoria para no desbordar RAM.
 fn limite_cache_imagenes() -> usize {
-    match *NIVEL_HARDWARE { 1 => 60, 2 => 150, _ => 300 }
+    match *NIVEL_HARDWARE {
+        1 => 60,
+        2 => 150,
+        _ => 300,
+    }
 }
 
 fn limite_cache_fondos() -> usize {
-    match *NIVEL_HARDWARE { 1 => 15, 2 => 30, _ => 60 }
+    match *NIVEL_HARDWARE {
+        1 => 15,
+        2 => 30,
+        _ => 60,
+    }
 }
 
 // ---------------------------------------------------------------------------
 // Funciones de utilidad — #[inline] en hot-paths cortos
 // ---------------------------------------------------------------------------
 #[inline]
-fn trim(s: &str) -> String { s.trim().to_string() }
+fn trim(s: &str) -> String {
+    s.trim().to_string()
+}
 
 #[inline]
 fn normalizar(texto: &str) -> String {
-    texto.chars().map(|c| match c {
-        'á'|'Á' => 'a', 'é'|'É' => 'e', 'í'|'Í' => 'i',
-        'ó'|'Ó' => 'o', 'ú'|'Ú' => 'u',
-        _ => c.to_ascii_lowercase(),
-    }).collect()
+    texto
+        .chars()
+        .map(|c| match c {
+            'á' | 'Á' => 'a',
+            'é' | 'É' => 'e',
+            'í' | 'Í' => 'i',
+            'ó' | 'Ó' => 'o',
+            'ú' | 'Ú' => 'u',
+            _ => c.to_ascii_lowercase(),
+        })
+        .collect()
 }
-
 
 #[inline]
 fn color_a_hex(c: slint::Color) -> String {
@@ -446,10 +624,10 @@ fn content_type_desde_extension(path: &str) -> &'static str {
         .unwrap_or("")
         .to_lowercase();
     match ext.as_str() {
-        "png"  => "image/png",
+        "png" => "image/png",
         "webp" => "image/webp",
-        "gif"  => "image/gif",
-        _      => "image/jpeg",
+        "gif" => "image/gif",
+        _ => "image/jpeg",
     }
 }
 
@@ -461,16 +639,18 @@ fn video_content_type_desde_extension(path: &str) -> &'static str {
         .to_lowercase();
     match ext.as_str() {
         "webm" => "video/webm",
-        "mov"  => "video/quicktime",
-        "mkv"  => "video/x-matroska",
-        _      => "video/mp4",
+        "mov" => "video/quicktime",
+        "mkv" => "video/x-matroska",
+        _ => "video/mp4",
     }
 }
 
 // OPT-2 aplicado: cero allocations por búsqueda de libro
 fn buscar_libro_inteligente(query: &str) -> Option<(i32, String)> {
     let q = normalizar(&trim(query));
-    if q.is_empty() { return None; }
+    if q.is_empty() {
+        return None;
+    }
     for (i, norm) in LIBROS_NORMALIZADOS.iter().enumerate() {
         if norm.starts_with(&q) {
             return Some(((i + 1) as i32, NOMBRES_LIBROS[i].to_string()));
@@ -481,8 +661,10 @@ fn buscar_libro_inteligente(query: &str) -> Option<(i32, String)> {
 
 #[inline]
 fn calcular_font_size_tarjeta(texto: &str) -> f32 {
-    let len   = texto.chars().count() as f32;
-    if len == 0.0 { return 18.0; }
+    let len = texto.chars().count() as f32;
+    if len == 0.0 {
+        return 18.0;
+    }
     let lineas = texto.lines().count() as f32;
     let estimado = 350.0 / (len.sqrt() * 1.5 + lineas * 4.0);
     estimado.clamp(9.0, 22.0)
@@ -490,10 +672,10 @@ fn calcular_font_size_tarjeta(texto: &str) -> f32 {
 
 fn diapositiva_a_ui(d: &DiapositivaDB) -> DiapositivaUI {
     DiapositivaUI {
-        orden:     SharedString::from(d.orden.to_string()),
-        texto:     SharedString::from(d.texto.clone()),
+        orden: SharedString::from(d.orden.to_string()),
+        texto: SharedString::from(d.texto.as_str()),
         font_size: calcular_font_size_tarjeta(&d.texto),
-        favorito:  false,
+        favorito: false,
     }
 }
 
@@ -506,10 +688,10 @@ fn versiculo_a_ui_fav(
     let referencia2 = format!("{} {}", libro_cap, v.versiculo);
     let is_fav = fav_refs.contains(&referencia1) || fav_refs.contains(&referencia2);
     DiapositivaUI {
-        orden:     SharedString::from(v.versiculo.to_string()),
-        texto:     SharedString::from(v.texto.clone()),
+        orden: SharedString::from(v.versiculo.to_string()),
+        texto: SharedString::from(v.texto.as_str()),
         font_size: calcular_font_size_tarjeta(&v.texto),
-        favorito:  is_fav,
+        favorito: is_fav,
     }
 }
 
@@ -527,11 +709,12 @@ fn load_image_cached(
         }
     }
     let tam = resolucion_miniatura();
-    let decoded = image::open(path).ok()?;
-    let thumb = decoded.thumbnail(tam, tam).to_rgba8();
+    let thumb = image::open(path).ok()?.thumbnail(tam, tam).into_rgba8();
     let (w, h) = (thumb.width(), thumb.height());
     let mut pixel_buffer = SharedPixelBuffer::<slint::Rgba8Pixel>::new(w, h);
-    pixel_buffer.make_mut_bytes().copy_from_slice(thumb.as_raw());
+    pixel_buffer
+        .make_mut_bytes()
+        .copy_from_slice(thumb.as_raw());
     let img = slint::Image::from_rgba8(pixel_buffer);
 
     let mut lock = cache.lock().unwrap();
@@ -555,11 +738,12 @@ fn load_image_fondo_cached(
         }
     }
     let tam = resolucion_fondo_proyeccion();
-    let decoded = image::open(path).ok()?;
-    let thumb = decoded.thumbnail(tam, tam).to_rgba8();
+    let thumb = image::open(path).ok()?.thumbnail(tam, tam).into_rgba8();
     let (w, h) = (thumb.width(), thumb.height());
     let mut pixel_buffer = SharedPixelBuffer::<slint::Rgba8Pixel>::new(w, h);
-    pixel_buffer.make_mut_bytes().copy_from_slice(thumb.as_raw());
+    pixel_buffer
+        .make_mut_bytes()
+        .copy_from_slice(thumb.as_raw());
     let img = slint::Image::from_rgba8(pixel_buffer);
 
     let mut lock = cache.lock().unwrap();
@@ -570,7 +754,7 @@ fn load_image_fondo_cached(
     }
     lock.insert(path.to_string(), img.clone());
     Some(img)
-}   
+}
 
 /// Decodifica la vista previa a 480p para una carga ligera y fluida en la UI.
 fn load_image_preview_cached(
@@ -584,11 +768,12 @@ fn load_image_preview_cached(
         }
     }
     let tam = 480; // 480p exacto para vista previa
-    let decoded = image::open(path).ok()?;
-    let thumb = decoded.thumbnail(tam, tam).to_rgba8();
+    let thumb = image::open(path).ok()?.thumbnail(tam, tam).into_rgba8();
     let (w, h) = (thumb.width(), thumb.height());
     let mut pixel_buffer = SharedPixelBuffer::<slint::Rgba8Pixel>::new(w, h);
-    pixel_buffer.make_mut_bytes().copy_from_slice(thumb.as_raw());
+    pixel_buffer
+        .make_mut_bytes()
+        .copy_from_slice(thumb.as_raw());
     let img = slint::Image::from_rgba8(pixel_buffer);
 
     let mut lock = cache.lock().unwrap();
@@ -607,10 +792,11 @@ fn load_image_preview_cached(
 /// puede construirse dentro de los hilos de trabajo de rayon.
 fn decodificar_miniaturas_paralelo(paths: &[String]) -> Vec<Option<(u32, u32, Vec<u8>)>> {
     let tam = resolucion_miniatura();
-    paths.par_iter()
+    paths
+        .par_iter()
         .map(|p| {
             image::open(p).ok().map(|decoded| {
-                let thumb = decoded.thumbnail(tam, tam).to_rgba8();
+                let thumb = decoded.thumbnail(tam, tam).into_rgba8();
                 let (w, h) = (thumb.width(), thumb.height());
                 (w, h, thumb.into_raw())
             })
@@ -625,9 +811,15 @@ fn decodificar_miniaturas_paralelo(paths: &[String]) -> Vec<Option<(u32, u32, Ve
 fn precargar_cache_paralelo(cache: &Arc<Mutex<HashMap<String, slint::Image>>>, paths: &[String]) {
     let faltantes: Vec<String> = {
         let lock = cache.lock().unwrap();
-        paths.iter().filter(|p| !lock.contains_key(*p)).cloned().collect()
+        paths
+            .iter()
+            .filter(|p| !lock.contains_key(*p))
+            .cloned()
+            .collect()
     };
-    if faltantes.is_empty() { return; }
+    if faltantes.is_empty() {
+        return;
+    }
 
     let decodificadas = decodificar_miniaturas_paralelo(&faltantes);
 
@@ -666,16 +858,22 @@ fn generar_miniatura_video(ruta: &str, tam: u32) -> Option<image::DynamicImage> 
     pipeline.set_property("volume", 0.0f64);
 
     let appsink = gst_app::AppSink::builder()
+        .enable_last_sample(false)
         .max_buffers(1)
         .drop(true)
         .build();
     appsink.set_property("sync", false);
-    let caps = gst::Caps::builder("video/x-raw").field("format", "RGBA").build();
+    let caps = gst::Caps::builder("video/x-raw")
+        .field("format", "RGBA")
+        .build();
     appsink.set_caps(Some(&caps));
 
     pipeline.set_property("video-sink", &appsink);
 
-    pipeline.set_state(gst::State::Paused).ok()?;
+    if pipeline.set_state(gst::State::Paused).is_err() {
+        let _ = pipeline.set_state(gst::State::Null);
+        return None;
+    }
     if pipeline.state(gst::ClockTime::from_seconds(5)).0.is_err() {
         let _ = pipeline.set_state(gst::State::Null);
         return None;
@@ -683,7 +881,8 @@ fn generar_miniatura_video(ruta: &str, tam: u32) -> Option<image::DynamicImage> 
 
     // Duración del video, para no pedir un seek más allá del final
     // (videos muy cortos se quedarían sin frame si pedimos 3s de uno de 1s).
-    let duracion_ms = pipeline.query_duration::<gst::ClockTime>()
+    let duracion_ms = pipeline
+        .query_duration::<gst::ClockTime>()
         .map(|d| d.mseconds())
         .unwrap_or(0);
 
@@ -693,7 +892,11 @@ fn generar_miniatura_video(ruta: &str, tam: u32) -> Option<image::DynamicImage> 
         .into_iter()
         .filter(|&ms| duracion_ms == 0 || ms < duracion_ms)
         .collect();
-    let candidatos_ms = if candidatos_ms.is_empty() { vec![0] } else { candidatos_ms };
+    let candidatos_ms = if candidatos_ms.is_empty() {
+        vec![0]
+    } else {
+        candidatos_ms
+    };
 
     let mut mejor: Option<image::DynamicImage> = None;
 
@@ -704,12 +907,16 @@ fn generar_miniatura_video(ruta: &str, tam: u32) -> Option<image::DynamicImage> 
         );
         let _ = pipeline.state(gst::ClockTime::from_seconds(5));
 
-        let sample = appsink.pull_preroll().ok().or_else(|| appsink.pull_sample().ok());
+        let sample = appsink
+            .pull_preroll()
+            .ok()
+            .or_else(|| appsink.pull_sample().ok());
         let candidato = sample.and_then(|s| {
             let buffer = s.buffer()?;
             let info = gst_video::VideoInfo::from_caps(s.caps()?).ok()?;
             let map = buffer.map_readable().ok()?;
-            let img = image::RgbaImage::from_raw(info.width(), info.height(), map.as_slice().to_vec())?;
+            let img =
+                image::RgbaImage::from_raw(info.width(), info.height(), map.as_slice().to_vec())?;
             Some(image::DynamicImage::ImageRgba8(img).thumbnail(tam, tam))
         });
 
@@ -731,10 +938,14 @@ fn generar_miniatura_video(ruta: &str, tam: u32) -> Option<image::DynamicImage> 
 /// Heurística simple: calcula el brillo promedio de la miniatura y
 /// decide si es "casi negro" (frame de introducción/fade típico).
 fn es_frame_casi_negro(img: &image::DynamicImage) -> bool {
-    let rgba = img.to_rgba8();
+    let rgba = match img.as_rgba8() {
+        Some(rgba) => std::borrow::Cow::Borrowed(rgba),
+        None => std::borrow::Cow::Owned(img.to_rgba8()),
+    };
     let pixels = rgba.pixels();
     let total = pixels.len().max(1);
-    let suma: u64 = rgba.pixels()
+    let suma: u64 = rgba
+        .pixels()
         .map(|p| (p[0] as u64 + p[1] as u64 + p[2] as u64) / 3)
         .sum();
     let promedio = suma / total as u64;
@@ -757,21 +968,30 @@ fn construir_video_gallery(
     paths: &[String],
     img_cache: &Arc<Mutex<HashMap<String, slint::Image>>>,
 ) -> Vec<VideoGaleriaItem> {
-    paths.iter().map(|p| {
-        let nombre = std::path::Path::new(p)
-            .file_name().unwrap_or_default()
-            .to_string_lossy().to_string();
-        let img = img_cache.lock().unwrap().get(p).cloned()
-            .unwrap_or_else(|| {
-                let buf = SharedPixelBuffer::<slint::Rgba8Pixel>::new(92, 64);
-                slint::Image::from_rgba8(buf)
-            });
-        VideoGaleriaItem {
-            nombre: SharedString::from(nombre),
-            path:   SharedString::from(p.as_str()),
-            img,
-        }
-    }).collect()
+    paths
+        .iter()
+        .map(|p| {
+            let nombre = std::path::Path::new(p)
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
+            let img = img_cache
+                .lock()
+                .unwrap()
+                .get(p)
+                .cloned()
+                .unwrap_or_else(|| {
+                    let buf = SharedPixelBuffer::<slint::Rgba8Pixel>::new(92, 64);
+                    slint::Image::from_rgba8(buf)
+                });
+            VideoGaleriaItem {
+                nombre: SharedString::from(nombre),
+                path: SharedString::from(p.as_str()),
+                img,
+            }
+        })
+        .collect()
 }
 
 /// Devuelve la miniatura del video, usando caché en disco si ya existe.
@@ -796,11 +1016,15 @@ fn mostrar_aviso(ui_weak: &slint::Weak<AppWindow>, mensaje: &str) {
     }
     let ui_t = ui_weak.clone();
     let timer = slint::Timer::default();
-    timer.start(slint::TimerMode::SingleShot, std::time::Duration::from_secs(3), move || {
-        if let Some(ui) = ui_t.upgrade() {
-            ui.set_aviso_mensaje(SharedString::from(""));
-        }
-    });
+    timer.start(
+        slint::TimerMode::SingleShot,
+        std::time::Duration::from_secs(3),
+        move || {
+            if let Some(ui) = ui_t.upgrade() {
+                ui.set_aviso_mensaje(SharedString::from(""));
+            }
+        },
+    );
     std::mem::forget(timer); // timer de un solo uso, vive lo justo para dispararse
 }
 
@@ -808,19 +1032,17 @@ fn mostrar_aviso(ui_weak: &slint::Weak<AppWindow>, mensaje: &str) {
 // AppState — DB + caché de capítulos con LRU acotado
 // ---------------------------------------------------------------------------
 struct AppState {
-    cantos_db:  Connection,
+    cantos_db: Connection,
     biblias_db: Connection,
-    versiones:          Vec<VersionInfo>,
+    versiones: Vec<VersionInfo>,
     current_version_id: i32,
     chapter_cache: LruCache<CacheKey, Vec<VersiculoDB>>,
     biblias_image_paths: Vec<String>,
-    cantos_image_paths:  Vec<String>,
+    cantos_image_paths: Vec<String>,
     biblias_video_paths: Vec<String>,
-    cantos_video_paths:  Vec<String>,
-    user_data_dir: std::path::PathBuf,   // ← nuevo
+    cantos_video_paths: Vec<String>,
+    user_data_dir: std::path::PathBuf, // ← nuevo
 }
-
-
 
 impl AppState {
     fn new() -> Result<Self> {
@@ -846,7 +1068,8 @@ impl AppState {
 
             let sys_dir = if cfg!(target_os = "windows") {
                 //  WINDOWS: los datos "semilla" de instalación viven junto al .exe
-                let mut path = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("."));
+                let mut path =
+                    std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("."));
                 path.pop();
                 path.join("data")
             } else if let Ok(appdir) = std::env::var("APPDIR") {
@@ -878,7 +1101,9 @@ impl AppState {
             .unwrap_or(false);
 
         if !cantos_ok {
-            println!("cantos.db ausente, corrupta o incompleta. Restaurando desde la copia de instalación...");
+            println!(
+                "cantos.db ausente, corrupta o incompleta. Restaurando desde la copia de instalación..."
+            );
 
             // Limpia también los archivos -wal / -shm que puedan haber
             // quedado a medias de un cierre abrupto anterior.
@@ -908,49 +1133,59 @@ impl AppState {
                 }
                 println!("cantos.db restaurada correctamente.");
             } else {
-                panic!("No se encontró la base de datos semilla en {:?}", sys_cantos);
+                panic!(
+                    "No se encontró la base de datos semilla en {:?}",
+                    sys_cantos
+                );
             }
         }
 
         let biblias_ok = Connection::open(&biblias_path)
-    .ok()
-    .and_then(|c| c.query_row("SELECT 1 FROM versiculos LIMIT 1", [], |_| Ok(())).ok())
-    .is_some();
+            .ok()
+            .and_then(|c| {
+                c.query_row("SELECT 1 FROM versiculos LIMIT 1", [], |_| Ok(()))
+                    .ok()
+            })
+            .is_some();
 
-if !biblias_ok {
-    let sys_biblias = system_data_dir.join("biblias.db");
-    if sys_biblias.exists() {
-        std::fs::copy(&sys_biblias, &biblias_path)
-            .unwrap_or_else(|e| panic!("No se pudo copiar biblias.db: {}", e));
-    }
-}
-
+        if !biblias_ok {
+            let sys_biblias = system_data_dir.join("biblias.db");
+            if sys_biblias.exists() {
+                std::fs::copy(&sys_biblias, &biblias_path)
+                    .unwrap_or_else(|e| panic!("No se pudo copiar biblias.db: {}", e));
+            }
+        }
 
         // 4. Abrir la conexión a las bases de datos (ahora garantizado que existen y tienen permisos)
         let cantos_db = Connection::open(cantos_path)?;
         let biblias_db = Connection::open(biblias_path)?;
 
         // Optimizaciones de SQLite de alto rendimiento (WAL, MMAP para lectura sin copias, caché en RAM ampliada)
-        cantos_db.execute_batch("
+        cantos_db.execute_batch(
+            "
             PRAGMA journal_mode = WAL;
             PRAGMA synchronous = NORMAL;
             PRAGMA busy_timeout = 5000;
             PRAGMA cache_size = -64000;
             PRAGMA mmap_size = 268435456;
             PRAGMA temp_store = MEMORY;
-        ")?;
-        biblias_db.execute_batch("
+        ",
+        )?;
+        biblias_db.execute_batch(
+            "
             PRAGMA journal_mode = WAL;
             PRAGMA synchronous = NORMAL;
             PRAGMA busy_timeout = 5000;
             PRAGMA cache_size = -64000;
             PRAGMA mmap_size = 268435456;
             PRAGMA temp_store = MEMORY;
-        ")?;
+        ",
+        )?;
         cantos_db.set_prepared_statement_cache_capacity(64);
         biblias_db.set_prepared_statement_cache_capacity(64);
 
-        cantos_db.execute_batch("
+        cantos_db.execute_batch(
+            "
             CREATE TABLE IF NOT EXISTS favoritos (
                 id         INTEGER PRIMARY KEY AUTOINCREMENT,
                 tipo       TEXT    NOT NULL DEFAULT 'canto',
@@ -962,19 +1197,25 @@ if !biblias_ok {
             CREATE INDEX IF NOT EXISTS idx_diapositivas_canto ON diapositivas(canto_id, orden);
             CREATE INDEX IF NOT EXISTS idx_favoritos_lookup ON favoritos(tipo, ref_id);
             CREATE INDEX IF NOT EXISTS idx_favoritos_ref ON favoritos(tipo, referencia);
-        ")?;
-        let _ = cantos_db.execute("ALTER TABLE favoritos ADD COLUMN version TEXT NOT NULL DEFAULT ''", []);
+        ",
+        )?;
+        let _ = cantos_db.execute(
+            "ALTER TABLE favoritos ADD COLUMN version TEXT NOT NULL DEFAULT ''",
+            [],
+        );
 
         let mut state = Self {
             cantos_db,
             biblias_db,
-            versiones:           Vec::new(),
-            current_version_id:  1,
-            chapter_cache:       LruCache::new(std::num::NonZeroUsize::new(tamano_cache_capitulos()).unwrap()),
+            versiones: Vec::new(),
+            current_version_id: 1,
+            chapter_cache: LruCache::new(
+                std::num::NonZeroUsize::new(tamano_cache_capitulos()).unwrap(),
+            ),
             biblias_image_paths: Vec::new(),
-            cantos_image_paths:  Vec::new(),
+            cantos_image_paths: Vec::new(),
             biblias_video_paths: Vec::new(),
-            cantos_video_paths:  Vec::new(),
+            cantos_video_paths: Vec::new(),
             user_data_dir: user_data_dir.clone(),
         };
         state.procesar_versiones();
@@ -983,41 +1224,58 @@ if !biblias_ok {
 
     fn procesar_versiones(&mut self) {
         // OPT-1: prepare_cached — el statement se guarda en el pool interno de rusqlite
-        let mut stmt = self.biblias_db
+        let mut stmt = self
+            .biblias_db
             .prepare_cached("SELECT id, nombre FROM versiones")
             .unwrap();
         let iter = stmt
-            .query_map([], |row| Ok((row.get::<_, i32>(0)?, row.get::<_, String>(1)?)))
+            .query_map([], |row| {
+                Ok((row.get::<_, i32>(0)?, row.get::<_, String>(1)?))
+            })
             .unwrap();
         for item in iter.filter_map(Result::ok) {
             let (id, nombre_bd) = item;
             let (sigla, nombre_comp, prioridad) = match nombre_bd.as_str() {
-                "ReinaValera1960"                              => ("RVR",  "Reina Valera 1960",                          0),
-                "NuevaVersiónInternacional"                    => ("NVI",  "Nueva Versión Internacional",                1),
-                "NuevaTraduccionViviente"                      => ("NTV",  "Nueva Traducción Viviente",                  2),
-                "BibliaDeLasAméricas"                          => ("LBLA", "La Biblia de las Américas",                  3),
-                "NuevaBibliadelasAméricas"                     => ("NBLA", "Nueva Biblia de las Américas",               4),
-                "TraduccionLenguajeActual"                     => ("TLA",  "Traducción en Lenguaje Actual",              5),
-                "DiosHablaHoy"                                 => ("DHH",  "Dios Habla Hoy",                             6),
-                "LaPalabra"                                    => ("BLP",  "La Palabra",                                 7),
-                "TraduccionInterconfesionalVersionHispanoamericana"
-                                                               => ("TIVH","Trad. Interconfesional Hispanoamericana",     8),
-                "BibliaTextual"                                => ("BTX",  "Biblia Textual",                             9),
-                "BibliaJubileo"                                => ("JUB",  "Biblia del Jubileo",                        10),
-                "BibliadelOso1573"                             => ("OSO",  "Biblia del Oso 1573",                       11),
+                "ReinaValera1960" => ("RVR", "Reina Valera 1960", 0),
+                "NuevaVersiónInternacional" => ("NVI", "Nueva Versión Internacional", 1),
+                "NuevaTraduccionViviente" => ("NTV", "Nueva Traducción Viviente", 2),
+                "BibliaDeLasAméricas" => ("LBLA", "La Biblia de las Américas", 3),
+                "NuevaBibliadelasAméricas" => ("NBLA", "Nueva Biblia de las Américas", 4),
+                "TraduccionLenguajeActual" => ("TLA", "Traducción en Lenguaje Actual", 5),
+                "DiosHablaHoy" => ("DHH", "Dios Habla Hoy", 6),
+                "LaPalabra" => ("BLP", "La Palabra", 7),
+                "TraduccionInterconfesionalVersionHispanoamericana" => {
+                    ("TIVH", "Trad. Interconfesional Hispanoamericana", 8)
+                }
+                "BibliaTextual" => ("BTX", "Biblia Textual", 9),
+                "BibliaJubileo" => ("JUB", "Biblia del Jubileo", 10),
+                "BibliadelOso1573" => ("OSO", "Biblia del Oso 1573", 11),
                 "ReinaValeraAntigua" => ("RVA", "Reina Valera Antigua", 12),
                 _ => {
-                    let s = if nombre_bd.len() >= 4 { &nombre_bd[0..4] } else { &nombre_bd };
+                    let s = if nombre_bd.len() >= 4 {
+                        &nombre_bd[0..4]
+                    } else {
+                        &nombre_bd
+                    };
                     ("", s, 999)
                 }
             };
-            let sigla_final = if sigla.is_empty() { nombre_comp.to_uppercase() } else { sigla.to_string() };
+            let sigla_final = if sigla.is_empty() {
+                nombre_comp.to_uppercase()
+            } else {
+                sigla.to_string()
+            };
             self.versiones.push(VersionInfo {
-                id, sigla: sigla_final, nombre_completo: nombre_comp.to_string(), prioridad,
+                id,
+                sigla: sigla_final,
+                nombre_completo: nombre_comp.to_string(),
+                prioridad,
             });
         }
         self.versiones.sort_by_key(|v| v.prioridad);
-        if !self.versiones.is_empty() { self.current_version_id = self.versiones[0].id; }
+        if !self.versiones.is_empty() {
+            self.current_version_id = self.versiones[0].id;
+        }
     }
 
     fn set_version_by_name(&mut self, name: &str) -> String {
@@ -1029,37 +1287,58 @@ if !biblias_ok {
     }
 
     fn get_sigla_actual(&self) -> String {
-        self.versiones.iter()
+        self.versiones
+            .iter()
             .find(|v| v.id == self.current_version_id)
             .map(|v| v.sigla.clone())
             .unwrap_or_default()
     }
 
     fn get_libros_biblia(&self) -> Vec<LibroBibliaDB> {
-        let mut stmt = self.biblias_db.prepare_cached(
-            "SELECT libro_numero, libro_nombre, MAX(capitulo) \
+        let mut stmt = self
+            .biblias_db
+            .prepare_cached(
+                "SELECT libro_numero, libro_nombre, MAX(capitulo) \
              FROM versiculos WHERE version_id = ? \
-             GROUP BY libro_numero ORDER BY libro_numero"
-        ).unwrap();
-        stmt.query_map([self.current_version_id], |row| Ok(LibroBibliaDB {
-            id: row.get(0)?, nombre: row.get(1)?, capitulos: row.get(2)?,
-        })).unwrap().filter_map(Result::ok).collect()
+             GROUP BY libro_numero ORDER BY libro_numero",
+            )
+            .unwrap();
+        stmt.query_map([self.current_version_id], |row| {
+            Ok(LibroBibliaDB {
+                id: row.get(0)?,
+                nombre: row.get(1)?,
+                capitulos: row.get(2)?,
+            })
+        })
+        .unwrap()
+        .filter_map(Result::ok)
+        .collect()
     }
 
     fn get_capitulo(&mut self, libro_numero: i32, capitulo: i32) -> Vec<VersiculoDB> {
-        let key = CacheKey { version_id: self.current_version_id, libro_numero, capitulo };
+        let key = CacheKey {
+            version_id: self.current_version_id,
+            libro_numero,
+            capitulo,
+        };
         if let Some(cached) = self.chapter_cache.get(&key) {
             return cached.clone();
         }
-        let mut stmt = self.biblias_db.prepare_cached(
-            "SELECT versiculo, texto FROM versiculos \
+        let mut stmt = self
+            .biblias_db
+            .prepare_cached(
+                "SELECT versiculo, texto FROM versiculos \
              WHERE version_id = ? AND libro_numero = ? AND capitulo = ? \
-             ORDER BY versiculo"
-        ).unwrap();
+             ORDER BY versiculo",
+            )
+            .unwrap();
         let lista: Vec<VersiculoDB> = stmt
-            .query_map([self.current_version_id, libro_numero, capitulo], |row| Ok(VersiculoDB {
-                versiculo: row.get(0)?, texto: row.get(1)?,
-            }))
+            .query_map([self.current_version_id, libro_numero, capitulo], |row| {
+                Ok(VersiculoDB {
+                    versiculo: row.get(0)?,
+                    texto: row.get(1)?,
+                })
+            })
             .unwrap()
             .filter_map(Result::ok)
             .collect();
@@ -1068,22 +1347,32 @@ if !biblias_ok {
     }
 
     fn get_all_cantos(&self) -> Vec<CantoDB> {
-        let mut stmt = self.cantos_db
+        let mut stmt = self
+            .cantos_db
             .prepare_cached("SELECT id, titulo FROM cantos ORDER BY titulo")
             .unwrap();
-        stmt.query_map([], |row| Ok(CantoDB { id: row.get(0)?, titulo: row.get(1)? }))
-            .unwrap()
-            .filter_map(Result::ok)
-            .collect()
+        stmt.query_map([], |row| {
+            Ok(CantoDB {
+                id: row.get(0)?,
+                titulo: row.get(1)?,
+            })
+        })
+        .unwrap()
+        .filter_map(Result::ok)
+        .collect()
     }
 
     fn get_cantos_filtrados(&self, busqueda: &str) -> Vec<CantoDB> {
-        let mut stmt = self.cantos_db
+        let mut stmt = self
+            .cantos_db
             .prepare_cached("SELECT id, titulo FROM cantos WHERE titulo LIKE ? ORDER BY titulo")
             .unwrap();
-        stmt.query_map([format!("%{}%", busqueda)], |row| Ok(CantoDB {
-            id: row.get(0)?, titulo: row.get(1)?,
-        }))
+        stmt.query_map([format!("%{}%", busqueda)], |row| {
+            Ok(CantoDB {
+                id: row.get(0)?,
+                titulo: row.get(1)?,
+            })
+        })
         .unwrap()
         .filter_map(Result::ok)
         .collect()
@@ -1091,35 +1380,55 @@ if !biblias_ok {
 
     fn get_canto_titulo(&self, id: i32) -> String {
         self.cantos_db
-            .query_row("SELECT titulo FROM cantos WHERE id = ?", [id], |row| row.get(0))
+            .query_row("SELECT titulo FROM cantos WHERE id = ?", [id], |row| {
+                row.get(0)
+            })
             .unwrap_or_default()
     }
 
     fn get_canto_diapositivas(&self, id: i32) -> Vec<DiapositivaDB> {
-        let mut stmt = self.cantos_db
-            .prepare_cached("SELECT orden, texto FROM diapositivas WHERE canto_id = ? ORDER BY orden")
+        let mut stmt = self
+            .cantos_db
+            .prepare_cached(
+                "SELECT orden, texto FROM diapositivas WHERE canto_id = ? ORDER BY orden",
+            )
             .unwrap();
-        stmt.query_map([id], |row| Ok(DiapositivaDB { orden: row.get(0)?, texto: row.get(1)? }))
-            .unwrap()
-            .filter_map(Result::ok)
-            .collect()
+        stmt.query_map([id], |row| {
+            Ok(DiapositivaDB {
+                orden: row.get(0)?,
+                texto: row.get(1)?,
+            })
+        })
+        .unwrap()
+        .filter_map(Result::ok)
+        .collect()
     }
 
     fn insert_diapositivas_intern(&self, canto_id: i32, letra: &str) {
         let _ = self.cantos_db.execute_batch("BEGIN TRANSACTION;");
-        let Ok(mut stmt) = self.cantos_db
+        let Ok(mut stmt) = self
+            .cantos_db
             .prepare_cached("INSERT INTO diapositivas (canto_id, orden, texto) VALUES (?, ?, ?)")
         else {
             let _ = self.cantos_db.execute_batch("ROLLBACK;");
-            eprintln!("No se pudo preparar el INSERT de diapositivas para canto_id={}", canto_id);
+            eprintln!(
+                "No se pudo preparar el INSERT de diapositivas para canto_id={}",
+                canto_id
+            );
             return;
         };
         let mut orden = 1i32;
         for estrofa in letra.split("\n\n") {
             let texto = trim(estrofa);
             if !texto.is_empty() {
-                if stmt.execute(rusqlite::params![canto_id, orden, texto]).is_err() {
-                    eprintln!("No se pudo insertar la estrofa {} del canto_id={}", orden, canto_id);
+                if stmt
+                    .execute(rusqlite::params![canto_id, orden, texto])
+                    .is_err()
+                {
+                    eprintln!(
+                        "No se pudo insertar la estrofa {} del canto_id={}",
+                        orden, canto_id
+                    );
                     continue;
                 }
                 orden += 1;
@@ -1129,11 +1438,18 @@ if !biblias_ok {
     }
 
     fn add_canto(&self, titulo: &str, letra: &str) -> bool {
-        if self.cantos_db
-            .execute("INSERT INTO cantos (titulo, tono, categoria) VALUES (?, '', 'Personalizado')", [titulo])
+        if self
+            .cantos_db
+            .execute(
+                "INSERT INTO cantos (titulo, tono, categoria) VALUES (?, '', 'Personalizado')",
+                [titulo],
+            )
             .is_err()
         {
-            eprintln!("No se pudo insertar el canto '{}': la base de datos estaba ocupada.", titulo);
+            eprintln!(
+                "No se pudo insertar el canto '{}': la base de datos estaba ocupada.",
+                titulo
+            );
             return false;
         }
         self.insert_diapositivas_intern(self.cantos_db.last_insert_rowid() as i32, letra);
@@ -1141,11 +1457,25 @@ if !biblias_ok {
     }
 
     fn update_canto(&self, id: i32, titulo: &str, letra: &str) -> bool {
-        if self.cantos_db.execute("UPDATE cantos SET titulo = ? WHERE id = ?", rusqlite::params![titulo, id]).is_err() {
-            eprintln!("No se pudo actualizar el canto id={}: la base de datos estaba ocupada.", id);
+        if self
+            .cantos_db
+            .execute(
+                "UPDATE cantos SET titulo = ? WHERE id = ?",
+                rusqlite::params![titulo, id],
+            )
+            .is_err()
+        {
+            eprintln!(
+                "No se pudo actualizar el canto id={}: la base de datos estaba ocupada.",
+                id
+            );
             return false;
         }
-        if self.cantos_db.execute("DELETE FROM diapositivas WHERE canto_id = ?", [id]).is_err() {
+        if self
+            .cantos_db
+            .execute("DELETE FROM diapositivas WHERE canto_id = ?", [id])
+            .is_err()
+        {
             return false;
         }
         self.insert_diapositivas_intern(id, letra);
@@ -1153,14 +1483,19 @@ if !biblias_ok {
     }
 
     fn delete_canto(&self, id: i32) {
-        self.cantos_db.execute("DELETE FROM diapositivas WHERE canto_id = ?", [id]).unwrap();
-        self.cantos_db.execute("DELETE FROM cantos WHERE id = ?", [id]).unwrap();
+        self.cantos_db
+            .execute("DELETE FROM diapositivas WHERE canto_id = ?", [id])
+            .unwrap();
+        self.cantos_db
+            .execute("DELETE FROM cantos WHERE id = ?", [id])
+            .unwrap();
     }
 
     // OPT-8: Consulta combinada — obtiene IDs de cantos favoritos Y todos los favoritos
     //        en una sola transacción lógica, reduciendo round-trips a SQLite.
     fn get_favoritos_ids_cantos(&self) -> std::collections::HashSet<i32> {
-        let mut stmt = self.cantos_db
+        let mut stmt = self
+            .cantos_db
             .prepare_cached("SELECT ref_id FROM favoritos WHERE tipo='canto'")
             .unwrap();
         stmt.query_map([], |r| r.get::<_, i32>(0))
@@ -1182,8 +1517,11 @@ if !biblias_ok {
     }
 
     fn get_all_favoritos(&self) -> Vec<FavoritoItem> {
-        let mut stmt = self.cantos_db
-            .prepare_cached("SELECT tipo, ref_id, titulo, referencia, version FROM favoritos ORDER BY id DESC")
+        let mut stmt = self
+            .cantos_db
+            .prepare_cached(
+                "SELECT tipo, ref_id, titulo, referencia, version FROM favoritos ORDER BY id DESC",
+            )
             .unwrap();
         stmt.query_map([], |r| {
             let tipo: String = r.get(0)?;
@@ -1205,11 +1543,11 @@ if !biblias_ok {
                 }
             }
             Ok(FavoritoItem {
-                tipo:       SharedString::from(tipo),
-                id:         ref_id,
-                titulo:     SharedString::from(titulo),
+                tipo: SharedString::from(tipo),
+                id: ref_id,
+                titulo: SharedString::from(titulo),
                 referencia: SharedString::from(referencia),
-                version:    SharedString::from(version),
+                version: SharedString::from(version),
             })
         })
         .unwrap()
@@ -1218,11 +1556,21 @@ if !biblias_ok {
     }
 
     fn toggle_favorito_canto(&self, id: i32, titulo: &str) {
-        let exists: bool = self.cantos_db
-            .query_row("SELECT 1 FROM favoritos WHERE tipo='canto' AND ref_id=?", [id], |_| Ok(true))
+        let exists: bool = self
+            .cantos_db
+            .query_row(
+                "SELECT 1 FROM favoritos WHERE tipo='canto' AND ref_id=?",
+                [id],
+                |_| Ok(true),
+            )
             .unwrap_or(false);
         if exists {
-            self.cantos_db.execute("DELETE FROM favoritos WHERE tipo='canto' AND ref_id=?", [id]).unwrap();
+            self.cantos_db
+                .execute(
+                    "DELETE FROM favoritos WHERE tipo='canto' AND ref_id=?",
+                    [id],
+                )
+                .unwrap();
         } else {
             self.cantos_db.execute(
                 "INSERT INTO favoritos (tipo, ref_id, referencia, titulo, version) VALUES ('canto', ?, '', ?, '')",
@@ -1237,7 +1585,11 @@ if !biblias_ok {
         let version_str = if !sigla.is_empty() {
             sigla
         } else {
-            self.versiones.iter().find(|v| v.id == vid).map(|v| v.nombre_completo.clone()).unwrap_or_else(|| "BIBLIA".to_string())
+            self.versiones
+                .iter()
+                .find(|v| v.id == vid)
+                .map(|v| v.nombre_completo.clone())
+                .unwrap_or_else(|| "BIBLIA".to_string())
         };
 
         let exists: bool = self.cantos_db
@@ -1254,11 +1606,16 @@ if !biblias_ok {
             ).unwrap();
         } else {
             // Truncar a 60 chars sin iterar dos veces sobre el string
-            let titulo: String = texto.char_indices()
+            let titulo: String = texto
+                .char_indices()
                 .take_while(|&(i, _)| i < 60)
                 .map(|(_, c)| c)
                 .collect();
-            let titulo = if texto.len() > 60 { format!("{}…", titulo) } else { titulo };
+            let titulo = if texto.len() > 60 {
+                format!("{}…", titulo)
+            } else {
+                titulo
+            };
             self.cantos_db.execute(
                 "INSERT INTO favoritos (tipo, ref_id, referencia, titulo, version) VALUES ('versiculo', ?, ?, ?, ?)",
                 rusqlite::params![vid, referencia, titulo, version_str],
@@ -1268,7 +1625,10 @@ if !biblias_ok {
 
     fn eliminar_favorito_item(&self, ref_id: i32, tipo: &str, referencia: &str, version: &str) {
         if tipo == "canto" {
-            let _ = self.cantos_db.execute("DELETE FROM favoritos WHERE tipo='canto' AND ref_id=?", [ref_id]);
+            let _ = self.cantos_db.execute(
+                "DELETE FROM favoritos WHERE tipo='canto' AND ref_id=?",
+                [ref_id],
+            );
         } else {
             let _ = self.cantos_db.execute(
                 "DELETE FROM favoritos WHERE tipo='versiculo' AND referencia=? AND (ref_id=? OR version=? OR (ref_id=0 AND version=''))",
@@ -1278,7 +1638,9 @@ if !biblias_ok {
     }
 
     fn exportar_cantos_db(&self, dest_path: &std::path::Path) -> std::result::Result<(), String> {
-        let _ = self.cantos_db.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+        let _ = self
+            .cantos_db
+            .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
         let cantos_path = self.user_data_dir.join("cantos.db");
         if !cantos_path.exists() {
             return Err("El archivo cantos.db no existe en la carpeta de datos.".to_string());
@@ -1289,7 +1651,9 @@ if !biblias_ok {
     }
 
     fn exportar_biblias_db(&self, dest_path: &std::path::Path) -> std::result::Result<(), String> {
-        let _ = self.biblias_db.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+        let _ = self
+            .biblias_db
+            .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
         let biblias_path = self.user_data_dir.join("biblias.db");
         if !biblias_path.exists() {
             return Err("El archivo biblias.db no existe en la carpeta de datos.".to_string());
@@ -1299,7 +1663,10 @@ if !biblias_ok {
         Ok(())
     }
 
-    fn importar_cantos_db(&mut self, src_path: &std::path::Path) -> std::result::Result<(), String> {
+    fn importar_cantos_db(
+        &mut self,
+        src_path: &std::path::Path,
+    ) -> std::result::Result<(), String> {
         if !src_path.exists() {
             return Err("El archivo seleccionado no existe.".to_string());
         }
@@ -1308,23 +1675,43 @@ if !biblias_ok {
         let temp_conn = Connection::open_with_flags(
             src_path,
             rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_CREATE,
-        ).map_err(|e| format!("No se pudo abrir el archivo como base de datos SQLite: {}", e))?;
+        )
+        .map_err(|e| {
+            format!(
+                "No se pudo abrir el archivo como base de datos SQLite: {}",
+                e
+            )
+        })?;
 
         if !verificar_integridad_db(&temp_conn) {
-            return Err("La base de datos está dañada (falló la verificación de integridad SQLite).".to_string());
+            return Err(
+                "La base de datos está dañada (falló la verificación de integridad SQLite)."
+                    .to_string(),
+            );
         }
 
         // 2. Verificar tablas necesarias
-        let tiene_cantos: bool = temp_conn.query_row(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='cantos'", [], |_| Ok(true)
-        ).unwrap_or(false);
+        let tiene_cantos: bool = temp_conn
+            .query_row(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='cantos'",
+                [],
+                |_| Ok(true),
+            )
+            .unwrap_or(false);
         if !tiene_cantos {
-            return Err("El archivo no es una base de datos de cantos válida (falta la tabla 'cantos').".to_string());
+            return Err(
+                "El archivo no es una base de datos de cantos válida (falta la tabla 'cantos')."
+                    .to_string(),
+            );
         }
 
-        let tiene_diapos: bool = temp_conn.query_row(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='diapositivas'", [], |_| Ok(true)
-        ).unwrap_or(false);
+        let tiene_diapos: bool = temp_conn
+            .query_row(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='diapositivas'",
+                [],
+                |_| Ok(true),
+            )
+            .unwrap_or(false);
         if !tiene_diapos {
             return Err("El archivo no es una base de datos de cantos válida (falta la tabla 'diapositivas').".to_string());
         }
@@ -1335,7 +1722,9 @@ if !biblias_ok {
         }
 
         // 3. Crear tabla de favoritos si no existe
-        temp_conn.execute_batch("
+        temp_conn
+            .execute_batch(
+                "
             CREATE TABLE IF NOT EXISTS favoritos (
                 id         INTEGER PRIMARY KEY AUTOINCREMENT,
                 tipo       TEXT    NOT NULL DEFAULT 'canto',
@@ -1344,18 +1733,27 @@ if !biblias_ok {
                 titulo     TEXT    NOT NULL DEFAULT '',
                 version    TEXT    NOT NULL DEFAULT ''
             );
-        ").map_err(|e| format!("Error al preparar tabla de favoritos: {}", e))?;
-        let _ = temp_conn.execute("ALTER TABLE favoritos ADD COLUMN version TEXT NOT NULL DEFAULT ''", []);
+        ",
+            )
+            .map_err(|e| format!("Error al preparar tabla de favoritos: {}", e))?;
+        let _ = temp_conn.execute(
+            "ALTER TABLE favoritos ADD COLUMN version TEXT NOT NULL DEFAULT ''",
+            [],
+        );
 
         // 4. Crear índices de optimización si no están presentes
-        temp_conn.execute_batch("
+        temp_conn
+            .execute_batch(
+                "
             CREATE INDEX IF NOT EXISTS idx_titulo ON cantos(titulo);
             CREATE INDEX IF NOT EXISTS idx_diapositivas_canto ON diapositivas(canto_id, orden);
             CREATE INDEX IF NOT EXISTS idx_favoritos_lookup ON favoritos(tipo, ref_id);
             CREATE INDEX IF NOT EXISTS idx_favoritos_ref ON favoritos(tipo, referencia);
             PRAGMA optimize;
             PRAGMA wal_checkpoint(TRUNCATE);
-        ").map_err(|e| format!("Error al optimizar índices de cantos: {}", e))?;
+        ",
+            )
+            .map_err(|e| format!("Error al optimizar índices de cantos: {}", e))?;
 
         drop(temp_conn);
 
@@ -1369,24 +1767,35 @@ if !biblias_ok {
             .map_err(|e| format!("No se pudo copiar el archivo a la carpeta de datos: {}", e))?;
 
         // Reabrir conexión SQLite
-        let new_conn = Connection::open(&cantos_path)
-            .map_err(|e| format!("No se pudo reconectar a la nueva base de datos de cantos: {}", e))?;
+        let new_conn = Connection::open(&cantos_path).map_err(|e| {
+            format!(
+                "No se pudo reconectar a la nueva base de datos de cantos: {}",
+                e
+            )
+        })?;
 
-        new_conn.execute_batch("
+        new_conn
+            .execute_batch(
+                "
             PRAGMA journal_mode = WAL;
             PRAGMA synchronous = NORMAL;
             PRAGMA busy_timeout = 5000;
             PRAGMA cache_size = -64000;
             PRAGMA mmap_size = 268435456;
             PRAGMA temp_store = MEMORY;
-        ").map_err(|e| format!("Error configurando pragmas de SQLite: {}", e))?;
+        ",
+            )
+            .map_err(|e| format!("Error configurando pragmas de SQLite: {}", e))?;
         new_conn.set_prepared_statement_cache_capacity(64);
 
         self.cantos_db = new_conn;
         Ok(())
     }
 
-    fn importar_biblias_db(&mut self, src_path: &std::path::Path) -> std::result::Result<(), String> {
+    fn importar_biblias_db(
+        &mut self,
+        src_path: &std::path::Path,
+    ) -> std::result::Result<(), String> {
         if !src_path.exists() {
             return Err("El archivo seleccionado no existe.".to_string());
         }
@@ -1395,30 +1804,47 @@ if !biblias_ok {
         let temp_conn = Connection::open_with_flags(
             src_path,
             rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_CREATE,
-        ).map_err(|e| format!("No se pudo abrir el archivo como base de datos SQLite: {}", e))?;
+        )
+        .map_err(|e| {
+            format!(
+                "No se pudo abrir el archivo como base de datos SQLite: {}",
+                e
+            )
+        })?;
 
         if !verificar_integridad_db(&temp_conn) {
-            return Err("La base de datos está dañada (falló la verificación de integridad SQLite).".to_string());
+            return Err(
+                "La base de datos está dañada (falló la verificación de integridad SQLite)."
+                    .to_string(),
+            );
         }
 
         // 2. Verificar tablas necesarias
-        let tiene_versiones: bool = temp_conn.query_row(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='versiones'", [], |_| Ok(true)
-        ).unwrap_or(false);
+        let tiene_versiones: bool = temp_conn
+            .query_row(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='versiones'",
+                [],
+                |_| Ok(true),
+            )
+            .unwrap_or(false);
         if !tiene_versiones {
             return Err("El archivo no es una base de datos de biblias válida (falta la tabla 'versiones').".to_string());
         }
 
-        let tiene_versiculos: bool = temp_conn.query_row(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='versiculos'", [], |_| Ok(true)
-        ).unwrap_or(false);
+        let tiene_versiculos: bool = temp_conn
+            .query_row(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='versiculos'",
+                [],
+                |_| Ok(true),
+            )
+            .unwrap_or(false);
         if !tiene_versiculos {
             return Err("El archivo no es una base de datos de biblias válida (falta la tabla 'versiculos').".to_string());
         }
 
-        let total_versiculos: i64 = temp_conn.query_row(
-            "SELECT COUNT(*) FROM versiculos", [], |r| r.get(0)
-        ).unwrap_or(0);
+        let total_versiculos: i64 = temp_conn
+            .query_row("SELECT COUNT(*) FROM versiculos", [], |r| r.get(0))
+            .unwrap_or(0);
         if total_versiculos == 0 {
             return Err("La base de datos no contiene versículos bíblicos.".to_string());
         }
@@ -1444,17 +1870,25 @@ if !biblias_ok {
             .map_err(|e| format!("No se pudo copiar el archivo a la carpeta de datos: {}", e))?;
 
         // Reabrir conexión SQLite
-        let new_conn = Connection::open(&biblias_path)
-            .map_err(|e| format!("No se pudo reconectar a la nueva base de datos de biblias: {}", e))?;
+        let new_conn = Connection::open(&biblias_path).map_err(|e| {
+            format!(
+                "No se pudo reconectar a la nueva base de datos de biblias: {}",
+                e
+            )
+        })?;
 
-        new_conn.execute_batch("
+        new_conn
+            .execute_batch(
+                "
             PRAGMA journal_mode = WAL;
             PRAGMA synchronous = NORMAL;
             PRAGMA busy_timeout = 5000;
             PRAGMA cache_size = -64000;
             PRAGMA mmap_size = 268435456;
             PRAGMA temp_store = MEMORY;
-        ").map_err(|e| format!("Error configurando pragmas de SQLite: {}", e))?;
+        ",
+            )
+            .map_err(|e| format!("Error configurando pragmas de SQLite: {}", e))?;
         new_conn.set_prepared_statement_cache_capacity(64);
 
         self.biblias_db = new_conn;
@@ -1468,7 +1902,13 @@ if !biblias_ok {
 // ---------------------------------------------------------------------------
 // Proyector
 // ---------------------------------------------------------------------------
-fn mover_proyector_a_pantalla(p_weak: slint::Weak<ProjectorWindow>, x: i32, y: i32, width: u32, height: u32) {
+fn mover_proyector_a_pantalla(
+    p_weak: slint::Weak<ProjectorWindow>,
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+) {
     let intentos: &[(u64, bool)] = if cfg!(target_os = "windows") {
         &[(100, false), (400, true)]
     } else {
@@ -1482,7 +1922,9 @@ fn mover_proyector_a_pantalla(p_weak: slint::Weak<ProjectorWindow>, x: i32, y: i
                 if let Some(p) = p_clone.upgrade() {
                     p.window().set_position(slint::PhysicalPosition::new(x, y));
                     p.window().set_size(slint::PhysicalSize::new(width, height));
-                    if es_ultimo { p.window().set_maximized(true); }
+                    if es_ultimo {
+                        p.window().set_maximized(true);
+                    }
                 }
             });
         });
@@ -1505,12 +1947,12 @@ fn mover_proyector_a_pantalla(p_weak: slint::Weak<ProjectorWindow>, x: i32, y: i
 // ---------------------------------------------------------------------------
 
 // Constantes que deben coincidir exactamente con los valores del .slint
-const PROJ_PADDING: f32 = 30.0;  // padding-* del VerticalLayout en ProjectorWindow
-const REF_ZONE_H:   f32 = 90.0;  // height del bloque "if referencia != """
+const PROJ_PADDING: f32 = 30.0; // padding-* del VerticalLayout en ProjectorWindow
+const REF_ZONE_H: f32 = 90.0; // height del bloque "if referencia != """
 #[allow(dead_code)]
-const CHAR_W:       f32 = 0.48;  // calibrado para font-weight 900 + Google Sans
+const CHAR_W: f32 = 0.48; // calibrado para font-weight 900 + Google Sans
 #[allow(dead_code)]
-const LINE_H:       f32 = 1.10;  // line-height efectivo del Text de Slint
+const LINE_H: f32 = 1.10; // line-height efectivo del Text de Slint
 
 /// Búsqueda binaria basada en MEDICIÓN REAL del motor de layout de Slint,
 /// no en una fórmula matemática que estima el ancho de caracteres. Esto
@@ -1544,13 +1986,19 @@ const FONT_SIZE_MAXIMO: f32 = 130.0;
 /// (la función pública que agregamos en projector_ui.slint).
 fn calcular_font_size_canto(
     p: &MedidorWindow,
-    texto: &str, screen_w: f32, screen_h: f32, scale: f32,
-    m_izq: f32, m_der: f32, m_sup: f32, m_inf: f32,
+    texto: &str,
+    screen_w: f32,
+    screen_h: f32,
+    scale: f32,
+    m_izq: f32,
+    m_der: f32,
+    m_sup: f32,
+    m_inf: f32,
     font_family: &str,
 ) -> f32 {
     p.set_text_font_family(SharedString::from(font_family));
     let ancho_util = (screen_w - PROJ_PADDING * 2.0 - m_izq - m_der).max(10.0);
-    let alto_util  = (screen_h - PROJ_PADDING * 2.0 - m_sup - m_inf).max(10.0);
+    let alto_util = (screen_h - PROJ_PADDING * 2.0 - m_sup - m_inf).max(10.0);
     let techo = FONT_SIZE_MAXIMO.min(alto_util);
     let maximo = buscar_tamano_optimo(alto_util, techo, |candidato| {
         p.invoke_medir_altura(SharedString::from(texto), ancho_util, candidato)
@@ -1560,13 +2008,19 @@ fn calcular_font_size_canto(
 
 fn calcular_font_size_versiculo(
     p: &MedidorWindow,
-    texto: &str, screen_w: f32, screen_h: f32, scale: f32,
-    m_izq: f32, m_der: f32, m_sup: f32, m_inf: f32,
+    texto: &str,
+    screen_w: f32,
+    screen_h: f32,
+    scale: f32,
+    m_izq: f32,
+    m_der: f32,
+    m_sup: f32,
+    m_inf: f32,
     font_family: &str,
 ) -> f32 {
     p.set_text_font_family(SharedString::from(font_family));
     let ancho_util = (screen_w - PROJ_PADDING * 2.0 - m_izq - m_der).max(10.0);
-    let alto_util  = (screen_h - PROJ_PADDING * 2.0 - REF_ZONE_H - 8.0 - m_sup - m_inf).max(10.0);
+    let alto_util = (screen_h - PROJ_PADDING * 2.0 - REF_ZONE_H - 8.0 - m_sup - m_inf).max(10.0);
     let techo = FONT_SIZE_MAXIMO.min(alto_util);
     let maximo = buscar_tamano_optimo(alto_util, techo, |candidato| {
         p.invoke_medir_altura(SharedString::from(texto), ancho_util, candidato)
@@ -1576,8 +2030,24 @@ fn calcular_font_size_versiculo(
 // ---------------------------------------------------------------------------
 // Reproductor de video nativo (GStreamer)
 // ---------------------------------------------------------------------------
+// Una espera infinita puede sobrevivir al flushing del bus. Acotar la espera
+// permite liberar el hilo aunque el pipeline no publique más mensajes.
+fn siguiente_mensaje_pipeline(
+    bus: &gst::Bus,
+    generacion: &std::sync::atomic::AtomicU64,
+    mi_generacion: u64,
+) -> Option<gst::Message> {
+    while generacion.load(Ordering::Acquire) == mi_generacion {
+        if let Some(msg) = bus.timed_pop(gst::ClockTime::from_mseconds(100)) {
+            return Some(msg);
+        }
+    }
+    None
+}
+
 struct NativeVideoPlayer {
-     pipeline: Option<gst::Element>,
+    pipeline: Option<gst::Element>,
+    bus_thread: Option<thread::JoinHandle<()>>,
     generacion: Arc<std::sync::atomic::AtomicU64>,
     pausado_por_usuario: Arc<AtomicBool>,
 }
@@ -1586,17 +2056,25 @@ impl NativeVideoPlayer {
     fn new() -> Self {
         Self {
             pipeline: None,
+            bus_thread: None,
             generacion: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             pausado_por_usuario: Arc::new(AtomicBool::new(false)),
         }
     }
 
-    pub fn reproducir(&mut self, ruta: &str, proj_weak: slint::Weak<ProjectorWindow>, is_loop: bool, es_biblioteca: bool) {
+    pub fn reproducir(
+        &mut self,
+        ruta: &str,
+        proj_weak: slint::Weak<ProjectorWindow>,
+        is_loop: bool,
+        es_biblioteca: bool,
+    ) {
         self.detener();
-    self.pausado_por_usuario.store(false, Ordering::Release);
-    self.generacion.fetch_add(1, Ordering::AcqRel);
-    let mi_generacion = self.generacion.load(Ordering::Acquire);
-        let path = std::path::Path::new(ruta).canonicalize()
+        self.pausado_por_usuario.store(false, Ordering::Release);
+        self.generacion.fetch_add(1, Ordering::AcqRel);
+        let mi_generacion = self.generacion.load(Ordering::Acquire);
+        let path = std::path::Path::new(ruta)
+            .canonicalize()
             .unwrap_or_else(|_| std::path::PathBuf::from(ruta));
         let uri = gst::glib::filename_to_uri(&path, None).unwrap();
         let pipeline = gst::ElementFactory::make("playbin")
@@ -1621,76 +2099,113 @@ impl NativeVideoPlayer {
 
         // ── Downscale ANTES del appsink...
         let videoconvert = gst::ElementFactory::make("videoconvert").build().unwrap();
-let videoscale   = gst::ElementFactory::make("videoscale").build().unwrap();
-let capsfilter = gst::ElementFactory::make("capsfilter")
-    .property("caps", &gst::Caps::builder("video/x-raw")
-        .field("format", "RGBA")
-        .field("width", resolucion_fondo_proyeccion() as i32)
-        .build())
-    .build()
-    .unwrap();
+        let videoscale = gst::ElementFactory::make("videoscale").build().unwrap();
+        let capsfilter = gst::ElementFactory::make("capsfilter")
+            .property(
+                "caps",
+                &gst::Caps::builder("video/x-raw")
+                    .field("format", "RGBA")
+                    .field("width", resolucion_fondo_proyeccion() as i32)
+                    .build(),
+            )
+            .build()
+            .unwrap();
 
-let appsink = gst_app::AppSink::builder()
-    .max_buffers(1)
-    .drop(true)
-    .build();
-appsink.set_property("sync", true);
+        let appsink = gst_app::AppSink::builder()
+            .enable_last_sample(false)
+            .max_buffers(1)
+            .drop(true)
+            .build();
+        appsink.set_property("sync", true);
 
-let sink_bin = gst::Bin::new();
-sink_bin.add_many([&videoconvert, &videoscale, &capsfilter, appsink.upcast_ref()]).unwrap();
-gst::Element::link_many([&videoconvert, &videoscale, &capsfilter, appsink.upcast_ref()]).unwrap();
-let pad       = videoconvert.static_pad("sink").unwrap();
-let ghost_pad = gst::GhostPad::with_target(&pad).unwrap();
-sink_bin.add_pad(&ghost_pad).unwrap();
+        let sink_bin = gst::Bin::new();
+        sink_bin
+            .add_many([
+                &videoconvert,
+                &videoscale,
+                &capsfilter,
+                appsink.upcast_ref(),
+            ])
+            .unwrap();
+        gst::Element::link_many([
+            &videoconvert,
+            &videoscale,
+            &capsfilter,
+            appsink.upcast_ref(),
+        ])
+        .unwrap();
+        let pad = videoconvert.static_pad("sink").unwrap();
+        let ghost_pad = gst::GhostPad::with_target(&pad).unwrap();
+        sink_bin.add_pad(&ghost_pad).unwrap();
 
-pipeline.set_property("video-sink", &sink_bin);
+        pipeline.set_property("video-sink", &sink_bin);
         // } <--- ¡ESTA LLAVE FUE ELIMINADA PORQUE CERRABA LA FUNCIÓN ANTES DE TIEMPO!
 
         pipeline.set_property("volume", 1.0f64);
         pipeline.set_property("mute", false);
 
-        appsink.set_callbacks(gst_app::AppSinkCallbacks::builder()
-            .new_sample(move |appsink| {
-                let sample = match appsink.pull_sample() { Ok(s) => s, Err(_) => return Ok(gst::FlowSuccess::Ok) };
-                let buffer = sample.buffer().unwrap();
-                let info   = gst_video::VideoInfo::from_caps(sample.caps().unwrap()).unwrap();
-                let map    = buffer.map_readable().unwrap();
-                let mut pixel_buffer = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(info.width(), info.height());
-                
-                unsafe {
-                    let dest   = pixel_buffer.make_mut_slice();
-                    let dest_u8 = std::slice::from_raw_parts_mut(dest.as_mut_ptr() as *mut u8, dest.len() * 4);
-                    dest_u8.copy_from_slice(map.as_slice());
-                }
-                
-                let proj_clone = proj_weak.clone();
-                let es_bib = es_biblioteca;
-                let _ = slint::invoke_from_event_loop(move || {
-                    if let Some(p) = proj_clone.upgrade() {
-                        let img = slint::Image::from_rgba8(pixel_buffer);
-                        if es_bib {
-                            p.set_biblioteca_video_frame(img);
-                        } else {
-                            p.set_fondo_video_frame(img);
-                        }
+        // Las caps suelen ser constantes durante miles de frames; recalcular
+        // VideoInfo únicamente cuando se renegocian.
+        let mut cached_video_info: Option<(gst::Caps, gst_video::VideoInfo)> = None;
+        appsink.set_callbacks(
+            gst_app::AppSinkCallbacks::builder()
+                .new_sample(move |appsink| {
+                    let sample = match appsink.pull_sample() {
+                        Ok(s) => s,
+                        Err(_) => return Ok(gst::FlowSuccess::Ok),
+                    };
+                    let buffer = sample.buffer().unwrap();
+                    let caps = sample.caps().unwrap();
+                    if cached_video_info
+                        .as_ref()
+                        .is_none_or(|(cached_caps, _)| cached_caps.as_ref() != caps)
+                    {
+                        cached_video_info = Some((
+                            caps.to_owned(),
+                            gst_video::VideoInfo::from_caps(caps).unwrap(),
+                        ));
                     }
-                });
-                Ok(gst::FlowSuccess::Ok)
-            })
-            .build()
+                    let info = &cached_video_info.as_ref().unwrap().1;
+                    let map = buffer.map_readable().unwrap();
+                    let mut pixel_buffer = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::new(
+                        info.width(),
+                        info.height(),
+                    );
+
+                    pixel_buffer
+                        .make_mut_bytes()
+                        .copy_from_slice(map.as_slice());
+
+                    let proj_clone = proj_weak.clone();
+                    let es_bib = es_biblioteca;
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(p) = proj_clone.upgrade() {
+                            let img = slint::Image::from_rgba8(pixel_buffer);
+                            if es_bib {
+                                p.set_biblioteca_video_frame(img);
+                            } else {
+                                p.set_fondo_video_frame(img);
+                            }
+                        }
+                    });
+                    Ok(gst::FlowSuccess::Ok)
+                })
+                .build(),
         );
-     // <--- LLAVE AÑADIDA AQUÍ PARA CERRAR LA FUNCIÓN CORRECTAMENTE
+        // <--- LLAVE AÑADIDA AQUÍ PARA CERRAR LA FUNCIÓN CORRECTAMENTE
         if let Err(e) = pipeline.set_state(gst::State::Playing) {
-    eprintln!("Error al iniciar el pipeline de video: {:?}", e);
-    return; // no reproduce, pero no tumba el programa
-}
+            eprintln!("Error al iniciar el pipeline de video: {:?}", e);
+            let _ = pipeline.set_state(gst::State::Null);
+            return; // no reproduce, pero no tumba el programa
+        }
         self.pipeline = Some(pipeline.clone());
-        let bus            = pipeline.bus().unwrap();
+        let bus = pipeline.bus().unwrap();
         let pipeline_clone = pipeline.clone();
         let generacion_hilo = Arc::clone(&self.generacion);
-        let pausado_hilo    = Arc::clone(&self.pausado_por_usuario);
-        std::thread::spawn(move || {
-            for msg in bus.iter_timed(gst::ClockTime::NONE) {
+        let pausado_hilo = Arc::clone(&self.pausado_por_usuario);
+        self.bus_thread = Some(thread::spawn(move || {
+            while let Some(msg) = siguiente_mensaje_pipeline(&bus, &generacion_hilo, mi_generacion)
+            {
                 // Si esta generación ya no es la vigente (se llamó a
                 // detener() o reproducir() de nuevo mientras tanto),
                 // este hilo pertenece a un pipeline "fantasma": lo
@@ -1722,7 +2237,7 @@ pipeline.set_property("video-sink", &sink_bin);
                     _ => {}
                 }
             }
-        });
+        }));
     }
 
     fn detener(&mut self) {
@@ -1730,14 +2245,34 @@ pipeline.set_property("video-sink", &sink_bin);
         // anterior, para que no reaccione a mensajes tardíos del pipeline
         // viejo (causa raíz de los 3 bugs reportados).
         self.generacion.fetch_add(1, Ordering::AcqRel);
-        if let Some(pipeline) = self.pipeline.take() {
+        let pipeline = self.pipeline.take();
+        if let Some(pipeline) = &pipeline {
+            // Despierta el consumidor sin esperar al siguiente timeout.
+            if let Some(bus) = pipeline.bus() {
+                let _ = bus.post(
+                    gst::message::Application::builder(
+                        gst::Structure::builder("readyshow-stop").build(),
+                    )
+                    .build(),
+                );
+            }
+        }
+        if let Some(bus_thread) = self.bus_thread.take() {
+            let _ = bus_thread.join();
+        }
+        // Ningún manejador de EOS puede reactivar el pipeline después de Null.
+        if let Some(pipeline) = pipeline {
+            if let Some(bus) = pipeline.bus() {
+                bus.set_flushing(true);
+            }
             let _ = pipeline.set_state(gst::State::Null);
         }
     }
 
     pub fn reproducir_preview(&mut self, ruta: &str, ui_weak: slint::Weak<AppWindow>) {
         self.detener();
-        let path = std::path::Path::new(ruta).canonicalize()
+        let path = std::path::Path::new(ruta)
+            .canonicalize()
             .unwrap_or_else(|_| std::path::PathBuf::from(ruta));
         let uri = gst::glib::filename_to_uri(&path, None).unwrap();
         let pipeline = gst::ElementFactory::make("playbin")
@@ -1751,60 +2286,93 @@ pipeline.set_property("video-sink", &sink_bin);
                 factory.set_rank(gst::Rank::from(<i32>::from(gst::Rank::PRIMARY) + 100));
             }
         }
-    // ── Downscale ANTES del appsink: sin esto, cada frame llega a
-    //    resolución nativa del video (a veces 1080p/4K), lo que dispara
-    //    tanto el costo de copiar el buffer completo cada frame como el
-    //    costo de que Slint componga una imagen de ese tamaño 30-60
-    //    veces por segundo. Limitar el ancho aquí (reutilizando tu
-    //    detección de hardware ya existente) reduce ambos costos
-    //    drásticamente sin que se note diferencia visual proyectando.
-    let videoconvert = gst::ElementFactory::make("videoconvert").build().unwrap();
-let videoscale   = gst::ElementFactory::make("videoscale").build().unwrap();
-let capsfilter = gst::ElementFactory::make("capsfilter")
-    .property("caps", &gst::Caps::builder("video/x-raw")
-        .field("format", "RGBA")
-        .field("width", resolucion_fondo_proyeccion() as i32)
-        .build())
-    .build()
-    .unwrap();
+        // ── Downscale ANTES del appsink: sin esto, cada frame llega a
+        //    resolución nativa del video (a veces 1080p/4K), lo que dispara
+        //    tanto el costo de copiar el buffer completo cada frame como el
+        //    costo de que Slint componga una imagen de ese tamaño 30-60
+        //    veces por segundo. Limitar el ancho aquí (reutilizando tu
+        //    detección de hardware ya existente) reduce ambos costos
+        //    drásticamente sin que se note diferencia visual proyectando.
+        let videoconvert = gst::ElementFactory::make("videoconvert").build().unwrap();
+        let videoscale = gst::ElementFactory::make("videoscale").build().unwrap();
+        let capsfilter = gst::ElementFactory::make("capsfilter")
+            .property(
+                "caps",
+                &gst::Caps::builder("video/x-raw")
+                    .field("format", "RGBA")
+                    .field("width", resolucion_fondo_proyeccion() as i32)
+                    .build(),
+            )
+            .build()
+            .unwrap();
 
-let appsink = gst_app::AppSink::builder()
-    .max_buffers(1)
-    .drop(true)
-    .build();
-appsink.set_property("sync", true);
+        let appsink = gst_app::AppSink::builder()
+            .enable_last_sample(false)
+            .max_buffers(1)
+            .drop(true)
+            .build();
+        appsink.set_property("sync", true);
 
-let sink_bin = gst::Bin::new();
-sink_bin.add_many([&videoconvert, &videoscale, &capsfilter, appsink.upcast_ref()]).unwrap();
-gst::Element::link_many([&videoconvert, &videoscale, &capsfilter, appsink.upcast_ref()]).unwrap();
-let pad       = videoconvert.static_pad("sink").unwrap();
-let ghost_pad = gst::GhostPad::with_target(&pad).unwrap();
-sink_bin.add_pad(&ghost_pad).unwrap();
+        let sink_bin = gst::Bin::new();
+        sink_bin
+            .add_many([
+                &videoconvert,
+                &videoscale,
+                &capsfilter,
+                appsink.upcast_ref(),
+            ])
+            .unwrap();
+        gst::Element::link_many([
+            &videoconvert,
+            &videoscale,
+            &capsfilter,
+            appsink.upcast_ref(),
+        ])
+        .unwrap();
+        let pad = videoconvert.static_pad("sink").unwrap();
+        let ghost_pad = gst::GhostPad::with_target(&pad).unwrap();
+        sink_bin.add_pad(&ghost_pad).unwrap();
 
-pipeline.set_property("video-sink", &sink_bin);
+        pipeline.set_property("video-sink", &sink_bin);
 
         let ui_weak_appsink = ui_weak.clone();
-        appsink.set_callbacks(gst_app::AppSinkCallbacks::builder()
-            .new_sample(move |appsink| {
-                let sample = match appsink.pull_sample() { Ok(s) => s, Err(_) => return Ok(gst::FlowSuccess::Ok) };
-                let buffer = sample.buffer().unwrap();
-                let info   = gst_video::VideoInfo::from_caps(sample.caps().unwrap()).unwrap();
-                let map    = buffer.map_readable().unwrap();
-                let mut pixel_buffer = SharedPixelBuffer::<slint::Rgba8Pixel>::new(info.width(), info.height());
-                unsafe {
-                    let dest    = pixel_buffer.make_mut_slice();
-                    let dest_u8 = std::slice::from_raw_parts_mut(dest.as_mut_ptr() as *mut u8, dest.len() * 4);
-                    dest_u8.copy_from_slice(map.as_slice());
-                }
-                let ui_clone = ui_weak_appsink.clone();
-                let _ = slint::invoke_from_event_loop(move || {
-                    if let Some(ui) = ui_clone.upgrade() {
-                        ui.set_preview_video_frame(slint::Image::from_rgba8(pixel_buffer));
+        // Las caps suelen ser constantes durante miles de frames; recalcular
+        // VideoInfo únicamente cuando se renegocian.
+        let mut cached_video_info: Option<(gst::Caps, gst_video::VideoInfo)> = None;
+        appsink.set_callbacks(
+            gst_app::AppSinkCallbacks::builder()
+                .new_sample(move |appsink| {
+                    let sample = match appsink.pull_sample() {
+                        Ok(s) => s,
+                        Err(_) => return Ok(gst::FlowSuccess::Ok),
+                    };
+                    let buffer = sample.buffer().unwrap();
+                    let caps = sample.caps().unwrap();
+                    if cached_video_info
+                        .as_ref()
+                        .is_none_or(|(cached_caps, _)| cached_caps.as_ref() != caps)
+                    {
+                        cached_video_info = Some((
+                            caps.to_owned(),
+                            gst_video::VideoInfo::from_caps(caps).unwrap(),
+                        ));
                     }
-                });
-                Ok(gst::FlowSuccess::Ok)
-            })
-            .build()
+                    let info = &cached_video_info.as_ref().unwrap().1;
+                    let map = buffer.map_readable().unwrap();
+                    let mut pixel_buffer =
+                        SharedPixelBuffer::<slint::Rgba8Pixel>::new(info.width(), info.height());
+                    pixel_buffer
+                        .make_mut_bytes()
+                        .copy_from_slice(map.as_slice());
+                    let ui_clone = ui_weak_appsink.clone();
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = ui_clone.upgrade() {
+                            ui.set_preview_video_frame(slint::Image::from_rgba8(pixel_buffer));
+                        }
+                    });
+                    Ok(gst::FlowSuccess::Ok)
+                })
+                .build(),
         );
 
         let bus = pipeline.bus().unwrap();
@@ -1813,8 +2381,10 @@ pipeline.set_property("video-sink", &sink_bin);
         let generacion_hilo = Arc::clone(&self.generacion);
         let pausado_hilo = Arc::clone(&self.pausado_por_usuario);
         let ui_weak_bus = ui_weak.clone();
-        thread::spawn(move || {
-            for msg in bus.iter_timed(gst::ClockTime::NONE) {
+        self.pipeline = Some(pipeline.clone());
+        self.bus_thread = Some(thread::spawn(move || {
+            while let Some(msg) = siguiente_mensaje_pipeline(&bus, &generacion_hilo, mi_generacion)
+            {
                 if generacion_hilo.load(Ordering::Acquire) != mi_generacion {
                     break;
                 }
@@ -1843,10 +2413,11 @@ pipeline.set_property("video-sink", &sink_bin);
                     _ => {}
                 }
             }
-        });
+        }));
 
         if let Err(e) = pipeline.set_state(gst::State::Playing) {
             eprintln!("Error al iniciar el pipeline de video: {:?}", e);
+            self.detener();
             return;
         }
         self.pipeline = Some(pipeline);
@@ -1870,8 +2441,12 @@ pipeline.set_property("video-sink", &sink_bin);
 
     pub fn get_position_and_duration(&self) -> (u64, u64) {
         if let Some(pipeline) = &self.pipeline {
-            let pos = pipeline.query_position::<gst::ClockTime>().map_or(0, |t| t.mseconds());
-            let dur = pipeline.query_duration::<gst::ClockTime>().map_or(0, |t| t.mseconds());
+            let pos = pipeline
+                .query_position::<gst::ClockTime>()
+                .map_or(0, |t| t.mseconds());
+            let dur = pipeline
+                .query_duration::<gst::ClockTime>()
+                .map_or(0, |t| t.mseconds());
             return (pos, dur);
         }
         (0, 0)
@@ -1879,7 +2454,9 @@ pipeline.set_property("video-sink", &sink_bin);
 
     pub fn seek_percentage(&self, percent: f32) {
         if let Some(pipeline) = &self.pipeline {
-            let dur = pipeline.query_duration::<gst::ClockTime>().map_or(0, |t| t.nseconds());
+            let dur = pipeline
+                .query_duration::<gst::ClockTime>()
+                .map_or(0, |t| t.nseconds());
             if dur > 0 {
                 let target_ns = (dur as f64 * percent as f64) as u64;
                 let _ = pipeline.seek_simple(
@@ -1892,8 +2469,12 @@ pipeline.set_property("video-sink", &sink_bin);
 
     pub fn seek_relativo(&self, delta_secs: f64) {
         if let Some(pipeline) = &self.pipeline {
-            let dur = pipeline.query_duration::<gst::ClockTime>().map_or(0, |t| t.nseconds());
-            let pos = pipeline.query_position::<gst::ClockTime>().map_or(0, |t| t.nseconds());
+            let dur = pipeline
+                .query_duration::<gst::ClockTime>()
+                .map_or(0, |t| t.nseconds());
+            let pos = pipeline
+                .query_position::<gst::ClockTime>()
+                .map_or(0, |t| t.nseconds());
             let delta_ns = (delta_secs * 1_000_000_000.0) as i64;
             let target_ns = if delta_ns < 0 {
                 pos.saturating_sub((-delta_ns) as u64)
@@ -1910,14 +2491,16 @@ pipeline.set_property("video-sink", &sink_bin);
     }
 
     pub fn set_mute(&self, mute: bool) {
-        if let Some(pipeline) = &self.pipeline { pipeline.set_property("mute", mute); }
+        if let Some(pipeline) = &self.pipeline {
+            pipeline.set_property("mute", mute);
+        }
     }
-
 }
 
-
 impl Drop for NativeVideoPlayer {
-    fn drop(&mut self) { self.detener(); }
+    fn drop(&mut self) {
+        self.detener();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1931,18 +2514,29 @@ fn limpiar_texto_proyeccion(p: &ProjectorWindow) {
 
 fn aplicar_estilos(
     ui: &AppWindow,
-    p:  &ProjectorWindow,
+    p: &ProjectorWindow,
     vp: &Arc<Mutex<NativeVideoPlayer>>,
     modo: &str,
     forzar_reinicio_video: bool,
-) 
-{
-    let is_biblia  = modo == "biblias";
-    let bg_type    = if is_biblia { ui.get_biblias_bg_type()      } else { ui.get_cantos_bg_type()      };
-    let font_color = if is_biblia { ui.get_biblias_font_color()   } else { ui.get_cantos_font_color()   };
-    let es_medio   = bg_type == "imagen" || bg_type == "video";
-    let opacity    = if es_medio {
-        if is_biblia { ui.get_biblias_fondo_opacity() } else { ui.get_cantos_fondo_opacity() }
+) {
+    let is_biblia = modo == "biblias";
+    let bg_type = if is_biblia {
+        ui.get_biblias_bg_type()
+    } else {
+        ui.get_cantos_bg_type()
+    };
+    let font_color = if is_biblia {
+        ui.get_biblias_font_color()
+    } else {
+        ui.get_cantos_font_color()
+    };
+    let es_medio = bg_type == "imagen" || bg_type == "video";
+    let opacity = if es_medio {
+        if is_biblia {
+            ui.get_biblias_fondo_opacity()
+        } else {
+            ui.get_cantos_fondo_opacity()
+        }
     } else {
         0.0
     };
@@ -1978,18 +2572,22 @@ fn aplicar_estilos(
         p.set_bg_color(slint::Color::from_rgb_u8(0, 0, 0));
         p.set_mostrar_imagen(false);
         p.set_es_video(true);
-          if forzar_reinicio_video {
-            let ruta = if is_biblia { ui.get_biblias_video_path() } else { ui.get_cantos_video_path() };
+        if forzar_reinicio_video {
+            let ruta = if is_biblia {
+                ui.get_biblias_video_path()
+            } else {
+                ui.get_cantos_video_path()
+            };
             if !ruta.is_empty() {
-                vp.lock().unwrap().reproducir(ruta.as_str(), p.as_weak(), true, false);
+                vp.lock()
+                    .unwrap()
+                    .reproducir(ruta.as_str(), p.as_weak(), true, false);
             } else {
                 vp.lock().unwrap().detener();
             }
         }
     }
 }
-
-
 
 fn actualizar_overlay_estilos(
     ui: &AppWindow,
@@ -1998,78 +2596,101 @@ fn actualizar_overlay_estilos(
     modo: &str,
     solo_texto: bool,
 ) {
-    let is_biblia  = modo == "biblias";
-    let bg_type    = if is_biblia { ui.get_biblias_bg_type()      } else { ui.get_cantos_bg_type()      };
-    let font_color = if is_biblia { ui.get_biblias_font_color()   } else { ui.get_cantos_font_color()   };
-    let opacity    = if is_biblia { ui.get_biblias_fondo_opacity() } else { ui.get_cantos_fondo_opacity() };
+    let is_biblia = modo == "biblias";
+    let bg_type = if is_biblia {
+        ui.get_biblias_bg_type()
+    } else {
+        ui.get_cantos_bg_type()
+    };
+    let font_color = if is_biblia {
+        ui.get_biblias_font_color()
+    } else {
+        ui.get_cantos_font_color()
+    };
+    let opacity = if is_biblia {
+        ui.get_biblias_fondo_opacity()
+    } else {
+        ui.get_cantos_fondo_opacity()
+    };
 
     let mut e = overlay.lock().unwrap();
 
-     if solo_texto {
-        e.fondo_tipo    = "transparente".to_string();
+    if solo_texto {
+        e.fondo_tipo = "transparente".to_string();
         e.fondo_color.clear();
         e.fondo_opacity = 0.0;
-        e.fondo_ajuste  = "cover".to_string();
+        e.fondo_ajuste = "cover".to_string();
         e.fondo_imagen_bytes.clear();
-        e.color_texto   = color_a_hex(font_color);
+        e.color_texto = color_a_hex(font_color);
         e.fondo_version += 1;
         return;
     }
 
     if bg_type == "video" {
         // Sin soporte de video en el overlay: fondo blanco, letra negra.
-        e.fondo_tipo   = "color".to_string();
-        e.fondo_color  = "#ffffff".to_string();
-        e.color_texto  = "#000000".to_string();
+        e.fondo_tipo = "color".to_string();
+        e.fondo_color = "#ffffff".to_string();
+        e.color_texto = "#000000".to_string();
         e.fondo_opacity = 0.0;
-        e.fondo_ajuste  = "cover".to_string();
+        e.fondo_ajuste = "cover".to_string();
         e.fondo_imagen_bytes.clear();
         e.fondo_version += 1;
         return;
     }
 
     if bg_type == "imagen" {
-        let idx = if is_biblia { ui.get_biblias_selected_img() } else { ui.get_cantos_selected_img() };
+        let idx = if is_biblia {
+            ui.get_biblias_selected_img()
+        } else {
+            ui.get_cantos_selected_img()
+        };
         let ruta = {
             let st = state.lock().unwrap();
-            let paths = if is_biblia { &st.biblias_image_paths } else { &st.cantos_image_paths };
-            if idx >= 0 { paths.get(idx as usize).cloned() } else { None }
+            let paths = if is_biblia {
+                &st.biblias_image_paths
+            } else {
+                &st.cantos_image_paths
+            };
+            if idx >= 0 {
+                paths.get(idx as usize).cloned()
+            } else {
+                None
+            }
         };
         if let Some(ruta) = ruta {
             if let Ok(bytes) = std::fs::read(&ruta) {
-                e.fondo_tipo    = "imagen".to_string();
+                e.fondo_tipo = "imagen".to_string();
                 e.fondo_imagen_content_type = content_type_desde_extension(&ruta).to_string();
                 e.fondo_imagen_bytes = bytes;
                 e.fondo_opacity = opacity;
-                e.fondo_ajuste  = "cover".to_string();
-                e.color_texto   = color_a_hex(font_color);
+                e.fondo_ajuste = "cover".to_string();
+                e.color_texto = color_a_hex(font_color);
                 e.fondo_version += 1;
                 return;
             }
         }
         // Ruta inválida/borrada: cae a negro para no dejar el overlay roto.
-        e.fondo_tipo   = "color".to_string();
-        e.fondo_color  = "#000000".to_string();
-        e.color_texto  = color_a_hex(font_color);
+        e.fondo_tipo = "color".to_string();
+        e.fondo_color = "#000000".to_string();
+        e.color_texto = color_a_hex(font_color);
         e.fondo_imagen_bytes.clear();
         e.fondo_version += 1;
         return;
     }
 
     // "negro" o "blanco"
-    e.fondo_tipo   = "color".to_string();
-    e.fondo_color  = if bg_type == "blanco" { "#ffffff".to_string() } else { "#000000".to_string() };
-    e.color_texto  = color_a_hex(font_color);
+    e.fondo_tipo = "color".to_string();
+    e.fondo_color = if bg_type == "blanco" {
+        "#ffffff".to_string()
+    } else {
+        "#000000".to_string()
+    };
+    e.color_texto = color_a_hex(font_color);
     e.fondo_opacity = 0.0;
-    e.fondo_ajuste  = "cover".to_string();
+    e.fondo_ajuste = "cover".to_string();
     e.fondo_imagen_bytes.clear();
     e.fondo_version += 1;
 }
-
-
-
-
-
 
 fn configurar_ventana_proyector_linux(wid_store: Arc<Mutex<Option<String>>>) {
     #[cfg(target_os = "linux")]
@@ -2083,11 +2704,15 @@ fn configurar_ventana_proyector_linux(wid_store: Arc<Mutex<Option<String>>>) {
                 let Ok(out) = std::process::Command::new("xdotool")
                     .args(["search", "--pid", &pid])
                     .output()
-                else { continue };
+                else {
+                    continue;
+                };
 
                 let wids_raw = String::from_utf8_lossy(&out.stdout);
                 let wids: Vec<&str> = wids_raw.split_whitespace().collect();
-                if wids.is_empty() { continue; }
+                if wids.is_empty() {
+                    continue;
+                }
 
                 // ── CLAVE: buscar la ventana SIN título (el proyector tiene title: "")
                 let mut proyector_wid: Option<String> = None;
@@ -2117,9 +2742,13 @@ fn configurar_ventana_proyector_linux(wid_store: Arc<Mutex<Option<String>>>) {
                 // Quitar acción minimizar
                 let _ = std::process::Command::new("xprop")
                     .args([
-                        "-id", &wid,
-                        "-f", "_NET_WM_ALLOWED_ACTIONS", "32a",
-                        "-set", "_NET_WM_ALLOWED_ACTIONS",
+                        "-id",
+                        &wid,
+                        "-f",
+                        "_NET_WM_ALLOWED_ACTIONS",
+                        "32a",
+                        "-set",
+                        "_NET_WM_ALLOWED_ACTIONS",
                         "_NET_WM_ACTION_MOVE,_NET_WM_ACTION_RESIZE,\
                          _NET_WM_ACTION_MAXIMIZE_HORZ,_NET_WM_ACTION_MAXIMIZE_VERT,\
                          _NET_WM_ACTION_FULLSCREEN,_NET_WM_ACTION_CHANGE_DESKTOP,\
@@ -2130,9 +2759,13 @@ fn configurar_ventana_proyector_linux(wid_store: Arc<Mutex<Option<String>>>) {
                 // Ocultar del taskbar
                 let _ = std::process::Command::new("xprop")
                     .args([
-                        "-id", &wid,
-                        "-f", "_NET_WM_STATE", "32a",
-                        "-set", "_NET_WM_STATE",
+                        "-id",
+                        &wid,
+                        "-f",
+                        "_NET_WM_STATE",
+                        "32a",
+                        "-set",
+                        "_NET_WM_STATE",
                         "_NET_WM_STATE_SKIP_TASKBAR,_NET_WM_STATE_SKIP_PAGER",
                     ])
                     .output();
@@ -2146,8 +2779,17 @@ fn configurar_ventana_proyector_linux(wid_store: Arc<Mutex<Option<String>>>) {
 // ---------------------------------------------------------------------------
 // Estructuras auxiliares para multimedia/PDF
 // ---------------------------------------------------------------------------
-struct MediaData { path: String, name: String, aspecto: String, is_loop: bool }
-struct PdfData   { name: String, thumb_path: String, pages: Vec<String>       }
+struct MediaData {
+    path: String,
+    name: String,
+    aspecto: String,
+    is_loop: bool,
+}
+struct PdfData {
+    name: String,
+    thumb_path: String,
+    pages: Vec<String>,
+}
 
 #[derive(Clone, Default)]
 struct EstadoOverlay {
@@ -2157,7 +2799,7 @@ struct EstadoOverlay {
     fondo_tipo: String,                // "color" | "imagen"
     fondo_color: String,               // hex, usado si fondo_tipo == "color"
     fondo_opacity: f32,                // scrim oscuro sobre la imagen (0.0-1.0)
-    fondo_ajuste: String,               // "cover" | "contain" | "fill"
+    fondo_ajuste: String,              // "cover" | "contain" | "fill"
     fondo_imagen_bytes: Vec<u8>,       // bytes crudos del archivo (jpg/png/webp)
     fondo_imagen_content_type: String, // "image/jpeg", "image/png", etc.
     fondo_version: u64,                // se incrementa cada vez que cambia la imagen
@@ -2167,9 +2809,9 @@ struct EstadoOverlay {
     // y decodifica el archivo original vía <video>, igual que en una
     // pestaña normal. Cero costo extra de CPU en esta app.
     video_activo: bool,
-    video_ruta: String,   // ruta local del archivo en disco (solo servidor)
+    video_ruta: String, // ruta local del archivo en disco (solo servidor)
     video_loop: bool,
-    video_token: u64,     // se incrementa cada vez que cambia el video, para forzar reload
+    video_token: u64, // se incrementa cada vez que cambia el video, para forzar reload
 }
 
 // ---------------------------------------------------------------------------
@@ -2183,9 +2825,7 @@ fn encontrar_soffice() -> Option<PathBuf> {
             r"C:\Program Files\LibreOffice\program\soffice.exe",
             r"C:\Program Files (x86)\LibreOffice\program\soffice.exe",
         ];
-        candidatos.iter()
-            .map(PathBuf::from)
-            .find(|p| p.exists())
+        candidatos.iter().map(PathBuf::from).find(|p| p.exists())
     } else {
         // Linux/Mac: verifica que "soffice" exista en el PATH antes de
         // devolverlo, para no dar un falso positivo.
@@ -2205,14 +2845,23 @@ fn libreoffice_disponible() -> bool {
 
 /// Convierte un .pptx/.ppt/.odp a PDF usando LibreOffice en modo headless.
 /// Devuelve la ruta del PDF generado, o None si falla.
-fn convertir_pptx_a_pdf(input: &std::path::Path, user_data_dir: &std::path::Path) -> Option<PathBuf> {
+fn convertir_pptx_a_pdf(
+    input: &std::path::Path,
+    user_data_dir: &std::path::Path,
+) -> Option<PathBuf> {
     let out_dir = user_data_dir.join("tmp_conversion");
     std::fs::create_dir_all(&out_dir).ok()?;
 
     let soffice_bin = encontrar_soffice()?;
 
     let status = std::process::Command::new(soffice_bin)
-        .args(["--headless", "--norestore", "--convert-to", "pdf", "--outdir"])
+        .args([
+            "--headless",
+            "--norestore",
+            "--convert-to",
+            "pdf",
+            "--outdir",
+        ])
         .arg(&out_dir)
         .arg(input)
         .status()
@@ -2224,7 +2873,11 @@ fn convertir_pptx_a_pdf(input: &std::path::Path, user_data_dir: &std::path::Path
 
     let stem = input.file_stem()?.to_string_lossy().to_string();
     let generado = out_dir.join(format!("{}.pdf", stem));
-    if generado.exists() { Some(generado) } else { None }
+    if generado.exists() {
+        Some(generado)
+    } else {
+        None
+    }
 }
 
 /// Punto de entrada único de instalación: decide según el sistema operativo.
@@ -2245,32 +2898,49 @@ fn instalar_libreoffice_windows(ui_weak: &slint::Weak<AppWindow>) -> bool {
 
     let resp = match reqwest::blocking::get(url) {
         Ok(r) => r,
-        Err(e) => { eprintln!("Error descargando LibreOffice: {}", e); return false; }
+        Err(e) => {
+            eprintln!("Error descargando LibreOffice: {}", e);
+            return false;
+        }
     };
     let total = resp.content_length().unwrap_or(0);
     let mut downloaded: u64 = 0;
     let mut file = match std::fs::File::create(&tmp_msi) {
         Ok(f) => f,
-        Err(e) => { eprintln!("Error creando archivo temporal: {}", e); return false; }
+        Err(e) => {
+            eprintln!("Error creando archivo temporal: {}", e);
+            return false;
+        }
     };
     let mut resp = resp;
     let mut buffer = [0u8; 65536];
     use std::io::{Read, Write};
     loop {
-        let n = match resp.read(&mut buffer) { Ok(0) => break, Ok(n) => n, Err(_) => break };
+        let n = match resp.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(n) => n,
+            Err(_) => break,
+        };
         let _ = file.write_all(&buffer[..n]);
         downloaded += n as u64;
         if total > 0 {
             let progreso = downloaded as f32 / total as f32;
             let ui_t = ui_weak.clone();
             let _ = slint::invoke_from_event_loop(move || {
-                if let Some(ui) = ui_t.upgrade() { ui.set_libreoffice_progreso(progreso); }
+                if let Some(ui) = ui_t.upgrade() {
+                    ui.set_libreoffice_progreso(progreso);
+                }
             });
         }
     }
 
     let status = std::process::Command::new("msiexec")
-        .args(["/i", tmp_msi.to_str().unwrap_or_default(), "/qn", "/norestart"])
+        .args([
+            "/i",
+            tmp_msi.to_str().unwrap_or_default(),
+            "/qn",
+            "/norestart",
+        ])
         .status();
 
     let _ = std::fs::remove_file(&tmp_msi);
@@ -2288,9 +2958,9 @@ fn instalar_libreoffice_linux(_ui_weak: &slint::Weak<AppWindow>) -> bool {
 
     let gestores: &[(&str, &[&str])] = &[
         ("apt-get", &["install", "-y", "libreoffice-impress"]),
-        ("dnf",     &["install", "-y", "libreoffice-impress"]),
-        ("pacman",  &["-S", "--noconfirm", "libreoffice-impress"]),
-        ("zypper",  &["install", "-y", "libreoffice-impress"]),
+        ("dnf", &["install", "-y", "libreoffice-impress"]),
+        ("pacman", &["-S", "--noconfirm", "libreoffice-impress"]),
+        ("zypper", &["install", "-y", "libreoffice-impress"]),
     ];
 
     for (bin, args) in gestores {
@@ -2300,7 +2970,9 @@ fn instalar_libreoffice_linux(_ui_weak: &slint::Weak<AppWindow>) -> bool {
             .map(|o| o.status.success())
             .unwrap_or(false);
         println!("  ¿Existe {}? {}", bin, existe);
-        if !existe { continue; }
+        if !existe {
+            continue;
+        }
 
         println!("  ▶ Ejecutando: pkexec {} {:?}", bin, args);
         let mut cmd_args = vec![*bin];
@@ -2312,7 +2984,10 @@ fn instalar_libreoffice_linux(_ui_weak: &slint::Weak<AppWindow>) -> bool {
         println!("  Resultado de pkexec: {:?}", status);
         let ok = matches!(status, Ok(s) if s.success());
         let encontrado = encontrar_soffice().is_some();
-        println!("  ¿Instalación exitosa? {} | ¿soffice encontrado después? {}", ok, encontrado);
+        println!(
+            "  ¿Instalación exitosa? {} | ¿soffice encontrado después? {}",
+            ok, encontrado
+        );
         return ok && encontrado;
     }
 
@@ -2330,16 +3005,29 @@ fn iniciar_servidor_overlay(
 ) {
     let server = match tiny_http::Server::http(format!("0.0.0.0:{}", puerto)) {
         Ok(s) => s,
-        Err(e) => { eprintln!("No se pudo iniciar servidor overlay en puerto {}: {}", puerto, e); return; }
+        Err(e) => {
+            eprintln!(
+                "No se pudo iniciar servidor overlay en puerto {}: {}",
+                puerto, e
+            );
+            return;
+        }
     };
     activo.store(true, Ordering::Release);
     println!("Servidor overlay OBS escuchando en puerto {}", puerto);
 
     for request in server.incoming_requests() {
-        if !activo.load(Ordering::Acquire) { break; } // se pidió detener
+        if !activo.load(Ordering::Acquire) {
+            break;
+        } // se pidió detener
 
         // Quitamos el query string ("?v=123") para el match de rutas.
-        let ruta = request.url().splitn(2, '?').next().unwrap_or("").to_string();
+        let ruta = request
+            .url()
+            .splitn(2, '?')
+            .next()
+            .unwrap_or("")
+            .to_string();
 
         // ── /video: sirve el archivo de video CRUDO, con soporte de Range.
         //    El navegador de OBS lo descarga y decodifica él mismo (igual
@@ -2348,7 +3036,10 @@ fn iniciar_servidor_overlay(
         if ruta == "/video" {
             let (video_path, hay_video) = {
                 let e = estado.lock().unwrap();
-                (e.video_ruta.clone(), e.video_activo && !e.video_ruta.is_empty())
+                (
+                    e.video_ruta.clone(),
+                    e.video_activo && !e.video_ruta.is_empty(),
+                )
             };
 
             if !hay_video || !std::path::Path::new(&video_path).exists() {
@@ -2360,7 +3051,8 @@ fn iniciar_servidor_overlay(
             let file_len = match std::fs::metadata(&video_path) {
                 Ok(m) => m.len(),
                 Err(_) => {
-                    let _ = request.respond(tiny_http::Response::from_string("").with_status_code(500));
+                    let _ =
+                        request.respond(tiny_http::Response::from_string("").with_status_code(500));
                     continue;
                 }
             };
@@ -2368,7 +3060,9 @@ fn iniciar_servidor_overlay(
             // Parseamos "Range: bytes=inicio-fin" si viene. Es necesario
             // para que el <video> del navegador pueda hacer seek y para
             // que empiece a reproducir sin esperar a descargar todo.
-            let range_header = request.headers().iter()
+            let range_header = request
+                .headers()
+                .iter()
                 .find(|h| h.field.equiv("Range"))
                 .map(|h| h.value.as_str().to_string());
 
@@ -2377,7 +3071,9 @@ fn iniciar_servidor_overlay(
                     let rango = &r[6..];
                     let partes: Vec<&str> = rango.splitn(2, '-').collect();
                     let start: u64 = partes.get(0).and_then(|s| s.parse().ok()).unwrap_or(0);
-                    let end: u64 = partes.get(1).filter(|s| !s.is_empty())
+                    let end: u64 = partes
+                        .get(1)
+                        .filter(|s| !s.is_empty())
                         .and_then(|s| s.parse().ok())
                         .unwrap_or(file_len.saturating_sub(1));
                     (start, end.min(file_len.saturating_sub(1)))
@@ -2388,7 +3084,8 @@ fn iniciar_servidor_overlay(
             let mut file = match std::fs::File::open(&video_path) {
                 Ok(f) => f,
                 Err(_) => {
-                    let _ = request.respond(tiny_http::Response::from_string("").with_status_code(500));
+                    let _ =
+                        request.respond(tiny_http::Response::from_string("").with_status_code(500));
                     continue;
                 }
             };
@@ -2401,16 +3098,21 @@ fn iniciar_servidor_overlay(
             let lector = std::io::Read::take(file, largo);
 
             let mut headers = vec![
-                tiny_http::Header::from_bytes(&b"Content-Type"[..], content_type.as_bytes()).unwrap(),
+                tiny_http::Header::from_bytes(&b"Content-Type"[..], content_type.as_bytes())
+                    .unwrap(),
                 tiny_http::Header::from_bytes(&b"Accept-Ranges"[..], &b"bytes"[..]).unwrap(),
-                tiny_http::Header::from_bytes(&b"Content-Length"[..], largo.to_string().as_bytes()).unwrap(),
+                tiny_http::Header::from_bytes(&b"Content-Length"[..], largo.to_string().as_bytes())
+                    .unwrap(),
             ];
 
             let status_code = if range_header.is_some() {
-                headers.push(tiny_http::Header::from_bytes(
-                    &b"Content-Range"[..],
-                    format!("bytes {}-{}/{}", start, end, file_len).as_bytes(),
-                ).unwrap());
+                headers.push(
+                    tiny_http::Header::from_bytes(
+                        &b"Content-Range"[..],
+                        format!("bytes {}-{}/{}", start, end, file_len).as_bytes(),
+                    )
+                    .unwrap(),
+                );
                 206
             } else {
                 200
@@ -2438,7 +3140,9 @@ fn iniciar_servidor_overlay(
                 )
             };
             if hay_imagen {
-                let header = tiny_http::Header::from_bytes(&b"Content-Type"[..], content_type.as_bytes()).unwrap();
+                let header =
+                    tiny_http::Header::from_bytes(&b"Content-Type"[..], content_type.as_bytes())
+                        .unwrap();
                 let response = tiny_http::Response::from_data(bytes)
                     .with_status_code(200)
                     .with_header(header);
@@ -2470,7 +3174,7 @@ fn iniciar_servidor_overlay(
                 (200, "application/json", json)
             }
             _ => {
-                                let html = r##"<!DOCTYPE html>
+                let html = r##"<!DOCTYPE html>
 <html><head><meta charset="utf-8">
 <style>
   html, body { margin:0; padding:0; width:100%; height:100%; overflow:hidden; background:transparent; font-family: sans-serif; }
@@ -2562,7 +3266,8 @@ fn iniciar_servidor_overlay(
             }
         };
 
-        let header = tiny_http::Header::from_bytes(&b"Content-Type"[..], content_type.as_bytes()).unwrap();
+        let header =
+            tiny_http::Header::from_bytes(&b"Content-Type"[..], content_type.as_bytes()).unwrap();
         let response = tiny_http::Response::from_string(body)
             .with_status_code(status)
             .with_header(header);
@@ -2576,14 +3281,15 @@ fn iniciar_servidor_overlay(
 // main()
 // ---------------------------------------------------------------------------
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    
-     // --- 1. CREAR EL SPLASH SCREEN Y MOSTRARLO DE INMEDIATO ---
+    // --- 1. CREAR EL SPLASH SCREEN Y MOSTRARLO DE INMEDIATO ---
     let splash = SplashWindow::new()?;
+    // Asocia las ventanas con ReadyShow.desktop en X11 y Wayland.
+    slint::set_xdg_app_id("ReadyShow")?;
     splash.set_app_version(env!("CARGO_PKG_VERSION").into());
     let splash_handle = splash.as_weak();
     splash.window().set_position(slint::LogicalPosition::new(
         (1366.0 - 500.0) / 2.0,
-        (768.0 - 300.0) / 2.0
+        (768.0 - 300.0) / 2.0,
     ));
     splash.window().show()?;
     let splash_handle_clon = splash_handle.clone();
@@ -2592,7 +3298,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     std::thread::spawn(move || {
         gst::init().expect("Error al inicializar GStreamer.");
 
-        let nucleos_totales = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(2);
+        let nucleos_totales = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(2);
         let hilos_rayon = (nucleos_totales.saturating_sub(1)).max(1);
         let _ = rayon::ThreadPoolBuilder::new()
             .num_threads(hilos_rayon)
@@ -2619,1624 +3327,2067 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // --- 3. CONSTRUIR LA UI PRINCIPAL DENTRO DEL HILO DE EVENTOS ---
         let _ = slint::invoke_from_event_loop(move || {
-            let current_biblia_libro   = Arc::new(Mutex::new(-1i32));
+            let current_biblia_libro = Arc::new(Mutex::new(-1i32));
             let current_biblia_capitulo = Arc::new(Mutex::new(-1i32));
-            let segunda_pantalla: Arc<Mutex<Option<(i32, i32, u32, u32)>>> = Arc::new(Mutex::new(None));
+            let segunda_pantalla: Arc<Mutex<Option<(i32, i32, u32, u32)>>> =
+                Arc::new(Mutex::new(None));
 
-            let state       = Arc::new(Mutex::new(app_state));
-            let ui          = AppWindow::new().unwrap();
-            let proyector   = ProjectorWindow::new().unwrap();
+            let state = Arc::new(Mutex::new(app_state));
+            let ui = AppWindow::new().unwrap();
+            let proyector = ProjectorWindow::new().unwrap();
             let medidor_win = MedidorWindow::new().unwrap();
-    let video_player = Arc::new(Mutex::new(NativeVideoPlayer::new()));
-    let biblioteca_video_player = Arc::new(Mutex::new(NativeVideoPlayer::new()));
+            let video_player = Arc::new(Mutex::new(NativeVideoPlayer::new()));
+            let biblioteca_video_player = Arc::new(Mutex::new(NativeVideoPlayer::new()));
 
-    let multimedia_state = Arc::new(RwLock::new(Vec::<MediaData>::new()));
-    let video_state      = Arc::new(RwLock::new(Vec::<MediaData>::new()));
-    let pdf_state        = Arc::new(RwLock::new(Vec::<PdfData>::new()));
-    let preview_player   = Arc::new(Mutex::new(NativeVideoPlayer::new()));
+            let multimedia_state = Arc::new(RwLock::new(Vec::<MediaData>::new()));
+            let video_state = Arc::new(RwLock::new(Vec::<MediaData>::new()));
+            let pdf_state = Arc::new(RwLock::new(Vec::<PdfData>::new()));
+            let preview_player = Arc::new(Mutex::new(NativeVideoPlayer::new()));
 
-    // OPT-7: Caché de imágenes compartido entre closures que acceden a disco
-    let image_cache: Arc<Mutex<HashMap<String, slint::Image>>> =
-        Arc::new(Mutex::new(HashMap::new()));
+            // OPT-7: Caché de imágenes compartido entre closures que acceden a disco
+            let image_cache: Arc<Mutex<HashMap<String, slint::Image>>> =
+                Arc::new(Mutex::new(HashMap::new()));
 
-    let image_cache_fondo: Arc<Mutex<HashMap<String, slint::Image>>> =
-        Arc::new(Mutex::new(HashMap::new()));
+            let image_cache_fondo: Arc<Mutex<HashMap<String, slint::Image>>> =
+                Arc::new(Mutex::new(HashMap::new()));
 
-    let (thumb_tx, thumb_rx) = std::sync::mpsc::channel::<(String, u32, u32, Vec<u8>)>();
+            let (thumb_tx, thumb_rx) = std::sync::mpsc::channel::<(String, u32, u32, Vec<u8>)>();
 
-    // OPT-3: AtomicBool — lecturas/escrituras sin lock del SO
-    let bloqueo_estilos = Arc::new(AtomicBool::new(false));
-    let modo_en_vivo: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
+            // OPT-3: AtomicBool — lecturas/escrituras sin lock del SO
+            let bloqueo_estilos = Arc::new(AtomicBool::new(false));
+            let modo_en_vivo: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
 
-    let proyector_abierto = Arc::new(AtomicBool::new(false));
+            let proyector_abierto = Arc::new(AtomicBool::new(false));
 
-    let proyector_wid: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+            let proyector_wid: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
 
-    // Roles de pantallas: id_pantalla -> rol (0=sin asignar, 1=operador, 2=proyector, 3=stage)
-    let _roles_pantallas: Arc<Mutex<HashMap<i32, i32>>> = Arc::new(Mutex::new(HashMap::new()));
+            // Roles de pantallas: id_pantalla -> rol (0=sin asignar, 1=operador, 2=proyector, 3=stage)
+            let _roles_pantallas: Arc<Mutex<HashMap<i32, i32>>> =
+                Arc::new(Mutex::new(HashMap::new()));
 
-    // Estado compartido para la salida por IP (overlay para OBS)
-    
-    let overlay_estado: Arc<Mutex<EstadoOverlay>> = Arc::new(Mutex::new(EstadoOverlay::default()));
-    let overlay_servidor_activo: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
+            // Estado compartido para la salida por IP (overlay para OBS)
 
-    // Ventanas de identificación activas + su temporizador de auto-cierre.
-    // Rc<RefCell<>> porque las ventanas de Slint no son Send (no pueden
-    // cruzar hilos), así que todo esto vive y se maneja en el hilo principal.
-    let identificar_windows: Rc<RefCell<Vec<IdentifyWindow>>> = Rc::new(RefCell::new(Vec::new()));
-    let identificar_timer: Rc<RefCell<Option<slint::Timer>>> = Rc::new(RefCell::new(None));
+            let overlay_estado: Arc<Mutex<EstadoOverlay>> =
+                Arc::new(Mutex::new(EstadoOverlay::default()));
+            let overlay_servidor_activo: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
 
-    // Guarda id_pantalla -> rol asignado (0=sin asignar,1=operador,2=proyector,3=stage)
-    let roles_pantallas: Arc<Mutex<HashMap<i32, i32>>> = Arc::new(Mutex::new(HashMap::new()));
+            // Ventanas de identificación activas + su temporizador de auto-cierre.
+            // Rc<RefCell<>> porque las ventanas de Slint no son Send (no pueden
+            // cruzar hilos), así que todo esto vive y se maneja en el hilo principal.
+            let identificar_windows: Rc<RefCell<Vec<IdentifyWindow>>> =
+                Rc::new(RefCell::new(Vec::new()));
+            let identificar_timer: Rc<RefCell<Option<slint::Timer>>> = Rc::new(RefCell::new(None));
 
-    // ── Márgenes del proyector ───────────────────────────────────────────────
-    // {
-    //     let p_weak = proyector.as_weak();
-        
-    //     ui.on_actualizar_margenes(move |izq, der, sup, inf| {
-    //         if let Some(p) = p_weak.upgrade() {
-    //             p.set_margen_izquierdo(izq);
-    //             p.set_margen_derecho(der);
-    //             p.set_margen_superior(sup);
-    //             p.set_margen_inferior(inf);
-    //         }
-    //         bsc_margenes();
-    //     });
-    // }
+            // Guarda id_pantalla -> rol asignado (0=sin asignar,1=operador,2=proyector,3=stage)
+            let roles_pantallas: Arc<Mutex<HashMap<i32, i32>>> =
+                Arc::new(Mutex::new(HashMap::new()));
 
-    // ── Detección de segunda pantalla ────────────────────────────────────────
-    {
-        match DisplayInfo::all() {
-            Ok(pantallas) => {
-                let hay_primaria = pantallas.iter().any(|d| d.is_primary);
-                let segunda = if hay_primaria {
-                    pantallas.iter().find(|d| !d.is_primary)
-                } else {
-                    pantallas.iter().find(|d| !(d.x == 0 && d.y == 0))
-                };
-                if let Some(s) = segunda {
-                    let w = (s.width  as f32 * s.scale_factor) as u32;
-                    let h = (s.height as f32 * s.scale_factor) as u32;
-                    *segunda_pantalla.lock().unwrap() = Some((s.x, s.y, w, h));
+            // ── Márgenes del proyector ───────────────────────────────────────────────
+            // {
+            //     let p_weak = proyector.as_weak();
+
+            //     ui.on_actualizar_margenes(move |izq, der, sup, inf| {
+            //         if let Some(p) = p_weak.upgrade() {
+            //             p.set_margen_izquierdo(izq);
+            //             p.set_margen_derecho(der);
+            //             p.set_margen_superior(sup);
+            //             p.set_margen_inferior(inf);
+            //         }
+            //         bsc_margenes();
+            //     });
+            // }
+
+            // ── Detección de segunda pantalla ────────────────────────────────────────
+            {
+                match DisplayInfo::all() {
+                    Ok(pantallas) => {
+                        let hay_primaria = pantallas.iter().any(|d| d.is_primary);
+                        let segunda = if hay_primaria {
+                            pantallas.iter().find(|d| !d.is_primary)
+                        } else {
+                            pantallas.iter().find(|d| !(d.x == 0 && d.y == 0))
+                        };
+                        if let Some(s) = segunda {
+                            let w = (s.width as f32 * s.scale_factor) as u32;
+                            let h = (s.height as f32 * s.scale_factor) as u32;
+                            *segunda_pantalla.lock().unwrap() = Some((s.x, s.y, w, h));
+                        }
+                    }
+                    Err(e) => println!("No se pudieron detectar pantallas: {}", e),
                 }
             }
-            Err(e) => println!("No se pudieron detectar pantallas: {}", e),
-        }
-    }
 
-    // ── Cargar configuración persistente ────────────────────────────────────
-    let user_data_dir_cfg = state.lock().unwrap().user_data_dir.clone();
-    let cfg = cargar_config(&user_data_dir_cfg);
+            // ── Cargar configuración persistente ────────────────────────────────────
+            let user_data_dir_cfg = state.lock().unwrap().user_data_dir.clone();
+            let cfg = cargar_config(&user_data_dir_cfg);
 
-    // Restaurar rutas de galería en AppState
-    {
-        let mut st = state.lock().unwrap();
-        st.biblias_image_paths = cfg.biblias_image_paths.clone();
-        st.cantos_image_paths  = cfg.cantos_image_paths.clone();
-        st.biblias_video_paths = cfg.biblias_video_paths.clone();
-        st.cantos_video_paths  = cfg.cantos_video_paths.clone();
-    }
-
-    // Restaurar roles de pantallas guardados
-    {
-        let mut roles = roles_pantallas.lock().unwrap();
-        for (id, rol) in &cfg.pantallas_roles {
-            roles.insert(*id, *rol);
-        }
-    }
-
-    // Restaurar multimedia proyectable
-    {
-        let mut mm = multimedia_state.write().unwrap();
-        for i in 0..cfg.multimedia_paths.len() {
-            mm.push(MediaData {
-                path:    cfg.multimedia_paths.get(i).cloned().unwrap_or_default(),
-                name:    cfg.multimedia_names.get(i).cloned().unwrap_or_default(),
-                aspecto: cfg.multimedia_aspectos.get(i).cloned().unwrap_or_else(|| "centro".to_string()),
-                is_loop: false,
-            });
-        }
-    }
-    {
-        let mut vs = video_state.write().unwrap();
-        for i in 0..cfg.video_paths.len() {
-            vs.push(MediaData {
-                path:    cfg.video_paths.get(i).cloned().unwrap_or_default(),
-                name:    cfg.video_names.get(i).cloned().unwrap_or_default(),
-                aspecto: "rellenar".to_string(),
-                is_loop: *cfg.video_loops.get(i).unwrap_or(&false),
-            });
-        }
-    }
-
-    // Restaurar UI: apariencia
-    ui.set_biblias_bg_type(SharedString::from(&cfg.biblias_bg_type));
-    ui.set_cantos_bg_type(SharedString::from(&cfg.cantos_bg_type));
-    ui.set_biblias_font_color(slint::Color::from_rgb_u8(cfg.biblias_font_color[0], cfg.biblias_font_color[1], cfg.biblias_font_color[2]));
-    ui.set_cantos_font_color(slint::Color::from_rgb_u8(cfg.cantos_font_color[0], cfg.cantos_font_color[1], cfg.cantos_font_color[2]));
-    ui.set_biblias_fondo_opacity(cfg.biblias_fondo_opacity);
-    ui.set_cantos_fondo_opacity(cfg.cantos_fondo_opacity);
-    ui.set_biblias_font_scale(if cfg.biblias_font_scale == 0.0 { 1.0 } else { cfg.biblias_font_scale });
-    ui.set_cantos_font_scale(if cfg.cantos_font_scale == 0.0 { 1.0 } else { cfg.cantos_font_scale });
-    let fuente_inicial = if cfg.proyeccion_font_family.is_empty() { "Google Sans".to_string() } else { cfg.proyeccion_font_family.clone() };
-    ui.set_proyeccion_font_family(SharedString::from(&fuente_inicial));
-    proyector.set_text_font_family(SharedString::from(&fuente_inicial));
-    medidor_win.set_text_font_family(SharedString::from(&fuente_inicial));
-    ui.set_margen_izquierdo(cfg.margen_izquierdo);
-    ui.set_margen_derecho(cfg.margen_derecho);
-    ui.set_margen_superior(cfg.margen_superior);
-    ui.set_margen_inferior(cfg.margen_inferior);
-
-    proyector.set_margen_izquierdo(cfg.margen_izquierdo);
-    proyector.set_margen_derecho(cfg.margen_derecho);
-    proyector.set_margen_superior(cfg.margen_superior);
-    proyector.set_margen_inferior(cfg.margen_inferior);
-
-    ui.set_default_bg_type(SharedString::from(&cfg.default_bg_type));
-    ui.set_default_bg_idx(cfg.default_bg_idx);
-    ui.global::<Theme>().set_is_dark(cfg.tema_oscuro);
-    ui.set_auto_proyectar_inicio(cfg.auto_proyectar_inicio);
-    ui.set_libreoffice_listo(libreoffice_disponible());
-    ui.set_gemini_api_key(SharedString::from(&cfg.gemini_api_key));
-    ui.set_temp_gemini_api_key(SharedString::from(&cfg.gemini_api_key));
-
-    ui.set_acerca_version(SharedString::from(env!("CARGO_PKG_VERSION")));
-    let accel_texto = match DECODIFICADOR_HW.as_deref() {
-        Some(nombre) => format!("Aceleración por hardware activa ({})", nombre),
-        None => "Decodificación por software (sin aceleración de hardware)".to_string(),
-    };
-    ui.set_acerca_aceleracion(SharedString::from(accel_texto));
-
-
-
-    // Restaurar galería de imágenes en la UI
-    {
-        let st = state.lock().unwrap();
-
-        // Decodifica en paralelo TODAS las imágenes de ambas galerías de una vez,
-        // en vez de una por una en el hilo principal al arrancar la app.
-        let todas_las_rutas: Vec<String> = st.biblias_image_paths.iter()
-            .chain(st.cantos_image_paths.iter())
-            .cloned()
-            .collect();
-        precargar_cache_paralelo(&image_cache, &todas_las_rutas);
-
-        let images_b: Vec<slint::Image> = st.biblias_image_paths.iter()
-            .filter_map(|p| load_image_cached(&image_cache, p))
-            .collect();
-        let images_c: Vec<slint::Image> = st.cantos_image_paths.iter()
-            .filter_map(|p| load_image_cached(&image_cache, p))
-            .collect();
-       
-
-        if !images_b.is_empty() {
-            ui.set_biblias_image_data(ModelRc::from(Rc::new(VecModel::from(images_b))));
-            ui.set_biblias_selected_img(cfg.biblias_selected_img);
-            if let Some(img) = load_image_fondo_cached(&image_cache_fondo, st.biblias_image_paths.get(cfg.biblias_selected_img as usize).map(|s| s.as_str()).unwrap_or("")) {
-                ui.set_biblias_bg_image(img);
-                ui.set_biblias_has_image(true);
+            // Restaurar rutas de galería en AppState
+            {
+                let mut st = state.lock().unwrap();
+                st.biblias_image_paths = cfg.biblias_image_paths.clone();
+                st.cantos_image_paths = cfg.cantos_image_paths.clone();
+                st.biblias_video_paths = cfg.biblias_video_paths.clone();
+                st.cantos_video_paths = cfg.cantos_video_paths.clone();
             }
-        }
-        if !images_c.is_empty() {
-            ui.set_cantos_image_data(ModelRc::from(Rc::new(VecModel::from(images_c))));
-            ui.set_cantos_selected_img(cfg.cantos_selected_img);
-            if let Some(img) = load_image_fondo_cached(&image_cache_fondo, st.cantos_image_paths.get(cfg.cantos_selected_img as usize).map(|s| s.as_str()).unwrap_or("")) {
-                ui.set_cantos_bg_image(img);
-                ui.set_cantos_has_image(true);
+
+            // Restaurar roles de pantallas guardados
+            {
+                let mut roles = roles_pantallas.lock().unwrap();
+                for (id, rol) in &cfg.pantallas_roles {
+                    roles.insert(*id, *rol);
+                }
             }
-        }
 
-        if !st.biblias_video_paths.is_empty() {
-            let gal_b = construir_video_gallery(&st.biblias_video_paths, &image_cache);
-            ui.set_biblias_video_gallery(ModelRc::from(Rc::new(VecModel::from(gal_b))));
-            ui.set_biblias_video_path(SharedString::from(cfg.biblias_video_path.as_str()));
-            ui.set_biblias_selected_vid(cfg.biblias_selected_vid);
-        }
-        if !st.cantos_video_paths.is_empty() {
-            let gal_c = construir_video_gallery(&st.cantos_video_paths, &image_cache);
-            ui.set_cantos_video_gallery(ModelRc::from(Rc::new(VecModel::from(gal_c))));
-            ui.set_cantos_video_path(SharedString::from(cfg.cantos_video_path.as_str()));
-            ui.set_cantos_selected_vid(cfg.cantos_selected_vid);
-        }
-        
-    }
-    // refresh_multimedia();
-    //  refresh_videos();
-
-    // Función auxiliar para construir y guardar ConfigApp desde el estado actual
-    let build_and_save_config = {
-        let state_cfg   = Arc::clone(&state);
-        let mm_cfg      = Arc::clone(&multimedia_state);
-        let vs_cfg      = Arc::clone(&video_state);
-        let roles_cfg   = Arc::clone(&roles_pantallas);
-        let ui_cfg      = ui.as_weak();
-        let udd         = user_data_dir_cfg.clone();
-        move || {
-            let ui = match ui_cfg.upgrade() { Some(u) => u, None => return };
-            let st = state_cfg.lock().unwrap();
-            let mm = mm_cfg.read().unwrap();
-            let vs = vs_cfg.read().unwrap();
-            let fc_b = ui.get_biblias_font_color();
-            let fc_c = ui.get_cantos_font_color();
-            let cfg = ConfigApp {
-                biblias_image_paths:  st.biblias_image_paths.clone(),
-                cantos_image_paths:   st.cantos_image_paths.clone(),
-                biblias_video_paths:  st.biblias_video_paths.clone(),
-                cantos_video_paths:   st.cantos_video_paths.clone(),
-                biblias_selected_img: ui.get_biblias_selected_img(),
-                cantos_selected_img:  ui.get_cantos_selected_img(),
-                biblias_selected_vid: ui.get_biblias_selected_vid(),
-                cantos_selected_vid:  ui.get_cantos_selected_vid(),
-                biblias_video_path:   ui.get_biblias_video_path().to_string(),
-                cantos_video_path:    ui.get_cantos_video_path().to_string(),
-                biblias_bg_type:      ui.get_biblias_bg_type().to_string(),
-                cantos_bg_type:       ui.get_cantos_bg_type().to_string(),
-                biblias_font_color:   [fc_b.red(), fc_b.green(), fc_b.blue()],
-                cantos_font_color:    [fc_c.red(), fc_c.green(), fc_c.blue()],
-                biblias_fondo_opacity: ui.get_biblias_fondo_opacity(),
-                cantos_fondo_opacity:  ui.get_cantos_fondo_opacity(),
-                biblias_font_scale:   ui.get_biblias_font_scale(),
-                cantos_font_scale:    ui.get_cantos_font_scale(),
-                proyeccion_font_family: ui.get_proyeccion_font_family().to_string(),
-                multimedia_paths:   mm.iter().map(|m| m.path.clone()).collect(),
-                multimedia_names:   mm.iter().map(|m| m.name.clone()).collect(),
-                multimedia_aspectos: mm.iter().map(|m| m.aspecto.clone()).collect(),
-                video_paths: vs.iter().map(|v| v.path.clone()).collect(),
-                video_names: vs.iter().map(|v| v.name.clone()).collect(),
-                video_loops: vs.iter().map(|v| v.is_loop).collect(),
-                margen_izquierdo: ui.get_margen_izquierdo(),
-                margen_derecho:   ui.get_margen_derecho(),
-                margen_superior:  ui.get_margen_superior(),
-                margen_inferior:  ui.get_margen_inferior(),
-                default_bg_type:  ui.get_default_bg_type().to_string(),
-                default_bg_idx:   ui.get_default_bg_idx(),
-                tema_oscuro: ui.global::<Theme>().get_is_dark(),
-                pantallas_roles: roles_cfg.lock().unwrap().iter().map(|(k, v)| (*k, *v)).collect(),
-                auto_proyectar_inicio: ui.get_auto_proyectar_inicio(),
-                gemini_api_key: ui.get_gemini_api_key().to_string(),
-            };
-            guardar_config(&udd, &cfg);
-        }
-    };
-
-    // Ahora sí se puede usar build_and_save_config en márgenes
-    {
-        let p_weak2 = proyector.as_weak();
-        let bsc_margenes = build_and_save_config.clone();
-        ui.on_actualizar_margenes(move |izq, der, sup, inf| {
-            if let Some(p) = p_weak2.upgrade() {
-                p.set_margen_izquierdo(izq);
-                p.set_margen_derecho(der);
-                p.set_margen_superior(sup);
-                p.set_margen_inferior(inf);
-            }
-            bsc_margenes();
-        });
-    }
-
-    {
-        let bsc_tema = build_and_save_config.clone();
-        ui.on_notificar_cambio_tema(move |_is_dark| {
-            bsc_tema();
-        });
-    }
-
-    
-
-    // refresh_multimedia();
-    // refresh_videos();
-    // ── Inicialización de versiones y libros ─────────────────────────────────
-    {
-        let st = state.lock().unwrap();
-        let versiones_slint: Vec<SharedString> = st.versiones.iter()
-            .map(|v| SharedString::from(&v.nombre_completo))
-            .collect();
-        ui.set_bible_versions(ModelRc::from(Rc::new(VecModel::from(versiones_slint))));
-        if let Some(primera) = st.versiones.first() {
-            ui.set_current_bible_version(SharedString::from(&primera.nombre_completo));
-        }
-        let libros = st.get_libros_biblia();
-        let libros_slint: Vec<BookInfo> = libros.into_iter()
-            .map(|l| BookInfo { id: l.id, nombre: SharedString::from(l.nombre), capitulos: l.capitulos })
-            .collect();
-        ui.set_bible_books(ModelRc::from(Rc::new(VecModel::from(libros_slint))));
-    }
-
-    // ── Cargar cantos ────────────────────────────────────────────────────────
-    let cargar_cantos = {
-        let ui_handle   = ui.as_weak();
-        let state_clone = Arc::clone(&state);
-        move |busqueda: String| {
-            let ui     = ui_handle.unwrap();
-            let estado = state_clone.lock().unwrap();
-            let fav_ids   = estado.get_favoritos_ids_cantos();
-            let cantos_db = if busqueda.is_empty() {
-                estado.get_all_cantos()
-            } else {
-                estado.get_cantos_filtrados(&busqueda)
-            };
-            let mut cantos_slint: Vec<Canto> = cantos_db.into_iter().map(|c| {
-                let is_fav = fav_ids.contains(&c.id);
-                Canto { id: c.id, titulo: SharedString::from(c.titulo), letra: SharedString::from(""), favorito: is_fav }
-            }).collect();
-            if cantos_slint.is_empty() {
-                cantos_slint.push(Canto {
-                    id:      0,
-                    titulo:  SharedString::from("Click derecho para agregar canto"),
-                    letra:   SharedString::from(""),
-                    favorito: false,
-                });
-            }
-            ui.set_cantos(ModelRc::from(Rc::new(VecModel::from(cantos_slint))));
-            let favs = estado.get_all_favoritos();
-            ui.set_favoritos(ModelRc::from(Rc::new(VecModel::from(favs))));
-        }
-    };
-    cargar_cantos(String::new());
-
-    {
-        let ui_handle   = ui.as_weak();
-    let state_clone = Arc::clone(&state);
-    let busqueda_secuencia = Arc::new(std::sync::atomic::AtomicU64::new(0));
-    ui.on_buscar_cantos(move |t| {
-        let busqueda = t.to_string();
-        let ui_t     = ui_handle.clone();
-        let state_t  = Arc::clone(&state_clone);
-        // Cada búsqueda reclama un número de secuencia. Si el resultado
-        // llega cuando ya hay una búsqueda más reciente, se descarta en
-        // vez de pisar la UI con datos viejos (esto causaba la lista de
-        // cantos/letras en blanco de forma intermitente al escribir rápido
-        // o al navegar justo mientras una búsqueda vieja seguía en curso).
-        let seq_arc = Arc::clone(&busqueda_secuencia);
-        seq_arc.fetch_add(1, Ordering::SeqCst);
-        let mi_seq = seq_arc.load(Ordering::SeqCst);
-        thread::spawn(move || {
-            let cantos_slint = {
-                let estado   = state_t.lock().unwrap();
-                let fav_ids  = estado.get_favoritos_ids_cantos();
-                let cantos_db = if busqueda.is_empty() {
-                    estado.get_all_cantos()
-                } else {
-                    estado.get_cantos_filtrados(&busqueda)
-                };
-                let mut lista: Vec<Canto> = cantos_db.into_iter().map(|c| {
-                    let is_fav = fav_ids.contains(&c.id);
-                    Canto { id: c.id, titulo: SharedString::from(c.titulo), letra: SharedString::from(""), favorito: is_fav }
-                }).collect();
-                if lista.is_empty() {
-                    lista.push(Canto {
-                        id: 0,
-                        titulo: SharedString::from("Click derecho para agregar canto"),
-                        letra: SharedString::from(""),
-                        favorito: false,
+            // Restaurar multimedia proyectable
+            {
+                let mut mm = multimedia_state.write().unwrap();
+                for i in 0..cfg.multimedia_paths.len() {
+                    mm.push(MediaData {
+                        path: cfg.multimedia_paths.get(i).cloned().unwrap_or_default(),
+                        name: cfg.multimedia_names.get(i).cloned().unwrap_or_default(),
+                        aspecto: cfg
+                            .multimedia_aspectos
+                            .get(i)
+                            .cloned()
+                            .unwrap_or_else(|| "centro".to_string()),
+                        is_loop: false,
                     });
                 }
-                lista
-            };
-            let _ = slint::invoke_from_event_loop(move || {
-                if seq_arc.load(Ordering::SeqCst) != mi_seq { return; }
-                if let Some(ui) = ui_t.upgrade() {
-                    ui.set_cantos(ModelRc::from(Rc::new(VecModel::from(cantos_slint))));
+            }
+            {
+                let mut vs = video_state.write().unwrap();
+                for i in 0..cfg.video_paths.len() {
+                    vs.push(MediaData {
+                        path: cfg.video_paths.get(i).cloned().unwrap_or_default(),
+                        name: cfg.video_names.get(i).cloned().unwrap_or_default(),
+                        aspecto: "rellenar".to_string(),
+                        is_loop: *cfg.video_loops.get(i).unwrap_or(&false),
+                    });
                 }
+            }
+
+            // Restaurar UI: apariencia
+            ui.set_biblias_bg_type(SharedString::from(&cfg.biblias_bg_type));
+            ui.set_cantos_bg_type(SharedString::from(&cfg.cantos_bg_type));
+            ui.set_biblias_font_color(slint::Color::from_rgb_u8(
+                cfg.biblias_font_color[0],
+                cfg.biblias_font_color[1],
+                cfg.biblias_font_color[2],
+            ));
+            ui.set_cantos_font_color(slint::Color::from_rgb_u8(
+                cfg.cantos_font_color[0],
+                cfg.cantos_font_color[1],
+                cfg.cantos_font_color[2],
+            ));
+            ui.set_biblias_fondo_opacity(cfg.biblias_fondo_opacity);
+            ui.set_cantos_fondo_opacity(cfg.cantos_fondo_opacity);
+            ui.set_biblias_font_scale(if cfg.biblias_font_scale == 0.0 {
+                1.0
+            } else {
+                cfg.biblias_font_scale
             });
-        });
-    });
-    }
-
-    // ── Seleccionar canto ────────────────────────────────────────────────────
-    {
-        let ui_handle   = ui.as_weak();
-        let state_clone = Arc::clone(&state);
-        let cb_lib      = Arc::clone(&current_biblia_libro);
-        let cb_cap      = Arc::clone(&current_biblia_capitulo);
-        ui.on_seleccionar_canto(move |id| {
-            if id <= 0 { return; }
-            *cb_lib.lock().unwrap() = -1;
-            *cb_cap.lock().unwrap() = -1;
-            let ui     = ui_handle.unwrap();
-            let estado = state_clone.lock().unwrap();
-            ui.set_elemento_seleccionado(SharedString::from(estado.get_canto_titulo(id)));
-            let diapos: Vec<DiapositivaUI> = estado.get_canto_diapositivas(id)
-                .iter()
-                .map(diapositiva_a_ui)
-                .collect();
-            ui.set_scroll_to_y(0.0);
-            ui.set_estrofas_actuales(ModelRc::from(Rc::new(VecModel::from(diapos))));
-            ui.set_active_estrofa_index(-1);
-            ui.set_scroll_to_y(0.0);
-            ui.invoke_focus_panel();
-        });
-    }
-
-    // ── Guardar canto ────────────────────────────────────────────────────────
-    {
-        let state_clone  = Arc::clone(&state);
-        let state_clone2 = Arc::clone(&state);
-        let c_clone      = cargar_cantos.clone();
-        let ui_handle    = ui.as_weak();
-        let p_handle     = proyector.as_weak();
-        let sp_guardar   = Arc::clone(&segunda_pantalla);
-        let medidor_gc   = medidor_win.as_weak();
-        ui.on_guardar_canto(move |id, titulo, letra| {
-            let guardado_ok = {
-                let estado = state_clone.lock().unwrap();
-                if id == -1 { estado.add_canto(&titulo, &letra) } else { estado.update_canto(id, &titulo, &letra) }
+            ui.set_cantos_font_scale(if cfg.cantos_font_scale == 0.0 {
+                1.0
+            } else {
+                cfg.cantos_font_scale
+            });
+            let fuente_inicial = if cfg.proyeccion_font_family.is_empty() {
+                "Google Sans".to_string()
+            } else {
+                cfg.proyeccion_font_family.clone()
             };
-            if !guardado_ok {
-                // No refrescamos con datos posiblemente inconsistentes;
-                // el usuario puede reintentar guardar sin perder lo escrito.
-                return;
-            }
-            c_clone(String::new());
-            if id != -1 {
-                let ui     = ui_handle.unwrap();
-                let p      = p_handle.unwrap();
-                let estado = state_clone2.lock().unwrap();
-                let titulo_guardado   = estado.get_canto_titulo(id);
-                let titulo_en_panel   = ui.get_elemento_seleccionado().to_string();
-                let es_canto_activo   = titulo_en_panel == titulo.to_string() || titulo_en_panel == titulo_guardado;
-                if es_canto_activo {
-                    let nuevas_diapos  = estado.get_canto_diapositivas(id);
-                    let diapos_slint: Vec<DiapositivaUI> = nuevas_diapos.iter().map(diapositiva_a_ui).collect();
-                    let active_idx     = ui.get_active_estrofa_index();
-                    ui.set_elemento_seleccionado(SharedString::from(&titulo_guardado));
-                    ui.set_estrofas_actuales(ModelRc::from(Rc::new(VecModel::from(diapos_slint.clone()))));
-                    let idx = if active_idx >= 0 && (active_idx as usize) < diapos_slint.len() {
-                        active_idx as usize
-                    } else if !diapos_slint.is_empty() {
-                        ui.set_active_estrofa_index(0); 0
-                    } else { return; };
-                    let info_screen = *sp_guardar.lock().unwrap();
-                    let (screen_w, screen_h) = if let Some((_, _, w, h)) = info_screen { (w as f32, h as f32) } else { (1920.0, 1080.0) };
-                    let (m_izq, m_der, m_sup, m_inf) = (
-                        ui.get_margen_izquierdo(), ui.get_margen_derecho(),
-                        ui.get_margen_superior(),  ui.get_margen_inferior(),
-                    );
-                    let texto_nuevo = diapos_slint[idx].texto.clone();
-                    let scale       = ui.get_cantos_font_scale();
-                    let medidor = medidor_gc.unwrap();
-                    let font_size = calcular_font_size_canto(&medidor, &texto_nuevo, screen_w, screen_h, scale, m_izq, m_der, m_sup, m_inf, &ui.get_proyeccion_font_family());
-                    p.set_texto_proyeccion(texto_nuevo);
-                    p.set_tamano_letra(font_size);
-                    p.set_referencia(SharedString::from(""));
+            ui.set_proyeccion_font_family(SharedString::from(&fuente_inicial));
+            proyector.set_text_font_family(SharedString::from(&fuente_inicial));
+            medidor_win.set_text_font_family(SharedString::from(&fuente_inicial));
+            ui.set_margen_izquierdo(cfg.margen_izquierdo);
+            ui.set_margen_derecho(cfg.margen_derecho);
+            ui.set_margen_superior(cfg.margen_superior);
+            ui.set_margen_inferior(cfg.margen_inferior);
+
+            proyector.set_margen_izquierdo(cfg.margen_izquierdo);
+            proyector.set_margen_derecho(cfg.margen_derecho);
+            proyector.set_margen_superior(cfg.margen_superior);
+            proyector.set_margen_inferior(cfg.margen_inferior);
+
+            ui.set_default_bg_type(SharedString::from(&cfg.default_bg_type));
+            ui.set_default_bg_idx(cfg.default_bg_idx);
+            let tema = cfg
+                .tema
+                .unwrap_or_else(|| TemaInterfaz::desde_flags(cfg.tema_oscuro, false));
+            ui.global::<Theme>()
+                .set_is_dark(tema != TemaInterfaz::Blanco);
+            ui.global::<Theme>()
+                .set_is_black(tema == TemaInterfaz::Negro);
+            ui.invoke_actualizar_paleta_widgets();
+            ui.set_auto_proyectar_inicio(cfg.auto_proyectar_inicio);
+            ui.set_libreoffice_listo(libreoffice_disponible());
+            ui.set_gemini_api_key(SharedString::from(&cfg.gemini_api_key));
+            ui.set_temp_gemini_api_key(SharedString::from(&cfg.gemini_api_key));
+
+            ui.set_acerca_version(SharedString::from(env!("CARGO_PKG_VERSION")));
+            let accel_texto = match DECODIFICADOR_HW.as_deref() {
+                Some(nombre) => format!("Aceleración por hardware activa ({})", nombre),
+                None => "Decodificación por software (sin aceleración de hardware)".to_string(),
+            };
+            ui.set_acerca_aceleracion(SharedString::from(accel_texto));
+
+            // Restaurar galería de imágenes en la UI
+            {
+                let st = state.lock().unwrap();
+
+                // Decodifica en paralelo TODAS las imágenes de ambas galerías de una vez,
+                // en vez de una por una en el hilo principal al arrancar la app.
+                let todas_las_rutas: Vec<String> = st
+                    .biblias_image_paths
+                    .iter()
+                    .chain(st.cantos_image_paths.iter())
+                    .cloned()
+                    .collect();
+                precargar_cache_paralelo(&image_cache, &todas_las_rutas);
+
+                let images_b: Vec<slint::Image> = st
+                    .biblias_image_paths
+                    .iter()
+                    .filter_map(|p| load_image_cached(&image_cache, p))
+                    .collect();
+                let images_c: Vec<slint::Image> = st
+                    .cantos_image_paths
+                    .iter()
+                    .filter_map(|p| load_image_cached(&image_cache, p))
+                    .collect();
+
+                if !images_b.is_empty() {
+                    ui.set_biblias_image_data(ModelRc::from(Rc::new(VecModel::from(images_b))));
+                    ui.set_biblias_selected_img(cfg.biblias_selected_img);
+                    if let Some(img) = load_image_fondo_cached(
+                        &image_cache_fondo,
+                        st.biblias_image_paths
+                            .get(cfg.biblias_selected_img as usize)
+                            .map(|s| s.as_str())
+                            .unwrap_or(""),
+                    ) {
+                        ui.set_biblias_bg_image(img);
+                        ui.set_biblias_has_image(true);
+                    }
+                }
+                if !images_c.is_empty() {
+                    ui.set_cantos_image_data(ModelRc::from(Rc::new(VecModel::from(images_c))));
+                    ui.set_cantos_selected_img(cfg.cantos_selected_img);
+                    if let Some(img) = load_image_fondo_cached(
+                        &image_cache_fondo,
+                        st.cantos_image_paths
+                            .get(cfg.cantos_selected_img as usize)
+                            .map(|s| s.as_str())
+                            .unwrap_or(""),
+                    ) {
+                        ui.set_cantos_bg_image(img);
+                        ui.set_cantos_has_image(true);
+                    }
+                }
+
+                if !st.biblias_video_paths.is_empty() {
+                    let gal_b = construir_video_gallery(&st.biblias_video_paths, &image_cache);
+                    ui.set_biblias_video_gallery(ModelRc::from(Rc::new(VecModel::from(gal_b))));
+                    ui.set_biblias_video_path(SharedString::from(cfg.biblias_video_path.as_str()));
+                    ui.set_biblias_selected_vid(cfg.biblias_selected_vid);
+                }
+                if !st.cantos_video_paths.is_empty() {
+                    let gal_c = construir_video_gallery(&st.cantos_video_paths, &image_cache);
+                    ui.set_cantos_video_gallery(ModelRc::from(Rc::new(VecModel::from(gal_c))));
+                    ui.set_cantos_video_path(SharedString::from(cfg.cantos_video_path.as_str()));
+                    ui.set_cantos_selected_vid(cfg.cantos_selected_vid);
                 }
             }
-        });
-    }
+            // refresh_multimedia();
+            //  refresh_videos();
 
-    {
-        let state_clone = Arc::clone(&state);
-        let c_clone     = cargar_cantos.clone();
-        ui.on_eliminar_canto(move |id| { state_clone.lock().unwrap().delete_canto(id); c_clone(String::new()); });
-    }
+            // Función auxiliar para construir y guardar ConfigApp desde el estado actual
+            let build_and_save_config = {
+                let state_cfg = Arc::clone(&state);
+                let mm_cfg = Arc::clone(&multimedia_state);
+                let vs_cfg = Arc::clone(&video_state);
+                let roles_cfg = Arc::clone(&roles_pantallas);
+                let ui_cfg = ui.as_weak();
+                let udd = user_data_dir_cfg.clone();
+                move || {
+                    let ui = match ui_cfg.upgrade() {
+                        Some(u) => u,
+                        None => return,
+                    };
+                    let st = state_cfg.lock().unwrap();
+                    let mm = mm_cfg.read().unwrap();
+                    let vs = vs_cfg.read().unwrap();
+                    let fc_b = ui.get_biblias_font_color();
+                    let fc_c = ui.get_cantos_font_color();
+                    let cfg = ConfigApp {
+                        biblias_image_paths: st.biblias_image_paths.clone(),
+                        cantos_image_paths: st.cantos_image_paths.clone(),
+                        biblias_video_paths: st.biblias_video_paths.clone(),
+                        cantos_video_paths: st.cantos_video_paths.clone(),
+                        biblias_selected_img: ui.get_biblias_selected_img(),
+                        cantos_selected_img: ui.get_cantos_selected_img(),
+                        biblias_selected_vid: ui.get_biblias_selected_vid(),
+                        cantos_selected_vid: ui.get_cantos_selected_vid(),
+                        biblias_video_path: ui.get_biblias_video_path().to_string(),
+                        cantos_video_path: ui.get_cantos_video_path().to_string(),
+                        biblias_bg_type: ui.get_biblias_bg_type().to_string(),
+                        cantos_bg_type: ui.get_cantos_bg_type().to_string(),
+                        biblias_font_color: [fc_b.red(), fc_b.green(), fc_b.blue()],
+                        cantos_font_color: [fc_c.red(), fc_c.green(), fc_c.blue()],
+                        biblias_fondo_opacity: ui.get_biblias_fondo_opacity(),
+                        cantos_fondo_opacity: ui.get_cantos_fondo_opacity(),
+                        biblias_font_scale: ui.get_biblias_font_scale(),
+                        cantos_font_scale: ui.get_cantos_font_scale(),
+                        proyeccion_font_family: ui.get_proyeccion_font_family().to_string(),
+                        multimedia_paths: mm.iter().map(|m| m.path.clone()).collect(),
+                        multimedia_names: mm.iter().map(|m| m.name.clone()).collect(),
+                        multimedia_aspectos: mm.iter().map(|m| m.aspecto.clone()).collect(),
+                        video_paths: vs.iter().map(|v| v.path.clone()).collect(),
+                        video_names: vs.iter().map(|v| v.name.clone()).collect(),
+                        video_loops: vs.iter().map(|v| v.is_loop).collect(),
+                        margen_izquierdo: ui.get_margen_izquierdo(),
+                        margen_derecho: ui.get_margen_derecho(),
+                        margen_superior: ui.get_margen_superior(),
+                        margen_inferior: ui.get_margen_inferior(),
+                        default_bg_type: ui.get_default_bg_type().to_string(),
+                        default_bg_idx: ui.get_default_bg_idx(),
+                        tema_oscuro: ui.global::<Theme>().get_is_dark(),
+                        tema: Some(TemaInterfaz::desde_flags(
+                            ui.global::<Theme>().get_is_dark(),
+                            ui.global::<Theme>().get_is_black(),
+                        )),
+                        pantallas_roles: roles_cfg
+                            .lock()
+                            .unwrap()
+                            .iter()
+                            .map(|(k, v)| (*k, *v))
+                            .collect(),
+                        auto_proyectar_inicio: ui.get_auto_proyectar_inicio(),
+                        gemini_api_key: ui.get_gemini_api_key().to_string(),
+                    };
+                    guardar_config(&udd, &cfg);
+                }
+            };
 
-    {
-        let ui_handle = ui.as_weak();
-        ui.on_abrir_formulario_nuevo(move || {
-            let ui = ui_handle.unwrap();
-            ui.set_form_id(-1);
-            ui.set_form_titulo(SharedString::from(""));
-            ui.set_form_letra(SharedString::from(""));
-            ui.set_mostrar_formulario(true);
-        });
-    }
-
-    {
-        let ui_handle   = ui.as_weak();
-        let state_clone = Arc::clone(&state);
-        ui.on_abrir_formulario_editar(move |id, _titulo| {
-            let ui     = ui_handle.unwrap();
-            let estado = state_clone.lock().unwrap();
-            let diapos = estado.get_canto_diapositivas(id);
-            let letra_completa = diapos.iter().map(|d| d.texto.clone()).collect::<Vec<_>>().join("\n\n");
-            ui.set_form_id(id);
-            ui.set_form_titulo(SharedString::from(estado.get_canto_titulo(id)));
-            ui.set_form_letra(SharedString::from(letra_completa));
-            ui.set_mostrar_formulario(true);
-        });
-    }
-
-    {
-        let ui_handle = ui.as_weak();
-        ui.on_confirmar_eliminar_canto(move |id, titulo| {
-            let ui = ui_handle.unwrap();
-            ui.set_menu_canto_id(id);
-            ui.set_menu_canto_titulo(titulo);
-            ui.set_mostrar_confirmar_eliminar(true);
-        });
-    }
-
-    // ── Abrir proyector ──────────────────────────────────────────────────────
-    {
-    let p_handle    = proyector.as_weak();
-    let sp_clone    = Arc::clone(&segunda_pantalla);
-    let pa          = Arc::clone(&proyector_abierto); // ← agregar
-    let wid_clone   = Arc::clone(&proyector_wid);
-    ui.on_abrir_proyector(move || {
-        let p    = p_handle.unwrap();
-        let info = *sp_clone.lock().unwrap();
-        pa.store(true, Ordering::Release); // ← agregar
-        if let Some((x, y, width, height)) = info {
-            p.show().unwrap();
-            configurar_ventana_proyector_linux(Arc::clone(&wid_clone));
-            mover_proyector_a_pantalla(p.as_weak(), x, y, width, height);
-        } else {
-            p.show().unwrap();
-            configurar_ventana_proyector_linux(Arc::clone(&wid_clone));
-            let p_weak = p.as_weak();
-            thread::spawn(move || {
-                thread::sleep(std::time::Duration::from_millis(100));
-                let _ = slint::invoke_from_event_loop(move || {
-                    if let Some(p) = p_weak.upgrade() { p.window().set_maximized(true); }
+            // Ahora sí se puede usar build_and_save_config en márgenes
+            {
+                let p_weak2 = proyector.as_weak();
+                let bsc_margenes = build_and_save_config.clone();
+                ui.on_actualizar_margenes(move |izq, der, sup, inf| {
+                    if let Some(p) = p_weak2.upgrade() {
+                        p.set_margen_izquierdo(izq);
+                        p.set_margen_derecho(der);
+                        p.set_margen_superior(sup);
+                        p.set_margen_inferior(inf);
+                    }
+                    bsc_margenes();
                 });
-            });
-        }
-    });
-}
-
-    // ── Proyectar estrofa ────────────────────────────────────────────────────
-    {
-        let p_handle    = proyector.as_weak();
-        let state_clone = Arc::clone(&state);
-        let ui_h        = ui.as_weak();
-        let vp          = Arc::clone(&video_player);
-        let vp_lib_estrofa = Arc::clone(&biblioteca_video_player);
-
-        let last_modo   = Arc::clone(&modo_en_vivo); 
-        let sp          = Arc::clone(&segunda_pantalla);
-        let bloqueo     = Arc::clone(&bloqueo_estilos);
-        let overlay_e   = Arc::clone(&overlay_estado);
-        let medidor_pe  = medidor_win.as_weak();
-
-        ui.on_proyectar_estrofa(move |texto, referencia| {
-            let p        = p_handle.unwrap();
-            let ui_local = ui_h.unwrap();
-
-            ui_local.set_is_video_projecting(false);
-            // Solo detenemos el video de BIBLIOTECA (si estaba sonando uno).
-            // El video de FONDO (vp) NO se toca aquí: así sigue reproduciéndose
-            // en bucle sin pausarse al cambiar de estrofa/versículo.
-            vp_lib_estrofa.lock().unwrap().detener();
-            p.set_mostrar_video_biblioteca(false);
-            p.set_biblioteca_video_frame(slint::Image::default());
-            bloqueo.store(false, Ordering::Release);
-
-            p.set_texto_proyeccion(texto.clone());
-            {
-                let mut e = overlay_e.lock().unwrap();
-                e.video_activo = false;
-                e.texto = texto.to_string();
             }
-
-            let mut ref_str = referencia.to_string();
-            if !ref_str.is_empty() {
-                let sigla = state_clone.lock().unwrap().get_sigla_actual();
-                if !sigla.is_empty() { ref_str = format!("{}  |  {}", ref_str, sigla); }
-            }
-            p.set_referencia(SharedString::from(ref_str.clone()));
 
             {
-                let mut e = overlay_e.lock().unwrap();
-                e.referencia = ref_str.clone();
+                let bsc_tema = build_and_save_config.clone();
+                ui.on_notificar_cambio_tema(move |_is_dark| {
+                    bsc_tema();
+                });
             }
 
-            let tiene_referencia = !ref_str.is_empty();
-            let info = *sp.lock().unwrap();
-            let (screen_w, screen_h) = if let Some((_, _, w, h)) = info { (w as f32, h as f32) } else { (1280.0, 720.0) };
-            let scale = if tiene_referencia { ui_local.get_biblias_font_scale() } else { ui_local.get_cantos_font_scale() };
-            let (m_izq, m_der, m_sup, m_inf) = (
-                ui_local.get_margen_izquierdo(), ui_local.get_margen_derecho(),
-                ui_local.get_margen_superior(),  ui_local.get_margen_inferior(),
-            );
-            let medidor = medidor_pe.unwrap();
-            let font_size = if tiene_referencia {
-    calcular_font_size_versiculo(&medidor, &texto, screen_w, screen_h, scale, m_izq, m_der, m_sup, m_inf, &ui_local.get_proyeccion_font_family())
-} else {
-    calcular_font_size_canto(&medidor, &texto, screen_w, screen_h, scale, m_izq, m_der, m_sup, m_inf, &ui_local.get_proyeccion_font_family())
-};
-            p.set_tamano_letra(font_size);
-            let modo_actual = if tiene_referencia { "biblias" } else { "cantos" };
-            let mut l_modo    = last_modo.lock().unwrap();
-            let forzar_video  = *l_modo != modo_actual;
-            *l_modo = modo_actual.to_string();
-            aplicar_estilos(&ui_local, &p, &vp, modo_actual, forzar_video);
-            actualizar_overlay_estilos(&ui_local, &state_clone, &overlay_e, modo_actual, ui_local.get_overlay_solo_texto());
-        });
-    }
-
-    // ── Búsqueda bíblica (sugerencias) ──────────────────────────────────────
-    {
-        let ui_h = ui.as_weak();
-        ui.on_bible_search_changed(move |query| {
-            let ui = ui_h.unwrap();
-            if let Some((_, sug)) = buscar_libro_inteligente(&query) {
-                if sug.to_lowercase() != query.to_lowercase() {
-                    ui.set_bible_search_suggestion(SharedString::from(sug));
-                    return;
+            // refresh_multimedia();
+            // refresh_videos();
+            // ── Inicialización de versiones y libros ─────────────────────────────────
+            {
+                let st = state.lock().unwrap();
+                let versiones_slint: Vec<SharedString> = st
+                    .versiones
+                    .iter()
+                    .map(|v| SharedString::from(&v.nombre_completo))
+                    .collect();
+                ui.set_bible_versions(ModelRc::from(Rc::new(VecModel::from(versiones_slint))));
+                if let Some(primera) = st.versiones.first() {
+                    ui.set_current_bible_version(SharedString::from(&primera.nombre_completo));
                 }
+                let libros = st.get_libros_biblia();
+                let libros_slint: Vec<BookInfo> = libros
+                    .into_iter()
+                    .map(|l| BookInfo {
+                        id: l.id,
+                        nombre: SharedString::from(l.nombre),
+                        capitulos: l.capitulos,
+                    })
+                    .collect();
+                ui.set_bible_books(ModelRc::from(Rc::new(VecModel::from(libros_slint))));
             }
-            ui.set_bible_search_suggestion(SharedString::from(""));
-        });
-    }
 
-    {
-        let ui_h = ui.as_weak();
-        ui.on_bible_book_selected(move |book| {
-            let ui = ui_h.unwrap();
-            let mut filas      = Vec::new();
-            let mut fila_actual = Vec::new();
-            for i in 1..=book.capitulos {
-                fila_actual.push(i);
-                if fila_actual.len() == 5 || i == book.capitulos {
-                    filas.push(ChapterRow { caps: ModelRc::from(Rc::new(VecModel::from(fila_actual.clone()))) });
-                    fila_actual.clear();
+            // ── Cargar cantos ────────────────────────────────────────────────────────
+            let cargar_cantos = {
+                let ui_handle = ui.as_weak();
+                let state_clone = Arc::clone(&state);
+                move |busqueda: String| {
+                    let ui = ui_handle.unwrap();
+                    let estado = state_clone.lock().unwrap();
+                    let fav_ids = estado.get_favoritos_ids_cantos();
+                    let cantos_db = if busqueda.is_empty() {
+                        estado.get_all_cantos()
+                    } else {
+                        estado.get_cantos_filtrados(&busqueda)
+                    };
+                    let mut cantos_slint: Vec<Canto> = cantos_db
+                        .into_iter()
+                        .map(|c| {
+                            let is_fav = fav_ids.contains(&c.id);
+                            Canto {
+                                id: c.id,
+                                titulo: SharedString::from(c.titulo),
+                                letra: SharedString::from(""),
+                                favorito: is_fav,
+                            }
+                        })
+                        .collect();
+                    if cantos_slint.is_empty() {
+                        cantos_slint.push(Canto {
+                            id: 0,
+                            titulo: SharedString::from("Click derecho para agregar canto"),
+                            letra: SharedString::from(""),
+                            favorito: false,
+                        });
+                    }
+                    ui.set_cantos(ModelRc::from(Rc::new(VecModel::from(cantos_slint))));
+                    let favs = estado.get_all_favoritos();
+                    ui.set_favoritos(ModelRc::from(Rc::new(VecModel::from(favs))));
                 }
-            }
-            ui.set_chapter_rows(ModelRc::from(Rc::new(VecModel::from(filas))));
-        });
-    }
+            };
+            cargar_cantos(String::new());
 
-    // ── Seleccionar capítulo ─────────────────────────────────────────────────
-    {
-        let ui_h        = ui.as_weak();
-        let state_clone = Arc::clone(&state);
-        let cb_lib      = Arc::clone(&current_biblia_libro);
-        let cb_cap      = Arc::clone(&current_biblia_capitulo);
-        ui.on_bible_chapter_selected(move |cap| {
-            let ui   = ui_h.unwrap();
-            let book = ui.get_selected_bible_book();
-            *cb_lib.lock().unwrap() = book.id;
-            *cb_cap.lock().unwrap() = cap;
-            let titulo = format!("{} {}", book.nombre, cap);
-            ui.set_elemento_seleccionado(SharedString::from(&titulo));
-            let state_t = Arc::clone(&state_clone);
-            let ui_t    = ui.as_weak();
-            let titulo2 = titulo.clone();
-            thread::spawn(move || {
-                let (versiculos, fav_refs) = {
-                    let mut estado = state_t.lock().unwrap();
-                    (estado.get_capitulo(book.id, cap), estado.get_favoritos_refs_versiculos_actual())
-                };
-                let _ = slint::invoke_from_event_loop(move || {
-                    let ui    = ui_t.unwrap();
-                    let diapos: Vec<DiapositivaUI> = versiculos.iter()
-                        .map(|v| versiculo_a_ui_fav(v, &fav_refs, &titulo2))
+            {
+                let ui_handle = ui.as_weak();
+                let state_clone = Arc::clone(&state);
+                let busqueda_secuencia = Arc::new(std::sync::atomic::AtomicU64::new(0));
+                ui.on_buscar_cantos(move |t| {
+                    let busqueda = t.to_string();
+                    let ui_t = ui_handle.clone();
+                    let state_t = Arc::clone(&state_clone);
+                    // Cada búsqueda reclama un número de secuencia. Si el resultado
+                    // llega cuando ya hay una búsqueda más reciente, se descarta en
+                    // vez de pisar la UI con datos viejos (esto causaba la lista de
+                    // cantos/letras en blanco de forma intermitente al escribir rápido
+                    // o al navegar justo mientras una búsqueda vieja seguía en curso).
+                    let seq_arc = Arc::clone(&busqueda_secuencia);
+                    seq_arc.fetch_add(1, Ordering::SeqCst);
+                    let mi_seq = seq_arc.load(Ordering::SeqCst);
+                    thread::spawn(move || {
+                        let cantos_slint = {
+                            let estado = state_t.lock().unwrap();
+                            let fav_ids = estado.get_favoritos_ids_cantos();
+                            let cantos_db = if busqueda.is_empty() {
+                                estado.get_all_cantos()
+                            } else {
+                                estado.get_cantos_filtrados(&busqueda)
+                            };
+                            let mut lista: Vec<Canto> = cantos_db
+                                .into_iter()
+                                .map(|c| {
+                                    let is_fav = fav_ids.contains(&c.id);
+                                    Canto {
+                                        id: c.id,
+                                        titulo: SharedString::from(c.titulo),
+                                        letra: SharedString::from(""),
+                                        favorito: is_fav,
+                                    }
+                                })
+                                .collect();
+                            if lista.is_empty() {
+                                lista.push(Canto {
+                                    id: 0,
+                                    titulo: SharedString::from("Click derecho para agregar canto"),
+                                    letra: SharedString::from(""),
+                                    favorito: false,
+                                });
+                            }
+                            lista
+                        };
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if seq_arc.load(Ordering::SeqCst) != mi_seq {
+                                return;
+                            }
+                            if let Some(ui) = ui_t.upgrade() {
+                                ui.set_cantos(ModelRc::from(Rc::new(VecModel::from(cantos_slint))));
+                            }
+                        });
+                    });
+                });
+            }
+
+            // ── Seleccionar canto ────────────────────────────────────────────────────
+            {
+                let ui_handle = ui.as_weak();
+                let state_clone = Arc::clone(&state);
+                let cb_lib = Arc::clone(&current_biblia_libro);
+                let cb_cap = Arc::clone(&current_biblia_capitulo);
+                ui.on_seleccionar_canto(move |id| {
+                    if id <= 0 {
+                        return;
+                    }
+                    *cb_lib.lock().unwrap() = -1;
+                    *cb_cap.lock().unwrap() = -1;
+                    let ui = ui_handle.unwrap();
+                    let estado = state_clone.lock().unwrap();
+                    ui.set_elemento_seleccionado(SharedString::from(estado.get_canto_titulo(id)));
+                    let diapos: Vec<DiapositivaUI> = estado
+                        .get_canto_diapositivas(id)
+                        .iter()
+                        .map(diapositiva_a_ui)
                         .collect();
                     ui.set_scroll_to_y(0.0);
-                    ui.set_estrofas_actuales(ModelRc::from(Rc::new(VecModel::from(diapos.clone()))));
-                    ui.set_active_estrofa_index(0);
+                    ui.set_estrofas_actuales(ModelRc::from(Rc::new(VecModel::from(diapos))));
+                    ui.set_active_estrofa_index(-1);
                     ui.set_scroll_to_y(0.0);
-                    if !diapos.is_empty() {
-                        ui.invoke_proyectar_estrofa(
-                            diapos[0].texto.clone(),
-                            SharedString::from(format!("{}:{}", titulo2, diapos[0].orden)),
-                        );
-                    }
                     ui.invoke_focus_panel();
                 });
-            });
-        });
-    }
+            }
 
-    // ── Búsqueda bíblica aceptada ────────────────────────────────────────────
-    {
-        let ui_h        = ui.as_weak();
-        let state_clone = Arc::clone(&state);
-        let cb_lib      = Arc::clone(&current_biblia_libro);
-        let cb_cap      = Arc::clone(&current_biblia_capitulo);
-        ui.on_bible_search_accepted(move |query| {
-            let ui = ui_h.unwrap();
-            let q  = query.to_string();
-            // OPT-1: RE_BUSQUEDA ya está compilado; cero overhead aquí
-            if let Some(caps) = RE_BUSQUEDA.captures(&q) {
-                let book_query  = &caps[1];
-                let capitulo: i32      = caps[2].parse().unwrap_or(1);
-                let versiculo_obj: i32 = caps.get(3).map_or(1, |m| m.as_str().parse().unwrap_or(1));
-                if let Some((libro_id, nombre_real)) = buscar_libro_inteligente(book_query) {
-                    *cb_lib.lock().unwrap() = libro_id;
-                    *cb_cap.lock().unwrap() = capitulo;
-                    let titulo = format!("{} {}", nombre_real, capitulo);
+            // ── Guardar canto ────────────────────────────────────────────────────────
+            {
+                let state_clone = Arc::clone(&state);
+                let state_clone2 = Arc::clone(&state);
+                let c_clone = cargar_cantos.clone();
+                let ui_handle = ui.as_weak();
+                let p_handle = proyector.as_weak();
+                let sp_guardar = Arc::clone(&segunda_pantalla);
+                let medidor_gc = medidor_win.as_weak();
+                ui.on_guardar_canto(move |id, titulo, letra| {
+                    let guardado_ok = {
+                        let estado = state_clone.lock().unwrap();
+                        if id == -1 {
+                            estado.add_canto(&titulo, &letra)
+                        } else {
+                            estado.update_canto(id, &titulo, &letra)
+                        }
+                    };
+                    if !guardado_ok {
+                        // No refrescamos con datos posiblemente inconsistentes;
+                        // el usuario puede reintentar guardar sin perder lo escrito.
+                        return;
+                    }
+                    c_clone(String::new());
+                    if id != -1 {
+                        let ui = ui_handle.unwrap();
+                        let p = p_handle.unwrap();
+                        let estado = state_clone2.lock().unwrap();
+                        let titulo_guardado = estado.get_canto_titulo(id);
+                        let titulo_en_panel = ui.get_elemento_seleccionado().to_string();
+                        let es_canto_activo = titulo_en_panel == titulo.to_string()
+                            || titulo_en_panel == titulo_guardado;
+                        if es_canto_activo {
+                            let nuevas_diapos = estado.get_canto_diapositivas(id);
+                            let diapos_slint: Vec<DiapositivaUI> =
+                                nuevas_diapos.iter().map(diapositiva_a_ui).collect();
+                            let active_idx = ui.get_active_estrofa_index();
+                            ui.set_elemento_seleccionado(SharedString::from(&titulo_guardado));
+                            ui.set_estrofas_actuales(ModelRc::from(Rc::new(VecModel::from(
+                                diapos_slint.clone(),
+                            ))));
+                            let idx =
+                                if active_idx >= 0 && (active_idx as usize) < diapos_slint.len() {
+                                    active_idx as usize
+                                } else if !diapos_slint.is_empty() {
+                                    ui.set_active_estrofa_index(0);
+                                    0
+                                } else {
+                                    return;
+                                };
+                            let info_screen = *sp_guardar.lock().unwrap();
+                            let (screen_w, screen_h) = if let Some((_, _, w, h)) = info_screen {
+                                (w as f32, h as f32)
+                            } else {
+                                (1920.0, 1080.0)
+                            };
+                            let (m_izq, m_der, m_sup, m_inf) = (
+                                ui.get_margen_izquierdo(),
+                                ui.get_margen_derecho(),
+                                ui.get_margen_superior(),
+                                ui.get_margen_inferior(),
+                            );
+                            let texto_nuevo = diapos_slint[idx].texto.clone();
+                            let scale = ui.get_cantos_font_scale();
+                            let medidor = medidor_gc.unwrap();
+                            let font_size = calcular_font_size_canto(
+                                &medidor,
+                                &texto_nuevo,
+                                screen_w,
+                                screen_h,
+                                scale,
+                                m_izq,
+                                m_der,
+                                m_sup,
+                                m_inf,
+                                &ui.get_proyeccion_font_family(),
+                            );
+                            p.set_texto_proyeccion(texto_nuevo);
+                            p.set_tamano_letra(font_size);
+                            p.set_referencia(SharedString::from(""));
+                        }
+                    }
+                });
+            }
+
+            {
+                let state_clone = Arc::clone(&state);
+                let c_clone = cargar_cantos.clone();
+                ui.on_eliminar_canto(move |id| {
+                    state_clone.lock().unwrap().delete_canto(id);
+                    c_clone(String::new());
+                });
+            }
+
+            {
+                let ui_handle = ui.as_weak();
+                ui.on_abrir_formulario_nuevo(move || {
+                    let ui = ui_handle.unwrap();
+                    ui.set_form_id(-1);
+                    ui.set_form_titulo(SharedString::from(""));
+                    ui.set_form_letra(SharedString::from(""));
+                    ui.set_mostrar_formulario(true);
+                });
+            }
+
+            {
+                let ui_handle = ui.as_weak();
+                let state_clone = Arc::clone(&state);
+                ui.on_abrir_formulario_editar(move |id, _titulo| {
+                    let ui = ui_handle.unwrap();
+                    let estado = state_clone.lock().unwrap();
+                    let diapos = estado.get_canto_diapositivas(id);
+                    let letra_completa = diapos
+                        .iter()
+                        .map(|d| d.texto.clone())
+                        .collect::<Vec<_>>()
+                        .join("\n\n");
+                    ui.set_form_id(id);
+                    ui.set_form_titulo(SharedString::from(estado.get_canto_titulo(id)));
+                    ui.set_form_letra(SharedString::from(letra_completa));
+                    ui.set_mostrar_formulario(true);
+                });
+            }
+
+            {
+                let ui_handle = ui.as_weak();
+                ui.on_confirmar_eliminar_canto(move |id, titulo| {
+                    let ui = ui_handle.unwrap();
+                    ui.set_menu_canto_id(id);
+                    ui.set_menu_canto_titulo(titulo);
+                    ui.set_mostrar_confirmar_eliminar(true);
+                });
+            }
+
+            // ── Abrir proyector ──────────────────────────────────────────────────────
+            {
+                let p_handle = proyector.as_weak();
+                let sp_clone = Arc::clone(&segunda_pantalla);
+                let pa = Arc::clone(&proyector_abierto); // ← agregar
+                let wid_clone = Arc::clone(&proyector_wid);
+                ui.on_abrir_proyector(move || {
+                    let p = p_handle.unwrap();
+                    let info = *sp_clone.lock().unwrap();
+                    pa.store(true, Ordering::Release); // ← agregar
+                    if let Some((x, y, width, height)) = info {
+                        p.show().unwrap();
+                        configurar_ventana_proyector_linux(Arc::clone(&wid_clone));
+                        mover_proyector_a_pantalla(p.as_weak(), x, y, width, height);
+                    } else {
+                        p.show().unwrap();
+                        configurar_ventana_proyector_linux(Arc::clone(&wid_clone));
+                        let p_weak = p.as_weak();
+                        thread::spawn(move || {
+                            thread::sleep(std::time::Duration::from_millis(100));
+                            let _ = slint::invoke_from_event_loop(move || {
+                                if let Some(p) = p_weak.upgrade() {
+                                    p.window().set_maximized(true);
+                                }
+                            });
+                        });
+                    }
+                });
+            }
+
+            // ── Proyectar estrofa ────────────────────────────────────────────────────
+            {
+                let p_handle = proyector.as_weak();
+                let state_clone = Arc::clone(&state);
+                let ui_h = ui.as_weak();
+                let vp = Arc::clone(&video_player);
+                let vp_lib_estrofa = Arc::clone(&biblioteca_video_player);
+
+                let last_modo = Arc::clone(&modo_en_vivo);
+                let sp = Arc::clone(&segunda_pantalla);
+                let bloqueo = Arc::clone(&bloqueo_estilos);
+                let overlay_e = Arc::clone(&overlay_estado);
+                let medidor_pe = medidor_win.as_weak();
+
+                ui.on_proyectar_estrofa(move |texto, referencia| {
+                    let p = p_handle.unwrap();
+                    let ui_local = ui_h.unwrap();
+
+                    ui_local.set_is_video_projecting(false);
+                    // Solo detenemos el video de BIBLIOTECA (si estaba sonando uno).
+                    // El video de FONDO (vp) NO se toca aquí: así sigue reproduciéndose
+                    // en bucle sin pausarse al cambiar de estrofa/versículo.
+                    vp_lib_estrofa.lock().unwrap().detener();
+                    p.set_mostrar_video_biblioteca(false);
+                    p.set_biblioteca_video_frame(slint::Image::default());
+                    bloqueo.store(false, Ordering::Release);
+
+                    p.set_texto_proyeccion(texto.clone());
+                    {
+                        let mut e = overlay_e.lock().unwrap();
+                        e.video_activo = false;
+                        e.texto = texto.to_string();
+                    }
+
+                    let mut ref_str = referencia.to_string();
+                    if !ref_str.is_empty() {
+                        let sigla = state_clone.lock().unwrap().get_sigla_actual();
+                        if !sigla.is_empty() {
+                            ref_str = format!("{}  |  {}", ref_str, sigla);
+                        }
+                    }
+                    p.set_referencia(SharedString::from(ref_str.clone()));
+
+                    {
+                        let mut e = overlay_e.lock().unwrap();
+                        e.referencia = ref_str.clone();
+                    }
+
+                    let tiene_referencia = !ref_str.is_empty();
+                    let info = *sp.lock().unwrap();
+                    let (screen_w, screen_h) = if let Some((_, _, w, h)) = info {
+                        (w as f32, h as f32)
+                    } else {
+                        (1280.0, 720.0)
+                    };
+                    let scale = if tiene_referencia {
+                        ui_local.get_biblias_font_scale()
+                    } else {
+                        ui_local.get_cantos_font_scale()
+                    };
+                    let (m_izq, m_der, m_sup, m_inf) = (
+                        ui_local.get_margen_izquierdo(),
+                        ui_local.get_margen_derecho(),
+                        ui_local.get_margen_superior(),
+                        ui_local.get_margen_inferior(),
+                    );
+                    let medidor = medidor_pe.unwrap();
+                    let font_size = if tiene_referencia {
+                        calcular_font_size_versiculo(
+                            &medidor,
+                            &texto,
+                            screen_w,
+                            screen_h,
+                            scale,
+                            m_izq,
+                            m_der,
+                            m_sup,
+                            m_inf,
+                            &ui_local.get_proyeccion_font_family(),
+                        )
+                    } else {
+                        calcular_font_size_canto(
+                            &medidor,
+                            &texto,
+                            screen_w,
+                            screen_h,
+                            scale,
+                            m_izq,
+                            m_der,
+                            m_sup,
+                            m_inf,
+                            &ui_local.get_proyeccion_font_family(),
+                        )
+                    };
+                    p.set_tamano_letra(font_size);
+                    let modo_actual = if tiene_referencia {
+                        "biblias"
+                    } else {
+                        "cantos"
+                    };
+                    let mut l_modo = last_modo.lock().unwrap();
+                    let forzar_video = *l_modo != modo_actual;
+                    *l_modo = modo_actual.to_string();
+                    aplicar_estilos(&ui_local, &p, &vp, modo_actual, forzar_video);
+                    actualizar_overlay_estilos(
+                        &ui_local,
+                        &state_clone,
+                        &overlay_e,
+                        modo_actual,
+                        ui_local.get_overlay_solo_texto(),
+                    );
+                });
+            }
+
+            // ── Búsqueda bíblica (sugerencias) ──────────────────────────────────────
+            {
+                let ui_h = ui.as_weak();
+                ui.on_bible_search_changed(move |query| {
+                    let ui = ui_h.unwrap();
+                    if let Some((_, sug)) = buscar_libro_inteligente(&query) {
+                        if sug.to_lowercase() != query.to_lowercase() {
+                            ui.set_bible_search_suggestion(SharedString::from(sug));
+                            return;
+                        }
+                    }
+                    ui.set_bible_search_suggestion(SharedString::from(""));
+                });
+            }
+
+            {
+                let ui_h = ui.as_weak();
+                ui.on_bible_book_selected(move |book| {
+                    let ui = ui_h.unwrap();
+                    let mut filas = Vec::new();
+                    let mut fila_actual = Vec::with_capacity(5);
+                    for i in 1..=book.capitulos {
+                        fila_actual.push(i);
+                        if fila_actual.len() == 5 || i == book.capitulos {
+                            let capitulos =
+                                std::mem::replace(&mut fila_actual, Vec::with_capacity(5));
+                            filas.push(ChapterRow {
+                                caps: ModelRc::from(Rc::new(VecModel::from(capitulos))),
+                            });
+                        }
+                    }
+                    ui.set_chapter_rows(ModelRc::from(Rc::new(VecModel::from(filas))));
+                });
+            }
+
+            // ── Seleccionar capítulo ─────────────────────────────────────────────────
+            {
+                let ui_h = ui.as_weak();
+                let state_clone = Arc::clone(&state);
+                let cb_lib = Arc::clone(&current_biblia_libro);
+                let cb_cap = Arc::clone(&current_biblia_capitulo);
+                ui.on_bible_chapter_selected(move |cap| {
+                    let ui = ui_h.unwrap();
+                    let book = ui.get_selected_bible_book();
+                    *cb_lib.lock().unwrap() = book.id;
+                    *cb_cap.lock().unwrap() = cap;
+                    let titulo = format!("{} {}", book.nombre, cap);
                     ui.set_elemento_seleccionado(SharedString::from(&titulo));
-                    ui.set_selected_bible_book(BookInfo {
-                        id: libro_id,
-                        nombre: SharedString::from(&nombre_real),
-                        capitulos: 0,
-                    });
                     let state_t = Arc::clone(&state_clone);
-                    let ui_t    = ui.as_weak();
+                    let ui_t = ui.as_weak();
+                    let titulo2 = titulo.clone();
                     thread::spawn(move || {
                         let (versiculos, fav_refs) = {
                             let mut estado = state_t.lock().unwrap();
-                            (estado.get_capitulo(libro_id, capitulo), estado.get_favoritos_refs_versiculos_actual())
+                            (
+                                estado.get_capitulo(book.id, cap),
+                                estado.get_favoritos_refs_versiculos_actual(),
+                            )
                         };
                         let _ = slint::invoke_from_event_loop(move || {
                             let ui = ui_t.unwrap();
-                            let mut target_index = 0i32;
-                            let diapos: Vec<DiapositivaUI> = versiculos.iter().enumerate().map(|(i, v)| {
-                                if v.versiculo == versiculo_obj { target_index = i as i32; }
-                                versiculo_a_ui_fav(v, &fav_refs, &titulo)
-                            }).collect();
-                            ui.set_estrofas_actuales(ModelRc::from(Rc::new(VecModel::from(diapos.clone()))));
-                            ui.set_active_estrofa_index(target_index);
-                            let offset = target_index as f32 * 115.0;
-                            ui.set_scroll_to_y(if offset > 150.0 { -(offset - 150.0) } else { 0.0 });
-                            if (target_index as usize) < diapos.len() {
-                                let text = diapos[target_index as usize].texto.clone();
-                                let ord  = diapos[target_index as usize].orden.clone();
+                            let diapos: Vec<DiapositivaUI> = versiculos
+                                .iter()
+                                .map(|v| versiculo_a_ui_fav(v, &fav_refs, &titulo2))
+                                .collect();
+                            ui.set_scroll_to_y(0.0);
+                            ui.set_estrofas_actuales(ModelRc::from(Rc::new(VecModel::from(
+                                diapos.clone(),
+                            ))));
+                            ui.set_active_estrofa_index(0);
+                            ui.set_scroll_to_y(0.0);
+                            if !diapos.is_empty() {
                                 ui.invoke_proyectar_estrofa(
-                                    text,
-                                    SharedString::from(format!("{}:{}", titulo, ord)),
+                                    diapos[0].texto.clone(),
+                                    SharedString::from(format!("{}:{}", titulo2, diapos[0].orden)),
                                 );
                             }
                             ui.invoke_focus_panel();
                         });
                     });
-                    ui.set_bible_search_suggestion(SharedString::from(""));
-                }
+                });
             }
-        });
-    }
 
-    // ── Previsualización bíblica (Shift+Enter) ───────────────────────────────
-    {
-        let ui_h        = ui.as_weak();
-        let state_clone = Arc::clone(&state);
-        let cb_lib      = Arc::clone(&current_biblia_libro);
-        let cb_cap      = Arc::clone(&current_biblia_capitulo);
-        ui.on_bible_search_preview(move |query| {
-            let ui = ui_h.unwrap();
-            let q  = query.to_string();
-            if let Some(caps) = RE_BUSQUEDA.captures(&q) {
-                let book_query         = &caps[1];
-                let capitulo: i32      = caps[2].parse().unwrap_or(1);
-                let versiculo_obj: i32 = caps.get(3).map_or(1, |m| m.as_str().parse().unwrap_or(1));
-                if let Some((libro_id, nombre_real)) = buscar_libro_inteligente(book_query) {
-                    *cb_lib.lock().unwrap() = libro_id;
-                    *cb_cap.lock().unwrap() = capitulo;
-                    let titulo = format!("{} {}", nombre_real, capitulo);
-                    ui.set_elemento_seleccionado(SharedString::from(&titulo));
-                    ui.set_selected_bible_book(BookInfo {
-                        id: libro_id,
-                        nombre: SharedString::from(&nombre_real),
-                        capitulos: 0,
-                    });
-                    let state_t = Arc::clone(&state_clone);
-                    let ui_t    = ui.as_weak();
-                    thread::spawn(move || {
-                        let (versiculos, fav_refs) = {
-                            let mut estado = state_t.lock().unwrap();
-                            (estado.get_capitulo(libro_id, capitulo),
-                             estado.get_favoritos_refs_versiculos_actual())
-                        };
-                        let _ = slint::invoke_from_event_loop(move || {
-                            let ui = ui_t.unwrap();
-                            let mut target_index = 0i32;
-                            let diapos: Vec<DiapositivaUI> = versiculos.iter().enumerate()
-                                .map(|(i, v)| {
-                                    if v.versiculo == versiculo_obj { target_index = i as i32; }
-                                    versiculo_a_ui_fav(v, &fav_refs, &titulo)
-                                })
-                                .collect();
-                            ui.set_estrofas_actuales(ModelRc::from(Rc::new(VecModel::from(diapos))));
-                            ui.set_active_estrofa_index(-1);   // ← AGREGAR: evita el falso "EN VIVO" en la preview
-                            let offset = target_index as f32 * 115.0;
-                            ui.set_scroll_to_y(if offset > 150.0 { -(offset - 150.0) } else { 0.0 });
-                            // ⚠️ SIN invoke_proyectar_estrofa → segunda pantalla intacta
-                            ui.invoke_focus_panel();
-                        });
-                    });
-                    ui.set_bible_search_suggestion(SharedString::from(""));
-                }
-            }
-        });
-    }
-
-    // ── Cambio de versión bíblica ────────────────────────────────────────────
-    {
-        let ui_h        = ui.as_weak();
-        let state_clone = Arc::clone(&state);
-        let cb_lib      = Arc::clone(&current_biblia_libro);
-        let cb_cap      = Arc::clone(&current_biblia_capitulo);
-        ui.on_bible_version_changed(move |version_name| {
-            let ui  = ui_h.unwrap();
-            let lib = *cb_lib.lock().unwrap();
-            let cap = *cb_cap.lock().unwrap();
-            let mut versiculos_nuevos = Vec::new();
-            let mut nombre_libro = String::new();
+            // ── Búsqueda bíblica aceptada ────────────────────────────────────────────
             {
-                let mut estado = state_clone.lock().unwrap();
-                estado.set_version_by_name(version_name.as_str());
-                if lib != -1 && cap != -1 {
-                    versiculos_nuevos = estado.get_capitulo(lib, cap);
-                    let libros = estado.get_libros_biblia();
-                    if let Some(l) = libros.iter().find(|b| b.id == lib) {
-                        nombre_libro = l.nombre.clone();
+                let ui_h = ui.as_weak();
+                let state_clone = Arc::clone(&state);
+                let cb_lib = Arc::clone(&current_biblia_libro);
+                let cb_cap = Arc::clone(&current_biblia_capitulo);
+                ui.on_bible_search_accepted(move |query| {
+                    let ui = ui_h.unwrap();
+                    let q = query.to_string();
+                    // OPT-1: RE_BUSQUEDA ya está compilado; cero overhead aquí
+                    if let Some(caps) = RE_BUSQUEDA.captures(&q) {
+                        let book_query = &caps[1];
+                        let capitulo: i32 = caps[2].parse().unwrap_or(1);
+                        let versiculo_obj: i32 =
+                            caps.get(3).map_or(1, |m| m.as_str().parse().unwrap_or(1));
+                        if let Some((libro_id, nombre_real)) = buscar_libro_inteligente(book_query)
+                        {
+                            *cb_lib.lock().unwrap() = libro_id;
+                            *cb_cap.lock().unwrap() = capitulo;
+                            let titulo = format!("{} {}", nombre_real, capitulo);
+                            ui.set_elemento_seleccionado(SharedString::from(&titulo));
+                            ui.set_selected_bible_book(BookInfo {
+                                id: libro_id,
+                                nombre: SharedString::from(&nombre_real),
+                                capitulos: 0,
+                            });
+                            let state_t = Arc::clone(&state_clone);
+                            let ui_t = ui.as_weak();
+                            thread::spawn(move || {
+                                let (versiculos, fav_refs) = {
+                                    let mut estado = state_t.lock().unwrap();
+                                    (
+                                        estado.get_capitulo(libro_id, capitulo),
+                                        estado.get_favoritos_refs_versiculos_actual(),
+                                    )
+                                };
+                                let _ = slint::invoke_from_event_loop(move || {
+                                    let ui = ui_t.unwrap();
+                                    let mut target_index = 0i32;
+                                    let diapos: Vec<DiapositivaUI> = versiculos
+                                        .iter()
+                                        .enumerate()
+                                        .map(|(i, v)| {
+                                            if v.versiculo == versiculo_obj {
+                                                target_index = i as i32;
+                                            }
+                                            versiculo_a_ui_fav(v, &fav_refs, &titulo)
+                                        })
+                                        .collect();
+                                    ui.set_estrofas_actuales(ModelRc::from(Rc::new(
+                                        VecModel::from(diapos.clone()),
+                                    )));
+                                    ui.set_active_estrofa_index(target_index);
+                                    let offset = target_index as f32 * 115.0;
+                                    ui.set_scroll_to_y(if offset > 150.0 {
+                                        -(offset - 150.0)
+                                    } else {
+                                        0.0
+                                    });
+                                    if (target_index as usize) < diapos.len() {
+                                        let text = diapos[target_index as usize].texto.clone();
+                                        let ord = diapos[target_index as usize].orden.clone();
+                                        ui.invoke_proyectar_estrofa(
+                                            text,
+                                            SharedString::from(format!("{}:{}", titulo, ord)),
+                                        );
+                                    }
+                                    ui.invoke_focus_panel();
+                                });
+                            });
+                            ui.set_bible_search_suggestion(SharedString::from(""));
+                        }
                     }
-                }
+                });
             }
-            if lib != -1 && cap != -1 && !versiculos_nuevos.is_empty() {
-                let active_idx = ui.get_active_estrofa_index();
-                let current_elem = ui.get_elemento_seleccionado().to_string();
-                let titulo = if !nombre_libro.is_empty() {
-                    format!("{} {}", nombre_libro, cap)
-                } else if !current_elem.is_empty() && !current_elem.starts_with(' ') {
-                    current_elem
-                } else {
-                    let book_name = ui.get_selected_bible_book().nombre.to_string();
-                    if !book_name.is_empty() {
-                        format!("{} {}", book_name, cap)
-                    } else {
-                        format!("Capítulo {}", cap)
+
+            // ── Previsualización bíblica (Shift+Enter) ───────────────────────────────
+            {
+                let ui_h = ui.as_weak();
+                let state_clone = Arc::clone(&state);
+                let cb_lib = Arc::clone(&current_biblia_libro);
+                let cb_cap = Arc::clone(&current_biblia_capitulo);
+                ui.on_bible_search_preview(move |query| {
+                    let ui = ui_h.unwrap();
+                    let q = query.to_string();
+                    if let Some(caps) = RE_BUSQUEDA.captures(&q) {
+                        let book_query = &caps[1];
+                        let capitulo: i32 = caps[2].parse().unwrap_or(1);
+                        let versiculo_obj: i32 =
+                            caps.get(3).map_or(1, |m| m.as_str().parse().unwrap_or(1));
+                        if let Some((libro_id, nombre_real)) = buscar_libro_inteligente(book_query)
+                        {
+                            *cb_lib.lock().unwrap() = libro_id;
+                            *cb_cap.lock().unwrap() = capitulo;
+                            let titulo = format!("{} {}", nombre_real, capitulo);
+                            ui.set_elemento_seleccionado(SharedString::from(&titulo));
+                            ui.set_selected_bible_book(BookInfo {
+                                id: libro_id,
+                                nombre: SharedString::from(&nombre_real),
+                                capitulos: 0,
+                            });
+                            let state_t = Arc::clone(&state_clone);
+                            let ui_t = ui.as_weak();
+                            thread::spawn(move || {
+                                let (versiculos, fav_refs) = {
+                                    let mut estado = state_t.lock().unwrap();
+                                    (
+                                        estado.get_capitulo(libro_id, capitulo),
+                                        estado.get_favoritos_refs_versiculos_actual(),
+                                    )
+                                };
+                                let _ = slint::invoke_from_event_loop(move || {
+                                    let ui = ui_t.unwrap();
+                                    let mut target_index = 0i32;
+                                    let diapos: Vec<DiapositivaUI> = versiculos
+                                        .iter()
+                                        .enumerate()
+                                        .map(|(i, v)| {
+                                            if v.versiculo == versiculo_obj {
+                                                target_index = i as i32;
+                                            }
+                                            versiculo_a_ui_fav(v, &fav_refs, &titulo)
+                                        })
+                                        .collect();
+                                    ui.set_estrofas_actuales(ModelRc::from(Rc::new(
+                                        VecModel::from(diapos),
+                                    )));
+                                    ui.set_active_estrofa_index(-1); // ← AGREGAR: evita el falso "EN VIVO" en la preview
+                                    let offset = target_index as f32 * 115.0;
+                                    ui.set_scroll_to_y(if offset > 150.0 {
+                                        -(offset - 150.0)
+                                    } else {
+                                        0.0
+                                    });
+                                    // ⚠️ SIN invoke_proyectar_estrofa → segunda pantalla intacta
+                                    ui.invoke_focus_panel();
+                                });
+                            });
+                            ui.set_bible_search_suggestion(SharedString::from(""));
+                        }
                     }
-                };
-                ui.set_elemento_seleccionado(SharedString::from(&titulo));
-                let fav_refs   = state_clone.lock().unwrap().get_favoritos_refs_versiculos_actual();
-                let diapos: Vec<DiapositivaUI> = versiculos_nuevos.iter()
-                    .map(|v| versiculo_a_ui_fav(v, &fav_refs, &titulo))
-                    .collect();
-                ui.set_estrofas_actuales(ModelRc::from(Rc::new(VecModel::from(diapos.clone()))));
-                if active_idx >= 0 && (active_idx as usize) < diapos.len() {
-                    let texto_nuevo = diapos[active_idx as usize].texto.clone();
-                    let orden       = diapos[active_idx as usize].orden.clone();
-                    ui.invoke_proyectar_estrofa(
-                        texto_nuevo,
-                        SharedString::from(format!("{}:{}", titulo, orden)),
+                });
+            }
+
+            // ── Cambio de versión bíblica ────────────────────────────────────────────
+            {
+                let ui_h = ui.as_weak();
+                let state_clone = Arc::clone(&state);
+                let cb_lib = Arc::clone(&current_biblia_libro);
+                let cb_cap = Arc::clone(&current_biblia_capitulo);
+                ui.on_bible_version_changed(move |version_name| {
+                    let ui = ui_h.unwrap();
+                    let lib = *cb_lib.lock().unwrap();
+                    let cap = *cb_cap.lock().unwrap();
+                    let mut versiculos_nuevos = Vec::new();
+                    let mut nombre_libro = String::new();
+                    {
+                        let mut estado = state_clone.lock().unwrap();
+                        estado.set_version_by_name(version_name.as_str());
+                        if lib != -1 && cap != -1 {
+                            versiculos_nuevos = estado.get_capitulo(lib, cap);
+                            let libros = estado.get_libros_biblia();
+                            if let Some(l) = libros.iter().find(|b| b.id == lib) {
+                                nombre_libro = l.nombre.clone();
+                            }
+                        }
+                    }
+                    if lib != -1 && cap != -1 && !versiculos_nuevos.is_empty() {
+                        let active_idx = ui.get_active_estrofa_index();
+                        let current_elem = ui.get_elemento_seleccionado().to_string();
+                        let titulo = if !nombre_libro.is_empty() {
+                            format!("{} {}", nombre_libro, cap)
+                        } else if !current_elem.is_empty() && !current_elem.starts_with(' ') {
+                            current_elem
+                        } else {
+                            let book_name = ui.get_selected_bible_book().nombre.to_string();
+                            if !book_name.is_empty() {
+                                format!("{} {}", book_name, cap)
+                            } else {
+                                format!("Capítulo {}", cap)
+                            }
+                        };
+                        ui.set_elemento_seleccionado(SharedString::from(&titulo));
+                        let fav_refs = state_clone
+                            .lock()
+                            .unwrap()
+                            .get_favoritos_refs_versiculos_actual();
+                        let diapos: Vec<DiapositivaUI> = versiculos_nuevos
+                            .iter()
+                            .map(|v| versiculo_a_ui_fav(v, &fav_refs, &titulo))
+                            .collect();
+                        ui.set_estrofas_actuales(ModelRc::from(Rc::new(VecModel::from(
+                            diapos.clone(),
+                        ))));
+                        if active_idx >= 0 && (active_idx as usize) < diapos.len() {
+                            let texto_nuevo = diapos[active_idx as usize].texto.clone();
+                            let orden = diapos[active_idx as usize].orden.clone();
+                            ui.invoke_proyectar_estrofa(
+                                texto_nuevo,
+                                SharedString::from(format!("{}:{}", titulo, orden)),
+                            );
+                        }
+                    }
+                    ui.invoke_focus_panel();
+                });
+            }
+
+            // ── Sync estilos ─────────────────────────────────────────────────────────
+            {
+                let ui_h = ui.as_weak();
+                let p_h = proyector.as_weak();
+                let vp = Arc::clone(&video_player);
+                let sp = Arc::clone(&segunda_pantalla);
+                let bloqueo = Arc::clone(&bloqueo_estilos);
+                let modo_vivo = Arc::clone(&modo_en_vivo);
+                let bsc_estilos = build_and_save_config.clone();
+                let medidor_se = medidor_win.as_weak();
+                let state_sync = Arc::clone(&state);
+                let overlay_sync = Arc::clone(&overlay_estado);
+                ui.on_sync_estilos(move || {
+                    let ui = ui_h.unwrap();
+                    let p = p_h.unwrap();
+                    if bloqueo.load(Ordering::Acquire) {
+                        return;
+                    }
+                    let modo = ui.get_modal_tab();
+                    let en_vivo = modo_vivo.lock().unwrap().clone();
+                    if en_vivo.is_empty() || en_vivo != modo.as_str() {
+                        bsc_estilos(); // igual se guarda para que aplique al proyectar
+                        return;
+                    }
+                    aplicar_estilos(&ui, &p, &vp, modo.as_str(), true);
+                    actualizar_overlay_estilos(
+                        &ui,
+                        &state_sync,
+                        &overlay_sync,
+                        modo.as_str(),
+                        ui.get_overlay_solo_texto(),
                     );
-                }
-            }
-            ui.invoke_focus_panel();
-        });
-    }
-
-    // ── Sync estilos ─────────────────────────────────────────────────────────
-    {
-        let ui_h    = ui.as_weak();
-        let p_h     = proyector.as_weak();
-        let vp      = Arc::clone(&video_player);
-        let sp      = Arc::clone(&segunda_pantalla);
-        let bloqueo = Arc::clone(&bloqueo_estilos);
-        let modo_vivo   = Arc::clone(&modo_en_vivo);
-        let bsc_estilos = build_and_save_config.clone();
-        let medidor_se  = medidor_win.as_weak();
-        let state_sync   = Arc::clone(&state);
-        let overlay_sync = Arc::clone(&overlay_estado);
-        ui.on_sync_estilos(move || {
-            let ui = ui_h.unwrap();
-            let p  = p_h.unwrap();
-            if bloqueo.load(Ordering::Acquire) { return; }
-            let modo = ui.get_modal_tab();
-            let en_vivo = modo_vivo.lock().unwrap().clone();
-        if en_vivo.is_empty() || en_vivo != modo.as_str() {
-            bsc_estilos();  // igual se guarda para que aplique al proyectar
-            return;
-        }
-            aplicar_estilos(&ui, &p, &vp, modo.as_str(), true);
-            actualizar_overlay_estilos(&ui, &state_sync, &overlay_sync, modo.as_str(), ui.get_overlay_solo_texto());
-            let active_idx = ui.get_active_estrofa_index();
-            if active_idx >= 0 {
-                let estrofas = ui.get_estrofas_actuales();
-                let idx = active_idx as usize;
-                if idx < estrofas.row_count() {
-                    if let Some(d) = estrofas.row_data(idx) {
-                        let texto      = d.texto.to_string();
-                        let referencia = p.get_referencia().to_string();
-                        let tiene_ref  = !referencia.is_empty();
-                        let info       = *sp.lock().unwrap();
-                        let (sw, sh)   = if let Some((_, _, w, h)) = info { (w as f32, h as f32) } else { (1280.0, 720.0) };
-                        let scale      = if modo == "biblias" { ui.get_biblias_font_scale() } else { ui.get_cantos_font_scale() };
-                        let (m_izq, m_der, m_sup, m_inf) = (
-                            ui.get_margen_izquierdo(), ui.get_margen_derecho(),
-                            ui.get_margen_superior(),  ui.get_margen_inferior(),
-                        );
-                        let medidor = medidor_se.unwrap();
-                        let base_size = if tiene_ref {
-    calcular_font_size_versiculo(&medidor, &texto, sw, sh, scale, m_izq, m_der, m_sup, m_inf, &ui.get_proyeccion_font_family())
-} else {
-    calcular_font_size_canto(&medidor, &texto, sw, sh, scale, m_izq, m_der, m_sup, m_inf, &ui.get_proyeccion_font_family())
-};
-                        p.set_tamano_letra(base_size);
+                    let active_idx = ui.get_active_estrofa_index();
+                    if active_idx >= 0 {
+                        let estrofas = ui.get_estrofas_actuales();
+                        let idx = active_idx as usize;
+                        if idx < estrofas.row_count() {
+                            if let Some(d) = estrofas.row_data(idx) {
+                                let texto = d.texto.to_string();
+                                let referencia = p.get_referencia().to_string();
+                                let tiene_ref = !referencia.is_empty();
+                                let info = *sp.lock().unwrap();
+                                let (sw, sh) = if let Some((_, _, w, h)) = info {
+                                    (w as f32, h as f32)
+                                } else {
+                                    (1280.0, 720.0)
+                                };
+                                let scale = if modo == "biblias" {
+                                    ui.get_biblias_font_scale()
+                                } else {
+                                    ui.get_cantos_font_scale()
+                                };
+                                let (m_izq, m_der, m_sup, m_inf) = (
+                                    ui.get_margen_izquierdo(),
+                                    ui.get_margen_derecho(),
+                                    ui.get_margen_superior(),
+                                    ui.get_margen_inferior(),
+                                );
+                                let medidor = medidor_se.unwrap();
+                                let base_size = if tiene_ref {
+                                    calcular_font_size_versiculo(
+                                        &medidor,
+                                        &texto,
+                                        sw,
+                                        sh,
+                                        scale,
+                                        m_izq,
+                                        m_der,
+                                        m_sup,
+                                        m_inf,
+                                        &ui.get_proyeccion_font_family(),
+                                    )
+                                } else {
+                                    calcular_font_size_canto(
+                                        &medidor,
+                                        &texto,
+                                        sw,
+                                        sh,
+                                        scale,
+                                        m_izq,
+                                        m_der,
+                                        m_sup,
+                                        m_inf,
+                                        &ui.get_proyeccion_font_family(),
+                                    )
+                                };
+                                p.set_tamano_letra(base_size);
+                            }
+                        }
                     }
-                }
+                    bsc_estilos();
+                });
             }
-            bsc_estilos();
-        });
-    }
 
-    // ── Sync font scale ──────────────────────────────────────────────────────
-    {
-        let ui_h = ui.as_weak();
-        let p_h  = proyector.as_weak();
-        let sp   = Arc::clone(&segunda_pantalla);
-        let _modo_vivo = Arc::clone(&modo_en_vivo); 
-        let bsc_font = build_and_save_config.clone();
-        let medidor_sfs = medidor_win.as_weak();
-        ui.on_sync_font_scale(move || {
-            let ui         = ui_h.unwrap();
-            let p          = p_h.unwrap();
-            let active_idx = ui.get_active_estrofa_index();
-            if active_idx < 0 { return; }
-            let estrofas = ui.get_estrofas_actuales();
-            let idx      = active_idx as usize;
-            if idx >= estrofas.row_count() { return; }
-            if let Some(d) = estrofas.row_data(idx) {
-                let texto     = d.texto.to_string();
-                let referencia = p.get_referencia().to_string();
-                let tiene_ref  = !referencia.is_empty();
-                let info       = *sp.lock().unwrap();
-                let (sw, sh)   = if let Some((_, _, w, h)) = info { (w as f32, h as f32) } else { (1280.0, 720.0) };
-                let modo       = ui.get_modal_tab();
-                let scale      = if modo == "biblias" { ui.get_biblias_font_scale() } else { ui.get_cantos_font_scale() };
-                let (m_izq, m_der, m_sup, m_inf) = (
-                    ui.get_margen_izquierdo(), ui.get_margen_derecho(),
-                    ui.get_margen_superior(),  ui.get_margen_inferior(),
-                );
-                let medidor = medidor_sfs.unwrap();
-                let base_size = if tiene_ref {
-    calcular_font_size_versiculo(&medidor, &texto, sw, sh, scale, m_izq, m_der, m_sup, m_inf, &ui.get_proyeccion_font_family())
-} else {
-    calcular_font_size_canto(&medidor, &texto, sw, sh, scale, m_izq, m_der, m_sup, m_inf, &ui.get_proyeccion_font_family())
-};
-                p.set_tamano_letra(base_size);
-            }
-            bsc_font();
-        });
-    }
-
-        // ── Cambio de fuente (GLOBAL: aplica sin importar la pestaña activa) ────
-    {
-        let ui_h        = ui.as_weak();
-        let p_h         = proyector.as_weak();
-        let sp          = Arc::clone(&segunda_pantalla);
-        let modo_vivo   = Arc::clone(&modo_en_vivo);
-        let bsc_fuente  = build_and_save_config.clone();
-        let medidor_cf  = medidor_win.as_weak();
-        ui.on_cambiar_fuente_proyeccion(move |fuente| {
-            let ui = ui_h.unwrap();
-            let p  = p_h.unwrap();
-            p.set_text_font_family(fuente.clone());
-
-            let modo_actual = modo_vivo.lock().unwrap().clone();
-            if !modo_actual.is_empty() {
-                let active_idx = ui.get_active_estrofa_index();
-                if active_idx >= 0 {
+            // ── Sync font scale ──────────────────────────────────────────────────────
+            {
+                let ui_h = ui.as_weak();
+                let p_h = proyector.as_weak();
+                let sp = Arc::clone(&segunda_pantalla);
+                let _modo_vivo = Arc::clone(&modo_en_vivo);
+                let bsc_font = build_and_save_config.clone();
+                let medidor_sfs = medidor_win.as_weak();
+                ui.on_sync_font_scale(move || {
+                    let ui = ui_h.unwrap();
+                    let p = p_h.unwrap();
+                    let active_idx = ui.get_active_estrofa_index();
+                    if active_idx < 0 {
+                        return;
+                    }
                     let estrofas = ui.get_estrofas_actuales();
                     let idx = active_idx as usize;
-                    if idx < estrofas.row_count() {
-                        if let Some(d) = estrofas.row_data(idx) {
-                            let texto      = d.texto.to_string();
-                            let referencia = p.get_referencia().to_string();
-                            let tiene_ref  = !referencia.is_empty();
-                            let info       = *sp.lock().unwrap();
-                            let (sw, sh)   = if let Some((_, _, w, h)) = info { (w as f32, h as f32) } else { (1280.0, 720.0) };
-                            let scale      = if modo_actual == "biblias" { ui.get_biblias_font_scale() } else { ui.get_cantos_font_scale() };
-                            let (m_izq, m_der, m_sup, m_inf) = (
-                                ui.get_margen_izquierdo(), ui.get_margen_derecho(),
-                                ui.get_margen_superior(),  ui.get_margen_inferior(),
-                            );
-                            let medidor = medidor_cf.unwrap();
-                            let base_size = if tiene_ref {
-                                calcular_font_size_versiculo(&medidor, &texto, sw, sh, scale, m_izq, m_der, m_sup, m_inf, &fuente)
-                            } else {
-                                calcular_font_size_canto(&medidor, &texto, sw, sh, scale, m_izq, m_der, m_sup, m_inf, &fuente)
-                            };
-                            p.set_tamano_letra(base_size);
-                        }
+                    if idx >= estrofas.row_count() {
+                        return;
                     }
-                }
-            }
-            bsc_fuente();
-        });
-    }
-
-    // ── Galería (imágenes y vídeos de fondo) ─────────────────────────────────
-    {
-        let ui_h        = ui.as_weak();
-        let state_gal   = Arc::clone(&state);
-        let img_cache   = Arc::clone(&image_cache);
-        let img_cache_fondo = Arc::clone(&image_cache_fondo);
-        let bsc_galeria = build_and_save_config.clone();
-        let thumb_tx_gal = thumb_tx.clone();                          // ← AQUÍ, afuera
-        let user_data_dir_cfg_gal = user_data_dir_cfg.clone();        // ← AQUÍ, afuera
-        ui.on_agregar_a_galeria(move |tipo| {
-            let ui       = ui_h.unwrap();
-            let tipo_str = tipo.to_string();
-            let es_video = tipo_str.ends_with("-vid");
-            let dialog   = if es_video {
-                rfd::FileDialog::new().add_filter("Videos", &["mp4","mov","mkv","webm"]).pick_file()
-            } else {
-                rfd::FileDialog::new().add_filter("Imágenes", &["png","jpg","jpeg","webp"]).pick_file()
-            };
-            if let Some(path) = dialog {
-                let path_str = path.to_string_lossy().to_string();
-                let mut estado = state_gal.lock().unwrap();
-                                if tipo_str == "biblias-img" {
-                    if let Some(img_fondo) = load_image_fondo_cached(&img_cache_fondo, &path_str) {
-                        estado.biblias_image_paths.push(path_str.clone());
-                        let idx          = estado.biblias_image_paths.len() as i32 - 1;
-                        let paths_copia: Vec<String> = estado.biblias_image_paths.clone();
-                        drop(estado);
-                        let images: Vec<slint::Image> = paths_copia.iter()
-                            .filter_map(|p| load_image_cached(&img_cache, p))
-                            .collect();
-                        ui.set_biblias_image_data(ModelRc::from(Rc::new(VecModel::from(images))));
-                        ui.set_biblias_selected_img(idx);
-                        ui.set_biblias_bg_image(img_fondo);
-                        ui.set_biblias_has_image(true);
-                        ui.set_biblias_bg_type(SharedString::from("imagen"));
-                        ui.invoke_sync_estilos();
-                        bsc_galeria();
+                    if let Some(d) = estrofas.row_data(idx) {
+                        let texto = d.texto.to_string();
+                        let referencia = p.get_referencia().to_string();
+                        let tiene_ref = !referencia.is_empty();
+                        let info = *sp.lock().unwrap();
+                        let (sw, sh) = if let Some((_, _, w, h)) = info {
+                            (w as f32, h as f32)
+                        } else {
+                            (1280.0, 720.0)
+                        };
+                        let modo = ui.get_modal_tab();
+                        let scale = if modo == "biblias" {
+                            ui.get_biblias_font_scale()
+                        } else {
+                            ui.get_cantos_font_scale()
+                        };
+                        let (m_izq, m_der, m_sup, m_inf) = (
+                            ui.get_margen_izquierdo(),
+                            ui.get_margen_derecho(),
+                            ui.get_margen_superior(),
+                            ui.get_margen_inferior(),
+                        );
+                        let medidor = medidor_sfs.unwrap();
+                        let base_size = if tiene_ref {
+                            calcular_font_size_versiculo(
+                                &medidor,
+                                &texto,
+                                sw,
+                                sh,
+                                scale,
+                                m_izq,
+                                m_der,
+                                m_sup,
+                                m_inf,
+                                &ui.get_proyeccion_font_family(),
+                            )
+                        } else {
+                            calcular_font_size_canto(
+                                &medidor,
+                                &texto,
+                                sw,
+                                sh,
+                                scale,
+                                m_izq,
+                                m_der,
+                                m_sup,
+                                m_inf,
+                                &ui.get_proyeccion_font_family(),
+                            )
+                        };
+                        p.set_tamano_letra(base_size);
                     }
-                } else if tipo_str == "cantos-img" {
-                    if let Some(img_fondo) = load_image_fondo_cached(&img_cache_fondo, &path_str) {
-                        estado.cantos_image_paths.push(path_str.clone());
-                        let idx          = estado.cantos_image_paths.len() as i32 - 1;
-                        let paths_copia: Vec<String> = estado.cantos_image_paths.clone();
-                        drop(estado);
-                        let images: Vec<slint::Image> = paths_copia.iter()
-                            .filter_map(|p| load_image_cached(&img_cache, p))
-                            .collect();
-                        ui.set_cantos_image_data(ModelRc::from(Rc::new(VecModel::from(images))));
-                        ui.set_cantos_selected_img(idx);
-                        ui.set_cantos_bg_image(img_fondo);
-                        ui.set_cantos_has_image(true);
-                        ui.set_cantos_bg_type(SharedString::from("imagen"));
-                        ui.invoke_sync_estilos();
-                        bsc_galeria();
-                    }
-                } else if tipo_str == "biblias-vid" {
-                    estado.biblias_video_paths.push(path_str.clone());
-                    let idx = estado.biblias_video_paths.len() as i32 - 1;
-                    let paths_copia = estado.biblias_video_paths.clone();
-                    drop(estado);
-                    ui.set_biblias_video_gallery(ModelRc::from(Rc::new(VecModel::from(construir_video_gallery(&paths_copia, &img_cache)))));
-                    ui.set_biblias_selected_vid(idx);
-                    ui.set_biblias_video_path(SharedString::from(&path_str));
-                    ui.set_biblias_bg_type(SharedString::from("video"));
-                    ui.invoke_sync_estilos();
-                    bsc_galeria();
-
-                    let tx_g = thumb_tx_gal.clone();
-                    let udd_g = user_data_dir_cfg_gal.clone();
-                    let path_g = path_str.clone();
-                    thread::spawn(move || {
-                        if let Some(dynimg) = obtener_o_crear_miniatura_video(&path_g, &udd_g, 160) {
-                            let rgba = dynimg.to_rgba8();
-                            let (w, h) = (rgba.width(), rgba.height());
-                            let raw = rgba.into_raw();
-                            let _ = tx_g.send((path_g, w, h, raw));
-                        }
-                    });
-                } else if tipo_str == "cantos-vid" {
-                    estado.cantos_video_paths.push(path_str.clone());
-                    let idx = estado.cantos_video_paths.len() as i32 - 1;
-                    let paths_copia = estado.cantos_video_paths.clone();
-                    drop(estado);
-                    ui.set_cantos_video_gallery(ModelRc::from(Rc::new(VecModel::from(construir_video_gallery(&paths_copia, &img_cache)))));
-                    ui.set_cantos_selected_vid(idx);
-                    ui.set_cantos_video_path(SharedString::from(&path_str));
-                    ui.set_cantos_bg_type(SharedString::from("video"));
-                    ui.invoke_sync_estilos();
-                    bsc_galeria();
-
-                    let tx_g = thumb_tx_gal.clone();
-                    let udd_g = user_data_dir_cfg_gal.clone();
-                    let path_g = path_str.clone();
-                    thread::spawn(move || {
-                        if let Some(dynimg) = obtener_o_crear_miniatura_video(&path_g, &udd_g, 160) {
-                            let rgba = dynimg.to_rgba8();
-                            let (w, h) = (rgba.width(), rgba.height());
-                            let raw = rgba.into_raw();
-                            let _ = tx_g.send((path_g, w, h, raw));
-                        }
-                    });
-                }
-            }
-        });
-    }
-
-   {
-        let ui_h      = ui.as_weak();
-        let state_sel = Arc::clone(&state);
-        let _img_cache = Arc::clone(&image_cache); // unused but keeping binding to avoid cascading changes if it's used further down. Wait, I can just remove it or prefix with _
-        let img_cache_fondo = Arc::clone(&image_cache_fondo);
-        ui.on_seleccionar_galeria_item(move |tipo, idx| {
-            let ui       = ui_h.unwrap();
-            let tipo_str = tipo.to_string();
-            let idx_u    = idx as usize;
-
-            // Extraemos solo lo necesario y soltamos el candado de `state`
-            // ANTES de llamar a invoke_sync_estilos, que internamente
-            // vuelve a intentar tomar ese mismo candado (bsc_estilos).
-            enum Accion {
-                ImgBiblias(String),
-                ImgCantos(String),
-                VidBiblias(String),
-                VidCantos(String),
-                Nada,
-            }
-            let accion = {
-                let estado = state_sel.lock().unwrap();
-                if tipo_str == "biblias-img" {
-                    estado.biblias_image_paths.get(idx_u).cloned().map(Accion::ImgBiblias).unwrap_or(Accion::Nada)
-                } else if tipo_str == "cantos-img" {
-                    estado.cantos_image_paths.get(idx_u).cloned().map(Accion::ImgCantos).unwrap_or(Accion::Nada)
-                } else if tipo_str == "biblias-vid" {
-                    estado.biblias_video_paths.get(idx_u).cloned().map(Accion::VidBiblias).unwrap_or(Accion::Nada)
-                } else if tipo_str == "cantos-vid" {
-                    estado.cantos_video_paths.get(idx_u).cloned().map(Accion::VidCantos).unwrap_or(Accion::Nada)
-                } else {
-                    Accion::Nada
-                }
-            }; // 🔓 candado liberado aquí
-
-            match accion {
-                Accion::ImgBiblias(p) => {
-                    if let Some(img) = load_image_fondo_cached(&img_cache_fondo, &p) {
-                        ui.set_biblias_selected_img(idx); ui.set_biblias_bg_image(img);
-                        ui.set_biblias_has_image(true); ui.set_biblias_bg_type(SharedString::from("imagen"));
-                        ui.invoke_sync_estilos();
-                    }
-                }
-                Accion::ImgCantos(p) => {
-                    if let Some(img) = load_image_fondo_cached(&img_cache_fondo, &p) {
-                        ui.set_cantos_selected_img(idx); ui.set_cantos_bg_image(img);
-                        ui.set_cantos_has_image(true); ui.set_cantos_bg_type(SharedString::from("imagen"));
-                        ui.invoke_sync_estilos();
-                    }
-                }
-                Accion::VidBiblias(p) => {
-                    ui.set_biblias_selected_vid(idx); ui.set_biblias_video_path(SharedString::from(p.as_str()));
-                    ui.set_biblias_bg_type(SharedString::from("video")); ui.invoke_sync_estilos();
-                }
-                Accion::VidCantos(p) => {
-                    ui.set_cantos_selected_vid(idx); ui.set_cantos_video_path(SharedString::from(p.as_str()));
-                    ui.set_cantos_bg_type(SharedString::from("video")); ui.invoke_sync_estilos();
-                }
-                Accion::Nada => {}
-            }
-        });
-    }
-
-    {
-        let ui_h        = ui.as_weak();
-        let state_del   = Arc::clone(&state);
-        let img_cache   = Arc::clone(&image_cache);
-        let bsc_del_gal = build_and_save_config.clone();
-        ui.on_eliminar_galeria_item(move |tipo, idx| {
-            let ui       = ui_h.unwrap();
-            let mut estado = state_del.lock().unwrap();
-            let tipo_str = tipo.to_string();
-            let idx_u    = idx as usize;
-            if tipo_str == "biblias-img" && idx_u < estado.biblias_image_paths.len() {
-                // Invalida del caché la imagen eliminada
-                let removed = estado.biblias_image_paths.remove(idx_u);
-                img_cache.lock().unwrap().remove(&removed);
-                if estado.biblias_image_paths.is_empty() {
-                    drop(estado);
-                    ui.set_biblias_image_data(ModelRc::from(Rc::new(VecModel::<slint::Image>::from(vec![]))));
-                    ui.set_biblias_has_image(false); ui.set_biblias_bg_type(SharedString::from("negro"));
-                    ui.invoke_sync_estilos();
-                    bsc_del_gal();
-                } else {
-                    let paths: Vec<slint::Image> = estado.biblias_image_paths.iter()
-                        .filter_map(|p| load_image_cached(&img_cache, p))
-                        .collect();
-                    drop(estado);
-                    ui.set_biblias_image_data(ModelRc::from(Rc::new(VecModel::from(paths))));
-                    ui.set_biblias_selected_img(0);
-                    ui.invoke_seleccionar_galeria_item(SharedString::from("biblias-img"), 0);
-                    bsc_del_gal();
-                }
-            } else if tipo_str == "cantos-img" && idx_u < estado.cantos_image_paths.len() {
-                let removed = estado.cantos_image_paths.remove(idx_u);
-                img_cache.lock().unwrap().remove(&removed);
-                if estado.cantos_image_paths.is_empty() {
-                    drop(estado);
-                    ui.set_cantos_image_data(ModelRc::from(Rc::new(VecModel::<slint::Image>::from(vec![]))));
-                    ui.set_cantos_has_image(false); ui.set_cantos_bg_type(SharedString::from("negro"));
-                    ui.invoke_sync_estilos();
-                    bsc_del_gal();
-                } else {
-                    let paths: Vec<slint::Image> = estado.cantos_image_paths.iter()
-                        .filter_map(|p| load_image_cached(&img_cache, p))
-                        .collect();
-                    drop(estado);
-                    ui.set_cantos_image_data(ModelRc::from(Rc::new(VecModel::from(paths))));
-                    ui.set_cantos_selected_img(0);
-                    ui.invoke_seleccionar_galeria_item(SharedString::from("cantos-img"), 0);
-                    bsc_del_gal();
-                }
-            } else if tipo_str == "biblias-vid" && idx_u < estado.biblias_video_paths.len() {
-                estado.biblias_video_paths.remove(idx_u);
-                let paths_copia = estado.biblias_video_paths.clone();
-                let is_empty = paths_copia.is_empty();
-                drop(estado);
-                ui.set_biblias_video_gallery(ModelRc::from(Rc::new(VecModel::from(construir_video_gallery(&paths_copia, &img_cache)))));
-                if is_empty { ui.set_biblias_bg_type(SharedString::from("negro")); ui.invoke_sync_estilos(); }
-                bsc_del_gal();
-            } else if tipo_str == "cantos-vid" && idx_u < estado.cantos_video_paths.len() {
-                estado.cantos_video_paths.remove(idx_u);
-                let paths_copia = estado.cantos_video_paths.clone();
-                let is_empty = paths_copia.is_empty();
-                drop(estado);
-                ui.set_cantos_video_gallery(ModelRc::from(Rc::new(VecModel::from(construir_video_gallery(&paths_copia, &img_cache)))));
-                if is_empty { ui.set_cantos_bg_type(SharedString::from("negro")); ui.invoke_sync_estilos(); }
-                bsc_del_gal();
-            }
-        });
-    }
-
-    // ── Multimedia (imágenes proyectables) ───────────────────────────────────
-        let refresh_multimedia = {
-        let ui_handle = ui.as_weak();
-        let state_arc = Arc::clone(&multimedia_state);
-        let img_cache = Arc::clone(&image_cache);
-        let img_cache_fondo = Arc::clone(&image_cache_fondo);
-        move || {
-            let ui    = ui_handle.unwrap();
-            let items = state_arc.read().unwrap();
-
-            let paths: Vec<String> = items.iter().map(|i| i.path.clone()).collect();
-            precargar_cache_paralelo(&img_cache, &paths);
-
-            let slint_items: Vec<MediaItem> = items.iter().enumerate()
-                .map(|(i, item)| {
-                    let img = load_image_cached(&img_cache, &item.path).unwrap_or_default();
-                    MediaItem {
-                        id:      i as i32,
-                        nombre:  SharedString::from(&item.name),
-                        path:    SharedString::from(&item.path),
-                        img,
-                        aspecto: SharedString::from(&item.aspecto),
-                        is_loop: false,
-                    }
-                })
-                .collect();
-            ui.set_multimedia_items(ModelRc::from(Rc::new(VecModel::from(slint_items))));
-
-            let sel = ui.get_selected_media_idx();
-            if sel >= 0 && (sel as usize) < items.len() {
-                if let Some(img_prev) = load_image_preview_cached(&img_cache_fondo, &items[sel as usize].path) {
-                    ui.set_selected_media_full_img(img_prev);
-                }
-            }
-        }
-    };
-
-    {
-        let multi_state   = Arc::clone(&multimedia_state);
-        let refresh_clone = refresh_multimedia.clone();
-        let bsc_add_multi = build_and_save_config.clone();
-        ui.on_agregar_multimedia(move || {
-            if let Some(path) = rfd::FileDialog::new()
-                .add_filter("Imágenes", &["png","jpg","jpeg","webp"]).pick_file()
-            {
-                let file_name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
-                let path_str  = path.to_string_lossy().to_string();
-                multi_state.write().unwrap().push(MediaData { path: path_str, name: file_name, aspecto: "centro".to_string(), is_loop: false });
-                refresh_clone();
-                bsc_add_multi();
-            }
-        });
-    }
-
-    
-    // ── PDF ──────────────────────────────────────────────────────────────────
-{
-    let ui_pdf    = ui.as_weak();
-    let state_pdf = Arc::clone(&pdf_state);
-    let udd_pdf   = user_data_dir_cfg.clone();
-
-    {
-        let ui_rol      = ui.as_weak();
-        let roles_clone = Arc::clone(&roles_pantallas);
-        ui.on_asignar_rol_pantalla(move |id_pantalla, nuevo_rol| {
-            let ui = ui_rol.unwrap();
-            {
-                let mut roles = roles_clone.lock().unwrap();
-                if nuevo_rol > 0 {
-                    roles.retain(|_, r| *r != nuevo_rol);
-                }
-                if nuevo_rol == 0 {
-                    roles.remove(&id_pantalla);
-                } else {
-                    roles.insert(id_pantalla, nuevo_rol);
-                }
-            }
-            let actuales = ui.get_pantallas_detectadas();
-            let nuevas: Vec<ScreenInfo> = {
-                let roles = roles_clone.lock().unwrap();
-                (0..actuales.row_count())
-                    .filter_map(|i| actuales.row_data(i))
-                    .map(|mut p| {
-                        p.rol = *roles.get(&p.id).unwrap_or(&0);
-                        p
-                    })
-                    .collect()
-            };
-            ui.set_pantallas_detectadas(ModelRc::from(Rc::new(VecModel::from(nuevas))));
-            ui.set_cambios_pendientes(true);
-        });
-    }
-
-    {
-        let ui_h   = ui.as_weak();
-        let bsc_ap = build_and_save_config.clone();
-        ui.on_aplicar_cambios_pantallas(move || {
-            let ui = ui_h.unwrap();
-            bsc_ap();
-            ui.set_cambios_pendientes(false);
-        });
-    }
-
-    // ── Detección de pantallas para Stage Display ────────────────────────────
-    {
-        let ui_h        = ui.as_weak();
-        let roles_clone = Arc::clone(&roles_pantallas);
-        let bsc_pant    = build_and_save_config.clone();
-        ui.on_abrir_modal_pantallas(move || {
-            let ui = ui_h.unwrap();
-            let detectadas = match DisplayInfo::all() {
-                Ok(lista) => lista,
-                Err(e) => { println!("No se pudieron detectar pantallas: {}", e); Vec::new() }
-            };
-
-            // Si todavía no hay NINGÚN rol asignado, aplica una configuración
-            // por defecto sensata: primaria = Operador, siguiente = Proyector,
-            // siguiente = Stage Display. Así nunca aparece "sin asignar" cuando
-            // ya hay un uso implícito obvio (ej. laptop + 1 monitor externo).
-            {
-                let mut roles = roles_clone.lock().unwrap();
-                if roles.is_empty() && !detectadas.is_empty() {
-                    let mut siguiente_rol = 1;
-                    if let Some((idx, _)) = detectadas.iter().enumerate().find(|(_, d)| d.is_primary) {
-                        roles.insert(idx as i32, siguiente_rol);
-                        siguiente_rol += 1;
-                    }
-                    for (idx, d) in detectadas.iter().enumerate() {
-                        if d.is_primary { continue; }
-                        if siguiente_rol > 3 { break; }
-                        roles.insert(idx as i32, siguiente_rol);
-                        siguiente_rol += 1;
-                    }
-                }
-            }
-
-            let pantallas: Vec<ScreenInfo> = {
-                let roles = roles_clone.lock().unwrap();
-                detectadas.iter().enumerate().map(|(i, d)| {
-                    let id = i as i32;
-                    ScreenInfo {
-                        id,
-                        nombre:      SharedString::from(format!("Pantalla {}", i + 1)),
-                        x:           d.x,
-                        y:           d.y,
-                        width:       d.width as i32,
-                        height:      d.height as i32,
-                        es_primaria: d.is_primary,
-                        rol:         *roles.get(&id).unwrap_or(&0),
-                    }
-                }).collect()
-            };
-
-            ui.set_pantallas_detectadas(ModelRc::from(Rc::new(VecModel::from(pantallas))));
-            ui.set_cambios_pendientes(false);
-            bsc_pant();
-        });
-    }
-
-    // ── Identificar pantallas: abre un número grande en cada monitor físico ──
-    {
-        let ui_h            = ui.as_weak();
-        let windows_holder  = Rc::clone(&identificar_windows);
-        let timer_holder    = Rc::clone(&identificar_timer);
-
-        ui.on_identificar_pantallas(move || {
-            let ui = ui_h.unwrap();
-            ui.set_identificando_pantallas(true);
-
-            // Cierra explícitamente ventanas de una identificación anterior
-            for w in windows_holder.borrow_mut().drain(..) {
-                let _ = w.hide();
-            }
-
-            let pantallas = ui.get_pantallas_detectadas();
-            let mut nuevas_ventanas = Vec::new();
-
-            for i in 0..pantallas.row_count() {
-                if let Some(p) = pantallas.row_data(i) {
-                    if let Ok(w) = IdentifyWindow::new() {
-                        w.set_numero_pantalla(i as i32 + 1);
-
-                        // Presionar ESC en cualquiera de las ventanas cierra todas
-                        let ui_esc      = ui_h.clone();
-                        let windows_esc = Rc::clone(&windows_holder);
-                        let timer_esc   = Rc::clone(&timer_holder);
-                        w.on_cerrar_solicitado(move || {
-                            *timer_esc.borrow_mut() = None; // cancela el auto-cierre pendiente
-                            for w in windows_esc.borrow_mut().drain(..) {
-                                let _ = w.hide();
-                            }
-                            if let Some(ui) = ui_esc.upgrade() {
-                                ui.set_identificando_pantallas(false);
-                            }
-                        });
-
-                        let _ = w.show();
-                        w.window().set_position(slint::PhysicalPosition::new(p.x, p.y));
-                        w.window().set_size(slint::PhysicalSize::new(p.width as u32, p.height as u32));
-                        w.invoke_enfocar_pantalla(); // necesario para que capture la tecla ESC
-                        nuevas_ventanas.push(w);
-                    }
-                }
-            }
-            *windows_holder.borrow_mut() = nuevas_ventanas;
-
-            // Auto-cierre después de 4 segundos si el usuario no presiona ESC
-            let ui_t      = ui_h.clone();
-            let windows_t = Rc::clone(&windows_holder);
-            let timer     = slint::Timer::default();
-            timer.start(slint::TimerMode::SingleShot, std::time::Duration::from_secs(4), move || {
-                for w in windows_t.borrow_mut().drain(..) {
-                    let _ = w.hide();
-                }
-                if let Some(ui) = ui_t.upgrade() {
-                    ui.set_identificando_pantallas(false);
-                }
-            });
-            *timer_holder.borrow_mut() = Some(timer);
-        });
-    }
-
-    // ── Salida por IP (overlay OBS) ───────────────────────────────────────────
-    {
-        let ui_h = ui.as_weak();
-        ui.on_abrir_modal_overlay(move || {
-            let ui = ui_h.unwrap();
-            let ip_local = local_ip_address::local_ip()
-                .map(|ip| ip.to_string())
-                .unwrap_or_else(|_| "127.0.0.1".to_string());
-            ui.set_overlay_ip_local(SharedString::from(ip_local));
-        });
-    }
-
-    {
-        let ui_h        = ui.as_weak();
-        let estado_ov   = Arc::clone(&overlay_estado);
-        let activo_ov   = Arc::clone(&overlay_servidor_activo);
-        ui.on_toggle_servidor_overlay(move || {
-            let ui = ui_h.unwrap();
-            if ui.get_overlay_servidor_activo() {
-                activo_ov.store(false, Ordering::Release);
-                ui.set_overlay_servidor_activo(false);
-            } else {
-                let puerto = ui.get_overlay_puerto() as u16;
-                let estado_t = Arc::clone(&estado_ov);
-                let activo_t = Arc::clone(&activo_ov);
-                thread::spawn(move || {
-                    iniciar_servidor_overlay(puerto, estado_t, activo_t);
+                    bsc_font();
                 });
-                ui.set_overlay_servidor_activo(true);
             }
-        });
-    }
 
-    // ── Copiar la URL del overlay al portapapeles (multiplataforma) ─────────
-    // Usa `arboard`, que habla directamente con el portapapeles del sistema
-    // (Win32/AppKit/X11/Wayland) sin depender de binarios externos como
-    // xclip o wl-copy, que pueden no estar instalados en el equipo del usuario.
-    {
-        let ui_h = ui.as_weak();
-        ui.on_copiar_url_overlay(move || {
-            let ui  = ui_h.unwrap();
-            let url = format!("http://{}:{}", ui.get_overlay_ip_local(), ui.get_overlay_puerto());
-            match arboard::Clipboard::new() {
-                Ok(mut cb) => {
-                    if cb.set_text(url).is_ok() {
-                        mostrar_aviso(&ui_h, "URL copiada al portapapeles");
+            // ── Cambio de fuente (GLOBAL: aplica sin importar la pestaña activa) ────
+            {
+                let ui_h = ui.as_weak();
+                let p_h = proyector.as_weak();
+                let sp = Arc::clone(&segunda_pantalla);
+                let modo_vivo = Arc::clone(&modo_en_vivo);
+                let bsc_fuente = build_and_save_config.clone();
+                let medidor_cf = medidor_win.as_weak();
+                ui.on_cambiar_fuente_proyeccion(move |fuente| {
+                    let ui = ui_h.unwrap();
+                    let p = p_h.unwrap();
+                    p.set_text_font_family(fuente.clone());
+
+                    let modo_actual = modo_vivo.lock().unwrap().clone();
+                    if !modo_actual.is_empty() {
+                        let active_idx = ui.get_active_estrofa_index();
+                        if active_idx >= 0 {
+                            let estrofas = ui.get_estrofas_actuales();
+                            let idx = active_idx as usize;
+                            if idx < estrofas.row_count() {
+                                if let Some(d) = estrofas.row_data(idx) {
+                                    let texto = d.texto.to_string();
+                                    let referencia = p.get_referencia().to_string();
+                                    let tiene_ref = !referencia.is_empty();
+                                    let info = *sp.lock().unwrap();
+                                    let (sw, sh) = if let Some((_, _, w, h)) = info {
+                                        (w as f32, h as f32)
+                                    } else {
+                                        (1280.0, 720.0)
+                                    };
+                                    let scale = if modo_actual == "biblias" {
+                                        ui.get_biblias_font_scale()
+                                    } else {
+                                        ui.get_cantos_font_scale()
+                                    };
+                                    let (m_izq, m_der, m_sup, m_inf) = (
+                                        ui.get_margen_izquierdo(),
+                                        ui.get_margen_derecho(),
+                                        ui.get_margen_superior(),
+                                        ui.get_margen_inferior(),
+                                    );
+                                    let medidor = medidor_cf.unwrap();
+                                    let base_size = if tiene_ref {
+                                        calcular_font_size_versiculo(
+                                            &medidor, &texto, sw, sh, scale, m_izq, m_der, m_sup,
+                                            m_inf, &fuente,
+                                        )
+                                    } else {
+                                        calcular_font_size_canto(
+                                            &medidor, &texto, sw, sh, scale, m_izq, m_der, m_sup,
+                                            m_inf, &fuente,
+                                        )
+                                    };
+                                    p.set_tamano_letra(base_size);
+                                }
+                            }
+                        }
+                    }
+                    bsc_fuente();
+                });
+            }
+
+            // ── Galería (imágenes y vídeos de fondo) ─────────────────────────────────
+            {
+                let ui_h = ui.as_weak();
+                let state_gal = Arc::clone(&state);
+                let img_cache = Arc::clone(&image_cache);
+                let img_cache_fondo = Arc::clone(&image_cache_fondo);
+                let bsc_galeria = build_and_save_config.clone();
+                let thumb_tx_gal = thumb_tx.clone(); // ← AQUÍ, afuera
+                let user_data_dir_cfg_gal = user_data_dir_cfg.clone(); // ← AQUÍ, afuera
+                ui.on_agregar_a_galeria(move |tipo| {
+                    let ui = ui_h.unwrap();
+                    let tipo_str = tipo.to_string();
+                    let es_video = tipo_str.ends_with("-vid");
+                    let dialog = if es_video {
+                        rfd::FileDialog::new()
+                            .add_filter("Videos", &["mp4", "mov", "mkv", "webm"])
+                            .pick_file()
                     } else {
-                        mostrar_aviso(&ui_h, "No se pudo copiar la URL");
-                    }
-                }
-                Err(_) => mostrar_aviso(&ui_h, "No se pudo acceder al portapapeles"),
-            }
-        });
-    }
+                        rfd::FileDialog::new()
+                            .add_filter("Imágenes", &["png", "jpg", "jpeg", "webp"])
+                            .pick_file()
+                    };
+                    if let Some(path) = dialog {
+                        let path_str = path.to_string_lossy().to_string();
+                        let mut estado = state_gal.lock().unwrap();
+                        if tipo_str == "biblias-img" {
+                            if let Some(img_fondo) =
+                                load_image_fondo_cached(&img_cache_fondo, &path_str)
+                            {
+                                estado.biblias_image_paths.push(path_str.clone());
+                                let idx = estado.biblias_image_paths.len() as i32 - 1;
+                                let paths_copia: Vec<String> = estado.biblias_image_paths.clone();
+                                drop(estado);
+                                let images: Vec<slint::Image> = paths_copia
+                                    .iter()
+                                    .filter_map(|p| load_image_cached(&img_cache, p))
+                                    .collect();
+                                ui.set_biblias_image_data(ModelRc::from(Rc::new(VecModel::from(
+                                    images,
+                                ))));
+                                ui.set_biblias_selected_img(idx);
+                                ui.set_biblias_bg_image(img_fondo);
+                                ui.set_biblias_has_image(true);
+                                ui.set_biblias_bg_type(SharedString::from("imagen"));
+                                ui.invoke_sync_estilos();
+                                bsc_galeria();
+                            }
+                        } else if tipo_str == "cantos-img" {
+                            if let Some(img_fondo) =
+                                load_image_fondo_cached(&img_cache_fondo, &path_str)
+                            {
+                                estado.cantos_image_paths.push(path_str.clone());
+                                let idx = estado.cantos_image_paths.len() as i32 - 1;
+                                let paths_copia: Vec<String> = estado.cantos_image_paths.clone();
+                                drop(estado);
+                                let images: Vec<slint::Image> = paths_copia
+                                    .iter()
+                                    .filter_map(|p| load_image_cached(&img_cache, p))
+                                    .collect();
+                                ui.set_cantos_image_data(ModelRc::from(Rc::new(VecModel::from(
+                                    images,
+                                ))));
+                                ui.set_cantos_selected_img(idx);
+                                ui.set_cantos_bg_image(img_fondo);
+                                ui.set_cantos_has_image(true);
+                                ui.set_cantos_bg_type(SharedString::from("imagen"));
+                                ui.invoke_sync_estilos();
+                                bsc_galeria();
+                            }
+                        } else if tipo_str == "biblias-vid" {
+                            estado.biblias_video_paths.push(path_str.clone());
+                            let idx = estado.biblias_video_paths.len() as i32 - 1;
+                            let paths_copia = estado.biblias_video_paths.clone();
+                            drop(estado);
+                            ui.set_biblias_video_gallery(ModelRc::from(Rc::new(VecModel::from(
+                                construir_video_gallery(&paths_copia, &img_cache),
+                            ))));
+                            ui.set_biblias_selected_vid(idx);
+                            ui.set_biblias_video_path(SharedString::from(&path_str));
+                            ui.set_biblias_bg_type(SharedString::from("video"));
+                            ui.invoke_sync_estilos();
+                            bsc_galeria();
 
-    // ── Toggle "Solo texto (sin fondo)" para el overlay de OBS ──────────────
-    // Refresca inmediatamente el overlay activo (si hay algo proyectado)
-    // para que el cambio se vea al instante en OBS, sin esperar al próximo
-    // clic sobre una estrofa.
-    {
-        let ui_h       = ui.as_weak();
-        let state_ov   = Arc::clone(&state);
-        let overlay_ov = Arc::clone(&overlay_estado);
-        let modo_ov    = Arc::clone(&modo_en_vivo);
-        ui.on_toggle_overlay_solo_texto(move |valor| {
-            let ui = ui_h.unwrap();
-            ui.set_overlay_solo_texto(valor);
-            let modo_actual = modo_ov.lock().unwrap().clone();
-            if !modo_actual.is_empty() {
-                actualizar_overlay_estilos(&ui, &state_ov, &overlay_ov, &modo_actual, valor);
-            }
-        });
-    }
+                            let tx_g = thumb_tx_gal.clone();
+                            let udd_g = user_data_dir_cfg_gal.clone();
+                            let path_g = path_str.clone();
+                            thread::spawn(move || {
+                                if let Some(dynimg) =
+                                    obtener_o_crear_miniatura_video(&path_g, &udd_g, 160)
+                                {
+                                    let rgba = dynimg.to_rgba8();
+                                    let (w, h) = (rgba.width(), rgba.height());
+                                    let raw = rgba.into_raw();
+                                    let _ = tx_g.send((path_g, w, h, raw));
+                                }
+                            });
+                        } else if tipo_str == "cantos-vid" {
+                            estado.cantos_video_paths.push(path_str.clone());
+                            let idx = estado.cantos_video_paths.len() as i32 - 1;
+                            let paths_copia = estado.cantos_video_paths.clone();
+                            drop(estado);
+                            ui.set_cantos_video_gallery(ModelRc::from(Rc::new(VecModel::from(
+                                construir_video_gallery(&paths_copia, &img_cache),
+                            ))));
+                            ui.set_cantos_selected_vid(idx);
+                            ui.set_cantos_video_path(SharedString::from(&path_str));
+                            ui.set_cantos_bg_type(SharedString::from("video"));
+                            ui.invoke_sync_estilos();
+                            bsc_galeria();
 
-    // ── Gestión de bases de datos: Importar / Exportar ───────────────────────
-    {
-        let ui_h = ui.as_weak();
-        ui.on_abrir_modal_db(move || {
-            if let Some(ui) = ui_h.upgrade() {
-                ui.set_db_modal_mensaje(SharedString::from(""));
-                ui.set_db_modal_es_error(false);
-            }
-        });
-    }
-
-    {
-        let ui_h = ui.as_weak();
-        let state_c = Arc::clone(&state);
-        ui.on_exportar_db_cantos(move || {
-            let dialog = rfd::FileDialog::new()
-                .set_file_name("cantos.db")
-                .add_filter("Base de datos SQLite (*.db)", &["db", "sqlite", "sqlite3"]);
-            if let Some(dest_path) = dialog.save_file() {
-                let st = state_c.lock().unwrap();
-                match st.exportar_cantos_db(&dest_path) {
-                    Ok(_) => {
-                        if let Some(ui) = ui_h.upgrade() {
-                            ui.set_db_modal_es_error(false);
-                            ui.set_db_modal_mensaje(SharedString::from(format!(
-                                "Base de datos de cantos exportada correctamente a: {}",
-                                dest_path.file_name().unwrap_or_default().to_string_lossy()
-                            )));
+                            let tx_g = thumb_tx_gal.clone();
+                            let udd_g = user_data_dir_cfg_gal.clone();
+                            let path_g = path_str.clone();
+                            thread::spawn(move || {
+                                if let Some(dynimg) =
+                                    obtener_o_crear_miniatura_video(&path_g, &udd_g, 160)
+                                {
+                                    let rgba = dynimg.to_rgba8();
+                                    let (w, h) = (rgba.width(), rgba.height());
+                                    let raw = rgba.into_raw();
+                                    let _ = tx_g.send((path_g, w, h, raw));
+                                }
+                            });
                         }
                     }
-                    Err(e) => {
-                        if let Some(ui) = ui_h.upgrade() {
-                            ui.set_db_modal_es_error(true);
-                            ui.set_db_modal_mensaje(SharedString::from(e));
+                });
+            }
+
+            {
+                let ui_h = ui.as_weak();
+                let state_sel = Arc::clone(&state);
+                let _img_cache = Arc::clone(&image_cache); // unused but keeping binding to avoid cascading changes if it's used further down. Wait, I can just remove it or prefix with _
+                let img_cache_fondo = Arc::clone(&image_cache_fondo);
+                ui.on_seleccionar_galeria_item(move |tipo, idx| {
+                    let ui = ui_h.unwrap();
+                    let tipo_str = tipo.to_string();
+                    let idx_u = idx as usize;
+
+                    // Extraemos solo lo necesario y soltamos el candado de `state`
+                    // ANTES de llamar a invoke_sync_estilos, que internamente
+                    // vuelve a intentar tomar ese mismo candado (bsc_estilos).
+                    enum Accion {
+                        ImgBiblias(String),
+                        ImgCantos(String),
+                        VidBiblias(String),
+                        VidCantos(String),
+                        Nada,
+                    }
+                    let accion = {
+                        let estado = state_sel.lock().unwrap();
+                        if tipo_str == "biblias-img" {
+                            estado
+                                .biblias_image_paths
+                                .get(idx_u)
+                                .cloned()
+                                .map(Accion::ImgBiblias)
+                                .unwrap_or(Accion::Nada)
+                        } else if tipo_str == "cantos-img" {
+                            estado
+                                .cantos_image_paths
+                                .get(idx_u)
+                                .cloned()
+                                .map(Accion::ImgCantos)
+                                .unwrap_or(Accion::Nada)
+                        } else if tipo_str == "biblias-vid" {
+                            estado
+                                .biblias_video_paths
+                                .get(idx_u)
+                                .cloned()
+                                .map(Accion::VidBiblias)
+                                .unwrap_or(Accion::Nada)
+                        } else if tipo_str == "cantos-vid" {
+                            estado
+                                .cantos_video_paths
+                                .get(idx_u)
+                                .cloned()
+                                .map(Accion::VidCantos)
+                                .unwrap_or(Accion::Nada)
+                        } else {
+                            Accion::Nada
+                        }
+                    }; // 🔓 candado liberado aquí
+
+                    match accion {
+                        Accion::ImgBiblias(p) => {
+                            if let Some(img) = load_image_fondo_cached(&img_cache_fondo, &p) {
+                                ui.set_biblias_selected_img(idx);
+                                ui.set_biblias_bg_image(img);
+                                ui.set_biblias_has_image(true);
+                                ui.set_biblias_bg_type(SharedString::from("imagen"));
+                                ui.invoke_sync_estilos();
+                            }
+                        }
+                        Accion::ImgCantos(p) => {
+                            if let Some(img) = load_image_fondo_cached(&img_cache_fondo, &p) {
+                                ui.set_cantos_selected_img(idx);
+                                ui.set_cantos_bg_image(img);
+                                ui.set_cantos_has_image(true);
+                                ui.set_cantos_bg_type(SharedString::from("imagen"));
+                                ui.invoke_sync_estilos();
+                            }
+                        }
+                        Accion::VidBiblias(p) => {
+                            ui.set_biblias_selected_vid(idx);
+                            ui.set_biblias_video_path(SharedString::from(p.as_str()));
+                            ui.set_biblias_bg_type(SharedString::from("video"));
+                            ui.invoke_sync_estilos();
+                        }
+                        Accion::VidCantos(p) => {
+                            ui.set_cantos_selected_vid(idx);
+                            ui.set_cantos_video_path(SharedString::from(p.as_str()));
+                            ui.set_cantos_bg_type(SharedString::from("video"));
+                            ui.invoke_sync_estilos();
+                        }
+                        Accion::Nada => {}
+                    }
+                });
+            }
+
+            {
+                let ui_h = ui.as_weak();
+                let state_del = Arc::clone(&state);
+                let img_cache = Arc::clone(&image_cache);
+                let bsc_del_gal = build_and_save_config.clone();
+                ui.on_eliminar_galeria_item(move |tipo, idx| {
+                    let ui = ui_h.unwrap();
+                    let mut estado = state_del.lock().unwrap();
+                    let tipo_str = tipo.to_string();
+                    let idx_u = idx as usize;
+                    if tipo_str == "biblias-img" && idx_u < estado.biblias_image_paths.len() {
+                        // Invalida del caché la imagen eliminada
+                        let removed = estado.biblias_image_paths.remove(idx_u);
+                        img_cache.lock().unwrap().remove(&removed);
+                        if estado.biblias_image_paths.is_empty() {
+                            drop(estado);
+                            ui.set_biblias_image_data(ModelRc::from(Rc::new(VecModel::<
+                                slint::Image,
+                            >::from(
+                                vec![]
+                            ))));
+                            ui.set_biblias_has_image(false);
+                            ui.set_biblias_bg_type(SharedString::from("negro"));
+                            ui.invoke_sync_estilos();
+                            bsc_del_gal();
+                        } else {
+                            let paths: Vec<slint::Image> = estado
+                                .biblias_image_paths
+                                .iter()
+                                .filter_map(|p| load_image_cached(&img_cache, p))
+                                .collect();
+                            drop(estado);
+                            ui.set_biblias_image_data(ModelRc::from(Rc::new(VecModel::from(
+                                paths,
+                            ))));
+                            ui.set_biblias_selected_img(0);
+                            ui.invoke_seleccionar_galeria_item(
+                                SharedString::from("biblias-img"),
+                                0,
+                            );
+                            bsc_del_gal();
+                        }
+                    } else if tipo_str == "cantos-img" && idx_u < estado.cantos_image_paths.len() {
+                        let removed = estado.cantos_image_paths.remove(idx_u);
+                        img_cache.lock().unwrap().remove(&removed);
+                        if estado.cantos_image_paths.is_empty() {
+                            drop(estado);
+                            ui.set_cantos_image_data(ModelRc::from(Rc::new(VecModel::<
+                                slint::Image,
+                            >::from(
+                                vec![]
+                            ))));
+                            ui.set_cantos_has_image(false);
+                            ui.set_cantos_bg_type(SharedString::from("negro"));
+                            ui.invoke_sync_estilos();
+                            bsc_del_gal();
+                        } else {
+                            let paths: Vec<slint::Image> = estado
+                                .cantos_image_paths
+                                .iter()
+                                .filter_map(|p| load_image_cached(&img_cache, p))
+                                .collect();
+                            drop(estado);
+                            ui.set_cantos_image_data(ModelRc::from(Rc::new(VecModel::from(paths))));
+                            ui.set_cantos_selected_img(0);
+                            ui.invoke_seleccionar_galeria_item(SharedString::from("cantos-img"), 0);
+                            bsc_del_gal();
+                        }
+                    } else if tipo_str == "biblias-vid" && idx_u < estado.biblias_video_paths.len()
+                    {
+                        estado.biblias_video_paths.remove(idx_u);
+                        let paths_copia = estado.biblias_video_paths.clone();
+                        let is_empty = paths_copia.is_empty();
+                        drop(estado);
+                        ui.set_biblias_video_gallery(ModelRc::from(Rc::new(VecModel::from(
+                            construir_video_gallery(&paths_copia, &img_cache),
+                        ))));
+                        if is_empty {
+                            ui.set_biblias_bg_type(SharedString::from("negro"));
+                            ui.invoke_sync_estilos();
+                        }
+                        bsc_del_gal();
+                    } else if tipo_str == "cantos-vid" && idx_u < estado.cantos_video_paths.len() {
+                        estado.cantos_video_paths.remove(idx_u);
+                        let paths_copia = estado.cantos_video_paths.clone();
+                        let is_empty = paths_copia.is_empty();
+                        drop(estado);
+                        ui.set_cantos_video_gallery(ModelRc::from(Rc::new(VecModel::from(
+                            construir_video_gallery(&paths_copia, &img_cache),
+                        ))));
+                        if is_empty {
+                            ui.set_cantos_bg_type(SharedString::from("negro"));
+                            ui.invoke_sync_estilos();
+                        }
+                        bsc_del_gal();
+                    }
+                });
+            }
+
+            // ── Multimedia (imágenes proyectables) ───────────────────────────────────
+            let refresh_multimedia = {
+                let ui_handle = ui.as_weak();
+                let state_arc = Arc::clone(&multimedia_state);
+                let img_cache = Arc::clone(&image_cache);
+                let img_cache_fondo = Arc::clone(&image_cache_fondo);
+                move || {
+                    let ui = ui_handle.unwrap();
+                    let items = state_arc.read().unwrap();
+
+                    let paths: Vec<String> = items.iter().map(|i| i.path.clone()).collect();
+                    precargar_cache_paralelo(&img_cache, &paths);
+
+                    let slint_items: Vec<MediaItem> = items
+                        .iter()
+                        .enumerate()
+                        .map(|(i, item)| {
+                            let img = load_image_cached(&img_cache, &item.path).unwrap_or_default();
+                            MediaItem {
+                                id: i as i32,
+                                nombre: SharedString::from(&item.name),
+                                path: SharedString::from(&item.path),
+                                img,
+                                aspecto: SharedString::from(&item.aspecto),
+                                is_loop: false,
+                            }
+                        })
+                        .collect();
+                    ui.set_multimedia_items(ModelRc::from(Rc::new(VecModel::from(slint_items))));
+
+                    let sel = ui.get_selected_media_idx();
+                    if sel >= 0 && (sel as usize) < items.len() {
+                        if let Some(img_prev) =
+                            load_image_preview_cached(&img_cache_fondo, &items[sel as usize].path)
+                        {
+                            ui.set_selected_media_full_img(img_prev);
                         }
                     }
                 }
-            }
-        });
-    }
+            };
 
-    {
-        let ui_h = ui.as_weak();
-        let state_c = Arc::clone(&state);
-        ui.on_exportar_db_biblias(move || {
-            let dialog = rfd::FileDialog::new()
-                .set_file_name("biblias.db")
-                .add_filter("Base de datos SQLite (*.db)", &["db", "sqlite", "sqlite3"]);
-            if let Some(dest_path) = dialog.save_file() {
-                let st = state_c.lock().unwrap();
-                match st.exportar_biblias_db(&dest_path) {
-                    Ok(_) => {
+            {
+                let multi_state = Arc::clone(&multimedia_state);
+                let refresh_clone = refresh_multimedia.clone();
+                let bsc_add_multi = build_and_save_config.clone();
+                ui.on_agregar_multimedia(move || {
+                    if let Some(path) = rfd::FileDialog::new()
+                        .add_filter("Imágenes", &["png", "jpg", "jpeg", "webp"])
+                        .pick_file()
+                    {
+                        let file_name = path
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .to_string();
+                        let path_str = path.to_string_lossy().to_string();
+                        multi_state.write().unwrap().push(MediaData {
+                            path: path_str,
+                            name: file_name,
+                            aspecto: "centro".to_string(),
+                            is_loop: false,
+                        });
+                        refresh_clone();
+                        bsc_add_multi();
+                    }
+                });
+            }
+
+            // ── PDF ──────────────────────────────────────────────────────────────────
+            {
+                let ui_pdf = ui.as_weak();
+                let state_pdf = Arc::clone(&pdf_state);
+                let udd_pdf = user_data_dir_cfg.clone();
+
+                {
+                    let ui_rol = ui.as_weak();
+                    let roles_clone = Arc::clone(&roles_pantallas);
+                    ui.on_asignar_rol_pantalla(move |id_pantalla, nuevo_rol| {
+                        let ui = ui_rol.unwrap();
+                        {
+                            let mut roles = roles_clone.lock().unwrap();
+                            if nuevo_rol > 0 {
+                                roles.retain(|_, r| *r != nuevo_rol);
+                            }
+                            if nuevo_rol == 0 {
+                                roles.remove(&id_pantalla);
+                            } else {
+                                roles.insert(id_pantalla, nuevo_rol);
+                            }
+                        }
+                        let actuales = ui.get_pantallas_detectadas();
+                        let nuevas: Vec<ScreenInfo> = {
+                            let roles = roles_clone.lock().unwrap();
+                            (0..actuales.row_count())
+                                .filter_map(|i| actuales.row_data(i))
+                                .map(|mut p| {
+                                    p.rol = *roles.get(&p.id).unwrap_or(&0);
+                                    p
+                                })
+                                .collect()
+                        };
+                        ui.set_pantallas_detectadas(ModelRc::from(Rc::new(VecModel::from(nuevas))));
+                        ui.set_cambios_pendientes(true);
+                    });
+                }
+
+                {
+                    let ui_h = ui.as_weak();
+                    let bsc_ap = build_and_save_config.clone();
+                    ui.on_aplicar_cambios_pantallas(move || {
+                        let ui = ui_h.unwrap();
+                        bsc_ap();
+                        ui.set_cambios_pendientes(false);
+                    });
+                }
+
+                // ── Detección de pantallas para Stage Display ────────────────────────────
+                {
+                    let ui_h = ui.as_weak();
+                    let roles_clone = Arc::clone(&roles_pantallas);
+                    let bsc_pant = build_and_save_config.clone();
+                    ui.on_abrir_modal_pantallas(move || {
+                        let ui = ui_h.unwrap();
+                        let detectadas = match DisplayInfo::all() {
+                            Ok(lista) => lista,
+                            Err(e) => {
+                                println!("No se pudieron detectar pantallas: {}", e);
+                                Vec::new()
+                            }
+                        };
+
+                        // Si todavía no hay NINGÚN rol asignado, aplica una configuración
+                        // por defecto sensata: primaria = Operador, siguiente = Proyector,
+                        // siguiente = Stage Display. Así nunca aparece "sin asignar" cuando
+                        // ya hay un uso implícito obvio (ej. laptop + 1 monitor externo).
+                        {
+                            let mut roles = roles_clone.lock().unwrap();
+                            if roles.is_empty() && !detectadas.is_empty() {
+                                let mut siguiente_rol = 1;
+                                if let Some((idx, _)) =
+                                    detectadas.iter().enumerate().find(|(_, d)| d.is_primary)
+                                {
+                                    roles.insert(idx as i32, siguiente_rol);
+                                    siguiente_rol += 1;
+                                }
+                                for (idx, d) in detectadas.iter().enumerate() {
+                                    if d.is_primary {
+                                        continue;
+                                    }
+                                    if siguiente_rol > 3 {
+                                        break;
+                                    }
+                                    roles.insert(idx as i32, siguiente_rol);
+                                    siguiente_rol += 1;
+                                }
+                            }
+                        }
+
+                        let pantallas: Vec<ScreenInfo> = {
+                            let roles = roles_clone.lock().unwrap();
+                            detectadas
+                                .iter()
+                                .enumerate()
+                                .map(|(i, d)| {
+                                    let id = i as i32;
+                                    ScreenInfo {
+                                        id,
+                                        nombre: SharedString::from(format!("Pantalla {}", i + 1)),
+                                        x: d.x,
+                                        y: d.y,
+                                        width: d.width as i32,
+                                        height: d.height as i32,
+                                        es_primaria: d.is_primary,
+                                        rol: *roles.get(&id).unwrap_or(&0),
+                                    }
+                                })
+                                .collect()
+                        };
+
+                        ui.set_pantallas_detectadas(ModelRc::from(Rc::new(VecModel::from(
+                            pantallas,
+                        ))));
+                        ui.set_cambios_pendientes(false);
+                        bsc_pant();
+                    });
+                }
+
+                // ── Identificar pantallas: abre un número grande en cada monitor físico ──
+                {
+                    let ui_h = ui.as_weak();
+                    let windows_holder = Rc::clone(&identificar_windows);
+                    let timer_holder = Rc::clone(&identificar_timer);
+
+                    ui.on_identificar_pantallas(move || {
+                        let ui = ui_h.unwrap();
+                        ui.set_identificando_pantallas(true);
+
+                        // Cierra explícitamente ventanas de una identificación anterior
+                        for w in windows_holder.borrow_mut().drain(..) {
+                            let _ = w.hide();
+                        }
+
+                        let pantallas = ui.get_pantallas_detectadas();
+                        let mut nuevas_ventanas = Vec::new();
+
+                        for i in 0..pantallas.row_count() {
+                            if let Some(p) = pantallas.row_data(i) {
+                                if let Ok(w) = IdentifyWindow::new() {
+                                    w.set_numero_pantalla(i as i32 + 1);
+
+                                    // Presionar ESC en cualquiera de las ventanas cierra todas
+                                    let ui_esc = ui_h.clone();
+                                    let windows_esc = Rc::clone(&windows_holder);
+                                    let timer_esc = Rc::clone(&timer_holder);
+                                    w.on_cerrar_solicitado(move || {
+                                        *timer_esc.borrow_mut() = None; // cancela el auto-cierre pendiente
+                                        for w in windows_esc.borrow_mut().drain(..) {
+                                            let _ = w.hide();
+                                        }
+                                        if let Some(ui) = ui_esc.upgrade() {
+                                            ui.set_identificando_pantallas(false);
+                                        }
+                                    });
+
+                                    let _ = w.show();
+                                    w.window()
+                                        .set_position(slint::PhysicalPosition::new(p.x, p.y));
+                                    w.window().set_size(slint::PhysicalSize::new(
+                                        p.width as u32,
+                                        p.height as u32,
+                                    ));
+                                    w.invoke_enfocar_pantalla(); // necesario para que capture la tecla ESC
+                                    nuevas_ventanas.push(w);
+                                }
+                            }
+                        }
+                        *windows_holder.borrow_mut() = nuevas_ventanas;
+
+                        // Auto-cierre después de 4 segundos si el usuario no presiona ESC
+                        let ui_t = ui_h.clone();
+                        let windows_t = Rc::clone(&windows_holder);
+                        let timer = slint::Timer::default();
+                        timer.start(
+                            slint::TimerMode::SingleShot,
+                            std::time::Duration::from_secs(4),
+                            move || {
+                                for w in windows_t.borrow_mut().drain(..) {
+                                    let _ = w.hide();
+                                }
+                                if let Some(ui) = ui_t.upgrade() {
+                                    ui.set_identificando_pantallas(false);
+                                }
+                            },
+                        );
+                        *timer_holder.borrow_mut() = Some(timer);
+                    });
+                }
+
+                // ── Salida por IP (overlay OBS) ───────────────────────────────────────────
+                {
+                    let ui_h = ui.as_weak();
+                    ui.on_abrir_modal_overlay(move || {
+                        let ui = ui_h.unwrap();
+                        let ip_local = local_ip_address::local_ip()
+                            .map(|ip| ip.to_string())
+                            .unwrap_or_else(|_| "127.0.0.1".to_string());
+                        ui.set_overlay_ip_local(SharedString::from(ip_local));
+                    });
+                }
+
+                {
+                    let ui_h = ui.as_weak();
+                    let estado_ov = Arc::clone(&overlay_estado);
+                    let activo_ov = Arc::clone(&overlay_servidor_activo);
+                    ui.on_toggle_servidor_overlay(move || {
+                        let ui = ui_h.unwrap();
+                        if ui.get_overlay_servidor_activo() {
+                            activo_ov.store(false, Ordering::Release);
+                            ui.set_overlay_servidor_activo(false);
+                        } else {
+                            let puerto = ui.get_overlay_puerto() as u16;
+                            let estado_t = Arc::clone(&estado_ov);
+                            let activo_t = Arc::clone(&activo_ov);
+                            thread::spawn(move || {
+                                iniciar_servidor_overlay(puerto, estado_t, activo_t);
+                            });
+                            ui.set_overlay_servidor_activo(true);
+                        }
+                    });
+                }
+
+                // ── Copiar la URL del overlay al portapapeles (multiplataforma) ─────────
+                // Usa `arboard`, que habla directamente con el portapapeles del sistema
+                // (Win32/AppKit/X11/Wayland) sin depender de binarios externos como
+                // xclip o wl-copy, que pueden no estar instalados en el equipo del usuario.
+                {
+                    let ui_h = ui.as_weak();
+                    ui.on_copiar_url_overlay(move || {
+                        let ui = ui_h.unwrap();
+                        let url = format!(
+                            "http://{}:{}",
+                            ui.get_overlay_ip_local(),
+                            ui.get_overlay_puerto()
+                        );
+                        match arboard::Clipboard::new() {
+                            Ok(mut cb) => {
+                                if cb.set_text(url).is_ok() {
+                                    mostrar_aviso(&ui_h, "URL copiada al portapapeles");
+                                } else {
+                                    mostrar_aviso(&ui_h, "No se pudo copiar la URL");
+                                }
+                            }
+                            Err(_) => mostrar_aviso(&ui_h, "No se pudo acceder al portapapeles"),
+                        }
+                    });
+                }
+
+                // ── Toggle "Solo texto (sin fondo)" para el overlay de OBS ──────────────
+                // Refresca inmediatamente el overlay activo (si hay algo proyectado)
+                // para que el cambio se vea al instante en OBS, sin esperar al próximo
+                // clic sobre una estrofa.
+                {
+                    let ui_h = ui.as_weak();
+                    let state_ov = Arc::clone(&state);
+                    let overlay_ov = Arc::clone(&overlay_estado);
+                    let modo_ov = Arc::clone(&modo_en_vivo);
+                    ui.on_toggle_overlay_solo_texto(move |valor| {
+                        let ui = ui_h.unwrap();
+                        ui.set_overlay_solo_texto(valor);
+                        let modo_actual = modo_ov.lock().unwrap().clone();
+                        if !modo_actual.is_empty() {
+                            actualizar_overlay_estilos(
+                                &ui,
+                                &state_ov,
+                                &overlay_ov,
+                                &modo_actual,
+                                valor,
+                            );
+                        }
+                    });
+                }
+
+                // ── Gestión de bases de datos: Importar / Exportar ───────────────────────
+                {
+                    let ui_h = ui.as_weak();
+                    ui.on_abrir_modal_db(move || {
                         if let Some(ui) = ui_h.upgrade() {
+                            ui.set_db_modal_mensaje(SharedString::from(""));
                             ui.set_db_modal_es_error(false);
-                            ui.set_db_modal_mensaje(SharedString::from(format!(
+                        }
+                    });
+                }
+
+                {
+                    let ui_h = ui.as_weak();
+                    let state_c = Arc::clone(&state);
+                    ui.on_exportar_db_cantos(move || {
+                        let dialog = rfd::FileDialog::new()
+                            .set_file_name("cantos.db")
+                            .add_filter(
+                                "Base de datos SQLite (*.db)",
+                                &["db", "sqlite", "sqlite3"],
+                            );
+                        if let Some(dest_path) = dialog.save_file() {
+                            let st = state_c.lock().unwrap();
+                            match st.exportar_cantos_db(&dest_path) {
+                                Ok(_) => {
+                                    if let Some(ui) = ui_h.upgrade() {
+                                        ui.set_db_modal_es_error(false);
+                                        ui.set_db_modal_mensaje(SharedString::from(format!(
+                                            "Base de datos de cantos exportada correctamente a: {}",
+                                            dest_path
+                                                .file_name()
+                                                .unwrap_or_default()
+                                                .to_string_lossy()
+                                        )));
+                                    }
+                                }
+                                Err(e) => {
+                                    if let Some(ui) = ui_h.upgrade() {
+                                        ui.set_db_modal_es_error(true);
+                                        ui.set_db_modal_mensaje(SharedString::from(e));
+                                    }
+                                }
+                            }
+                        }
+                    });
+                }
+
+                {
+                    let ui_h = ui.as_weak();
+                    let state_c = Arc::clone(&state);
+                    ui.on_exportar_db_biblias(move || {
+                        let dialog = rfd::FileDialog::new()
+                            .set_file_name("biblias.db")
+                            .add_filter(
+                                "Base de datos SQLite (*.db)",
+                                &["db", "sqlite", "sqlite3"],
+                            );
+                        if let Some(dest_path) = dialog.save_file() {
+                            let st = state_c.lock().unwrap();
+                            match st.exportar_biblias_db(&dest_path) {
+                                Ok(_) => {
+                                    if let Some(ui) = ui_h.upgrade() {
+                                        ui.set_db_modal_es_error(false);
+                                        ui.set_db_modal_mensaje(SharedString::from(format!(
                                 "Base de datos de biblias exportada correctamente a: {}",
                                 dest_path.file_name().unwrap_or_default().to_string_lossy()
                             )));
+                                    }
+                                }
+                                Err(e) => {
+                                    if let Some(ui) = ui_h.upgrade() {
+                                        ui.set_db_modal_es_error(true);
+                                        ui.set_db_modal_mensaje(SharedString::from(e));
+                                    }
+                                }
+                            }
                         }
-                    }
-                    Err(e) => {
-                        if let Some(ui) = ui_h.upgrade() {
-                            ui.set_db_modal_es_error(true);
-                            ui.set_db_modal_mensaje(SharedString::from(e));
-                        }
-                    }
+                    });
                 }
-            }
-        });
-    }
 
-    {
-        let ui_h = ui.as_weak();
-        let state_c = Arc::clone(&state);
-        ui.on_importar_db_cantos(move || {
+                {
+                    let ui_h = ui.as_weak();
+                    let state_c = Arc::clone(&state);
+                    ui.on_importar_db_cantos(move || {
             let dialog = rfd::FileDialog::new()
                 .add_filter("Base de datos SQLite (*.db)", &["db", "sqlite", "sqlite3"]);
             if let Some(src_path) = dialog.pick_file() {
@@ -4296,12 +5447,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 });
             }
         });
-    }
+                }
 
-    {
-        let ui_h = ui.as_weak();
-        let state_c = Arc::clone(&state);
-        ui.on_importar_db_biblias(move || {
+                {
+                    let ui_h = ui.as_weak();
+                    let state_c = Arc::clone(&state);
+                    ui.on_importar_db_biblias(move || {
             let dialog = rfd::FileDialog::new()
                 .add_filter("Base de datos SQLite (*.db)", &["db", "sqlite", "sqlite3"]);
             if let Some(src_path) = dialog.pick_file() {
@@ -4355,128 +5506,155 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 });
             }
         });
-    }
-
-    // ── Integración de Inteligencia Artificial (Google Gemini) ───────────────
-    {
-        let ui_h = ui.as_weak();
-        ui.on_click_boton_ia(move || {
-            let ui = match ui_h.upgrade() { Some(u) => u, None => return };
-            let key = ui.get_gemini_api_key().to_string();
-            if key.trim().is_empty() {
-                ui.set_mostrar_modal_aviso_ia(true);
-            } else {
-                ui.set_ia_status_msg(SharedString::from(""));
-                ui.set_ia_es_error(false);
-                ui.set_mostrar_modal_generar_ia(true);
-            }
-        });
-    }
-
-    {
-        let ui_h = ui.as_weak();
-        let bsc_ia = build_and_save_config.clone();
-        ui.on_guardar_gemini_api_key(move |nueva_key| {
-            let ui = match ui_h.upgrade() { Some(u) => u, None => return };
-            let key_str = nueva_key.to_string().trim().to_string();
-            ui.set_gemini_api_key(SharedString::from(&key_str));
-            ui.set_temp_gemini_api_key(SharedString::from(&key_str));
-            bsc_ia();
-            ui.set_config_ia_es_error(false);
-            ui.set_config_ia_status_msg(SharedString::from("✓ API Key guardada correctamente"));
-        });
-    }
-
-    {
-        let ui_h = ui.as_weak();
-        let state_ia = Arc::clone(&state);
-        let mm_ia = Arc::clone(&multimedia_state);
-        let img_cache_ia = Arc::clone(&image_cache);
-        let img_cache_fondo_ia = Arc::clone(&image_cache_fondo);
-        let bsc_ia = build_and_save_config.clone();
-        let refresh_mm_ia = refresh_multimedia.clone();
-
-        ui.on_aplicar_imagen_generada_ia(move |tipo, file_path_str| {
-            let ui = match ui_h.upgrade() { Some(u) => u, None => return };
-            let path_str = file_path_str.to_string();
-            let tipo_str = tipo.to_string();
-
-            match tipo_str.as_str() {
-                "cantos" => {
-                    let mut estado = state_ia.lock().unwrap();
-                    estado.cantos_image_paths.push(path_str.clone());
-                    let idx = estado.cantos_image_paths.len() as i32 - 1;
-                    let paths_copia = estado.cantos_image_paths.clone();
-                    drop(estado);
-
-                    let images: Vec<slint::Image> = paths_copia.iter()
-                        .filter_map(|p| load_image_cached(&img_cache_ia, p))
-                        .collect();
-                    ui.set_cantos_image_data(ModelRc::from(Rc::new(VecModel::from(images))));
-                    ui.set_cantos_selected_img(idx);
-                    if let Some(img_fondo) = load_image_fondo_cached(&img_cache_fondo_ia, &path_str) {
-                        ui.set_cantos_bg_image(img_fondo);
-                        ui.set_cantos_has_image(true);
-                        ui.set_cantos_bg_type(SharedString::from("imagen"));
-                        ui.invoke_sync_estilos();
-                    }
-                    bsc_ia();
-                    ui.set_ia_generando(false);
-                    ui.set_ia_es_error(false);
-                    ui.set_ia_status_msg(SharedString::from("¡Imagen lista! Fondo aplicado en Cantos."));
-                },
-                "biblias" => {
-                    let mut estado = state_ia.lock().unwrap();
-                    estado.biblias_image_paths.push(path_str.clone());
-                    let idx = estado.biblias_image_paths.len() as i32 - 1;
-                    let paths_copia = estado.biblias_image_paths.clone();
-                    drop(estado);
-
-                    let images: Vec<slint::Image> = paths_copia.iter()
-                        .filter_map(|p| load_image_cached(&img_cache_ia, p))
-                        .collect();
-                    ui.set_biblias_image_data(ModelRc::from(Rc::new(VecModel::from(images))));
-                    ui.set_biblias_selected_img(idx);
-                    if let Some(img_fondo) = load_image_fondo_cached(&img_cache_fondo_ia, &path_str) {
-                        ui.set_biblias_bg_image(img_fondo);
-                        ui.set_biblias_has_image(true);
-                        ui.set_biblias_bg_type(SharedString::from("imagen"));
-                        ui.invoke_sync_estilos();
-                    }
-                    bsc_ia();
-                    ui.set_ia_generando(false);
-                    ui.set_ia_es_error(false);
-                    ui.set_ia_status_msg(SharedString::from("¡Imagen lista! Fondo aplicado en Biblias."));
-                },
-                _ => {
-                    let timestamp = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_secs();
-                    let name = format!("IA Informativa {}", timestamp);
-                    mm_ia.write().unwrap().push(MediaData {
-                        path: path_str,
-                        name,
-                        aspecto: "centro".to_string(),
-                        is_loop: false,
-                    });
-                    refresh_mm_ia();
-                    bsc_ia();
-                    ui.set_active_tab(SharedString::from("imagenes"));
-                    ui.set_scroll_to_y(0.0);
-                    ui.set_ia_generando(false);
-                    ui.set_ia_es_error(false);
-                    ui.set_ia_status_msg(SharedString::from("¡Imagen lista! Añadida a la sección de Imágenes (IMGS)."));
                 }
-            }
-        });
-    }
 
-    {
-        let ui_h = ui.as_weak();
-        let udd_ia = user_data_dir_cfg.clone();
+                // ── Integración de Inteligencia Artificial (Google Gemini) ───────────────
+                {
+                    let ui_h = ui.as_weak();
+                    ui.on_click_boton_ia(move || {
+                        let ui = match ui_h.upgrade() {
+                            Some(u) => u,
+                            None => return,
+                        };
+                        let key = ui.get_gemini_api_key().to_string();
+                        if key.trim().is_empty() {
+                            ui.set_mostrar_modal_aviso_ia(true);
+                        } else {
+                            ui.set_ia_status_msg(SharedString::from(""));
+                            ui.set_ia_es_error(false);
+                            ui.set_mostrar_modal_generar_ia(true);
+                        }
+                    });
+                }
 
-        ui.on_generar_imagen_ia(move |tipo, prompt| {
+                {
+                    let ui_h = ui.as_weak();
+                    let bsc_ia = build_and_save_config.clone();
+                    ui.on_guardar_gemini_api_key(move |nueva_key| {
+                        let ui = match ui_h.upgrade() {
+                            Some(u) => u,
+                            None => return,
+                        };
+                        let key_str = nueva_key.to_string().trim().to_string();
+                        ui.set_gemini_api_key(SharedString::from(&key_str));
+                        ui.set_temp_gemini_api_key(SharedString::from(&key_str));
+                        bsc_ia();
+                        ui.set_config_ia_es_error(false);
+                        ui.set_config_ia_status_msg(SharedString::from(
+                            "✓ API Key guardada correctamente",
+                        ));
+                    });
+                }
+
+                {
+                    let ui_h = ui.as_weak();
+                    let state_ia = Arc::clone(&state);
+                    let mm_ia = Arc::clone(&multimedia_state);
+                    let img_cache_ia = Arc::clone(&image_cache);
+                    let img_cache_fondo_ia = Arc::clone(&image_cache_fondo);
+                    let bsc_ia = build_and_save_config.clone();
+                    let refresh_mm_ia = refresh_multimedia.clone();
+
+                    ui.on_aplicar_imagen_generada_ia(move |tipo, file_path_str| {
+                        let ui = match ui_h.upgrade() {
+                            Some(u) => u,
+                            None => return,
+                        };
+                        let path_str = file_path_str.to_string();
+                        let tipo_str = tipo.to_string();
+
+                        match tipo_str.as_str() {
+                            "cantos" => {
+                                let mut estado = state_ia.lock().unwrap();
+                                estado.cantos_image_paths.push(path_str.clone());
+                                let idx = estado.cantos_image_paths.len() as i32 - 1;
+                                let paths_copia = estado.cantos_image_paths.clone();
+                                drop(estado);
+
+                                let images: Vec<slint::Image> = paths_copia
+                                    .iter()
+                                    .filter_map(|p| load_image_cached(&img_cache_ia, p))
+                                    .collect();
+                                ui.set_cantos_image_data(ModelRc::from(Rc::new(VecModel::from(
+                                    images,
+                                ))));
+                                ui.set_cantos_selected_img(idx);
+                                if let Some(img_fondo) =
+                                    load_image_fondo_cached(&img_cache_fondo_ia, &path_str)
+                                {
+                                    ui.set_cantos_bg_image(img_fondo);
+                                    ui.set_cantos_has_image(true);
+                                    ui.set_cantos_bg_type(SharedString::from("imagen"));
+                                    ui.invoke_sync_estilos();
+                                }
+                                bsc_ia();
+                                ui.set_ia_generando(false);
+                                ui.set_ia_es_error(false);
+                                ui.set_ia_status_msg(SharedString::from(
+                                    "¡Imagen lista! Fondo aplicado en Cantos.",
+                                ));
+                            }
+                            "biblias" => {
+                                let mut estado = state_ia.lock().unwrap();
+                                estado.biblias_image_paths.push(path_str.clone());
+                                let idx = estado.biblias_image_paths.len() as i32 - 1;
+                                let paths_copia = estado.biblias_image_paths.clone();
+                                drop(estado);
+
+                                let images: Vec<slint::Image> = paths_copia
+                                    .iter()
+                                    .filter_map(|p| load_image_cached(&img_cache_ia, p))
+                                    .collect();
+                                ui.set_biblias_image_data(ModelRc::from(Rc::new(VecModel::from(
+                                    images,
+                                ))));
+                                ui.set_biblias_selected_img(idx);
+                                if let Some(img_fondo) =
+                                    load_image_fondo_cached(&img_cache_fondo_ia, &path_str)
+                                {
+                                    ui.set_biblias_bg_image(img_fondo);
+                                    ui.set_biblias_has_image(true);
+                                    ui.set_biblias_bg_type(SharedString::from("imagen"));
+                                    ui.invoke_sync_estilos();
+                                }
+                                bsc_ia();
+                                ui.set_ia_generando(false);
+                                ui.set_ia_es_error(false);
+                                ui.set_ia_status_msg(SharedString::from(
+                                    "¡Imagen lista! Fondo aplicado en Biblias.",
+                                ));
+                            }
+                            _ => {
+                                let timestamp = std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .unwrap_or_default()
+                                    .as_secs();
+                                let name = format!("IA Informativa {}", timestamp);
+                                mm_ia.write().unwrap().push(MediaData {
+                                    path: path_str,
+                                    name,
+                                    aspecto: "centro".to_string(),
+                                    is_loop: false,
+                                });
+                                refresh_mm_ia();
+                                bsc_ia();
+                                ui.set_active_tab(SharedString::from("imagenes"));
+                                ui.set_scroll_to_y(0.0);
+                                ui.set_ia_generando(false);
+                                ui.set_ia_es_error(false);
+                                ui.set_ia_status_msg(SharedString::from(
+                                    "¡Imagen lista! Añadida a la sección de Imágenes (IMGS).",
+                                ));
+                            }
+                        }
+                    });
+                }
+
+                {
+                    let ui_h = ui.as_weak();
+                    let udd_ia = user_data_dir_cfg.clone();
+
+                    ui.on_generar_imagen_ia(move |tipo, prompt| {
             let ui = match ui_h.upgrade() { Some(u) => u, None => return };
             let prompt_str = prompt.to_string().trim().to_string();
             if prompt_str.is_empty() {
@@ -4572,11 +5750,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             });
         });
-    }
+                }
 
-    {
-        let ui_lo = ui.as_weak();
-        ui.on_activar_soporte_pptx(move || {
+                {
+                    let ui_lo = ui.as_weak();
+                    ui.on_activar_soporte_pptx(move || {
             let ui = ui_lo.unwrap();
             ui.set_instalando_libreoffice(true);
             ui.set_libreoffice_error(SharedString::from(""));
@@ -4596,9 +5774,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 });
             });
         });
-    }
+                }
 
-    ui.on_agregar_pdf(move || {
+                ui.on_agregar_pdf(move || {
         let ui = ui_pdf.unwrap();
         if let Some(path) = rfd::FileDialog::new().add_filter("Presentaciones", &["pdf", "pptx", "ppt", "odp"]).pick_file() {
             let file_name  = path.file_name().unwrap_or_default().to_string_lossy().to_string();
@@ -4806,818 +5984,981 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             });
         }
     });
-}
-    {
-        let ui_pdf_sel  = ui.as_weak();
-        let state_pdf_s = Arc::clone(&pdf_state);
-        ui.on_seleccionar_pdf(move |idx| {
-            let ui = ui_pdf_sel.unwrap();
-            ui.set_selected_pdf_idx(idx);
-            ui.set_pdf_pages(ModelRc::from(Rc::new(VecModel::<slint::Image>::from(vec![]))));
+            }
+            {
+                let ui_pdf_sel = ui.as_weak();
+                let state_pdf_s = Arc::clone(&pdf_state);
+                ui.on_seleccionar_pdf(move |idx| {
+                    let ui = ui_pdf_sel.unwrap();
+                    ui.set_selected_pdf_idx(idx);
+                    ui.set_pdf_pages(ModelRc::from(Rc::new(VecModel::<slint::Image>::from(
+                        vec![],
+                    ))));
 
-            let ui_t    = ui_pdf_sel.clone();
-            let state_t = Arc::clone(&state_pdf_s);
-            thread::spawn(move || {
-                let paths: Vec<String> = {
-                    let state = state_t.read().unwrap();
-                    match state.get(idx as usize) {
-                        Some(pdf) => pdf.pages.clone(),
-                        None => return,
-                    }
-                };
+                    let ui_t = ui_pdf_sel.clone();
+                    let state_t = Arc::clone(&state_pdf_s);
+                    thread::spawn(move || {
+                        let paths: Vec<String> = {
+                            let state = state_t.read().unwrap();
+                            match state.get(idx as usize) {
+                                Some(pdf) => pdf.pages.clone(),
+                                None => return,
+                            }
+                        };
 
-                let decoded: Vec<(u32, u32, Vec<u8>)> = paths.iter()
-                    .filter_map(|p| {
-                        let img = image::open(p).ok()?.to_rgba8();
-                        let (w, h) = (img.width(), img.height());
-                        Some((w, h, img.into_raw()))
-                    })
-                    .collect();
+                        let decoded: Vec<(u32, u32, Vec<u8>)> = paths
+                            .iter()
+                            .filter_map(|p| {
+                                let img = image::open(p).ok()?.to_rgba8();
+                                let (w, h) = (img.width(), img.height());
+                                Some((w, h, img.into_raw()))
+                            })
+                            .collect();
 
-                let _ = slint::invoke_from_event_loop(move || {
-                    if let Some(ui) = ui_t.upgrade() {
-                        if ui.get_selected_pdf_idx() == idx {
-                            let pages_img: Vec<slint::Image> = decoded.into_iter()
-                                .map(|(w, h, raw)| {
-                                    let mut buf = SharedPixelBuffer::<slint::Rgba8Pixel>::new(w, h);
-                                    buf.make_mut_bytes().copy_from_slice(&raw);
-                                    slint::Image::from_rgba8(buf)
-                                })
-                                .collect();
-                            ui.set_pdf_pages(ModelRc::from(Rc::new(VecModel::from(pages_img))));
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = ui_t.upgrade() {
+                                if ui.get_selected_pdf_idx() == idx {
+                                    let pages_img: Vec<slint::Image> = decoded
+                                        .into_iter()
+                                        .map(|(w, h, raw)| {
+                                            let mut buf =
+                                                SharedPixelBuffer::<slint::Rgba8Pixel>::new(w, h);
+                                            buf.make_mut_bytes().copy_from_slice(&raw);
+                                            slint::Image::from_rgba8(buf)
+                                        })
+                                        .collect();
+                                    ui.set_pdf_pages(ModelRc::from(Rc::new(VecModel::from(
+                                        pages_img,
+                                    ))));
+                                }
+                            }
+                        });
+                    });
+                });
+            }
+
+            {
+                let ui_pdf_proj = ui.as_weak();
+                let p_pdf = proyector.as_weak();
+                let vp_pdf = Arc::clone(&video_player);
+                let vp_lib_pdf = Arc::clone(&biblioteca_video_player); // ← AÑADIR
+                let bloqueo = Arc::clone(&bloqueo_estilos);
+                let pdf_state_proj = Arc::clone(&pdf_state);
+                let overlay_pdf = Arc::clone(&overlay_estado);
+                ui.on_proyectar_pdf_pagina(move |page_idx| {
+                    let ui = ui_pdf_proj.unwrap();
+                    let p = p_pdf.unwrap();
+                    bloqueo.store(true, Ordering::Release);
+                    ui.set_is_video_projecting(false);
+                    ui.set_active_pdf_page(page_idx);
+                    let current_pages = ui.get_pdf_pages();
+                    if let Some(img) = current_pages.row_data(page_idx as usize) {
+                        detener_todo_video(&p, &vp_pdf, &vp_lib_pdf); // ← REEMPLAZA a "vp_pdf.lock().unwrap().detener();" + las 2 líneas de biblioteca_video_frame
+                        p.set_es_video(false);
+                        limpiar_texto_proyeccion(&p);
+                        p.set_fondo_imagen_aspecto(slint::SharedString::from("contain"));
+                        p.set_fondo_imagen(img);
+                        p.set_mostrar_imagen(true);
+
+                        // ── Notificar a OBS ──
+                        if ui.get_overlay_solo_texto() {
+                            let mut e = overlay_pdf.lock().unwrap();
+                            e.video_activo = false;
+                            e.texto.clear();
+                            e.referencia.clear();
+                            e.fondo_tipo = "transparente".to_string();
+                            e.fondo_color.clear();
+                            e.fondo_opacity = 0.0;
+                            e.fondo_imagen_bytes.clear();
+                            e.fondo_version += 1;
+                        } else {
+                            let idx_pdf = ui.get_selected_pdf_idx();
+                            let ruta_pagina = {
+                                let lista = pdf_state_proj.read().unwrap();
+                                lista
+                                    .get(idx_pdf as usize)
+                                    .and_then(|pdf| pdf.pages.get(page_idx as usize).cloned())
+                            };
+                            if let Some(ruta_pagina) = ruta_pagina {
+                                let mut e = overlay_pdf.lock().unwrap();
+                                e.video_activo = false;
+                                e.texto.clear();
+                                e.referencia.clear();
+                                e.fondo_tipo = "imagen".to_string();
+                                e.fondo_opacity = 0.0;
+                                e.fondo_ajuste = "contain".to_string();
+                                if let Ok(bytes) = std::fs::read(&ruta_pagina) {
+                                    e.fondo_imagen_content_type =
+                                        content_type_desde_extension(&ruta_pagina).to_string();
+                                    e.fondo_imagen_bytes = bytes;
+                                }
+                                e.fondo_version += 1;
+                            }
                         }
                     }
                 });
-            });
-        });
-    }
+            }
 
-    {
-    let ui_pdf_proj = ui.as_weak();
-    let p_pdf       = proyector.as_weak();
-    let vp_pdf      = Arc::clone(&video_player);
-    let vp_lib_pdf  = Arc::clone(&biblioteca_video_player);   // ← AÑADIR
-    let bloqueo     = Arc::clone(&bloqueo_estilos);
-    let pdf_state_proj = Arc::clone(&pdf_state);
-    let overlay_pdf     = Arc::clone(&overlay_estado);
-    ui.on_proyectar_pdf_pagina(move |page_idx| {
-        let ui = ui_pdf_proj.unwrap();
-        let p  = p_pdf.unwrap();
-        bloqueo.store(true, Ordering::Release);
-        ui.set_is_video_projecting(false);
-        ui.set_active_pdf_page(page_idx);
-        let current_pages = ui.get_pdf_pages();
-        if let Some(img) = current_pages.row_data(page_idx as usize) {
-            detener_todo_video(&p, &vp_pdf, &vp_lib_pdf);   // ← REEMPLAZA a "vp_pdf.lock().unwrap().detener();" + las 2 líneas de biblioteca_video_frame
-            p.set_es_video(false);
-            limpiar_texto_proyeccion(&p);
-            p.set_fondo_imagen_aspecto(slint::SharedString::from("contain"));
-            p.set_fondo_imagen(img);
-            p.set_mostrar_imagen(true);
+            ui.on_eliminar_pdf(move |_idx| { /* Lógica de borrado local */ });
 
-                // ── Notificar a OBS ──
-                if ui.get_overlay_solo_texto() {
-                    let mut e = overlay_pdf.lock().unwrap();
-                    e.video_activo = false;
-                    e.texto.clear();
-                    e.referencia.clear();
-                    e.fondo_tipo = "transparente".to_string();
-                    e.fondo_color.clear();
-                    e.fondo_opacity = 0.0;
-                    e.fondo_imagen_bytes.clear();
-                    e.fondo_version += 1;
-                } else {
-                    let idx_pdf = ui.get_selected_pdf_idx();
-                    let ruta_pagina = {
-                        let lista = pdf_state_proj.read().unwrap();
-                        lista.get(idx_pdf as usize)
-                            .and_then(|pdf| pdf.pages.get(page_idx as usize).cloned())
+            {
+                let multi_state = Arc::clone(&multimedia_state);
+                let refresh_clone = refresh_multimedia.clone();
+                let bsc_aspecto = build_and_save_config.clone();
+                ui.on_cambiar_aspecto_multimedia(move |idx, aspecto| {
+                    let mut state = multi_state.write().unwrap();
+                    if let Some(item) = state.get_mut(idx as usize) {
+                        item.aspecto = aspecto.to_string();
+                    }
+                    drop(state);
+                    refresh_clone();
+                    bsc_aspecto();
+                });
+            }
+
+            {
+                let multi_state = Arc::clone(&multimedia_state);
+                let refresh_clone = refresh_multimedia.clone();
+                let ui_handle = ui.as_weak();
+                let bsc_del_multi = build_and_save_config.clone();
+                ui.on_eliminar_multimedia(move |idx| {
+                    let mut state = multi_state.write().unwrap();
+                    if (idx as usize) < state.len() {
+                        state.remove(idx as usize);
+                    }
+                    drop(state);
+                    let ui = ui_handle.unwrap();
+                    ui.set_selected_media_idx(-1);
+                    refresh_clone();
+                    bsc_del_multi();
+                });
+            }
+
+            {
+                let ui_h = ui.as_weak();
+                let multi_state = Arc::clone(&multimedia_state);
+                let img_cache_fondo_sel = Arc::clone(&image_cache_fondo);
+                ui.on_seleccionar_media_item(move |idx| {
+                    let ui = ui_h.unwrap();
+                    let path = {
+                        let state = multi_state.read().unwrap();
+                        state.get(idx as usize).map(|i| i.path.clone())
                     };
-                    if let Some(ruta_pagina) = ruta_pagina {
-                        let mut e = overlay_pdf.lock().unwrap();
+                    if let Some(p) = path {
+                        if let Some(img_prev) = load_image_preview_cached(&img_cache_fondo_sel, &p)
+                        {
+                            ui.set_selected_media_full_img(img_prev);
+                        }
+                    }
+                });
+            }
+
+            {
+                let p_handle = proyector.as_weak();
+                let multi_state = Arc::clone(&multimedia_state);
+                let vp = Arc::clone(&video_player);
+                let vp_lib_mm = Arc::clone(&biblioteca_video_player); // ← AÑADIR
+                let ui_h = ui.as_weak();
+                let bloqueo = Arc::clone(&bloqueo_estilos);
+                let image_cache_mm = Arc::clone(&image_cache);
+                let refresh_multimedia_mm = refresh_multimedia.clone();
+                let bsc_multi_mm = build_and_save_config.clone();
+                let overlay_mm = Arc::clone(&overlay_estado);
+                ui.on_proyectar_multimedia(move |idx| {
+                    let p = p_handle.unwrap();
+                    let ui_local = ui_h.unwrap();
+                    bloqueo.store(true, Ordering::Release);
+                    ui_local.set_is_video_projecting(false);
+
+                    let ruta = {
+                        let state = multi_state.read().unwrap();
+                        state.get(idx as usize).map(|item| item.path.clone())
+                    };
+
+                    let Some(ruta) = ruta else { return };
+
+                    if !archivo_existe(&ruta) {
+                        multi_state
+                            .write()
+                            .unwrap()
+                            .retain(|item| item.path != ruta);
+                        image_cache_mm.lock().unwrap().remove(&ruta);
+                        ui_local.set_selected_media_idx(-1);
+                        refresh_multimedia_mm();
+                        bsc_multi_mm();
+                        mostrar_aviso(
+                            &ui_h,
+                            "El archivo ya no existe y fue removido de la biblioteca.",
+                        );
+                        return;
+                    }
+
+                    if let Ok(img) = slint::Image::load_from_path(std::path::Path::new(&ruta)) {
+                        detener_todo_video(&p, &vp, &vp_lib_mm); // ← REEMPLAZA a "vp.lock().unwrap().detener();" y las 2 líneas de biblioteca_video_frame
+                        p.set_es_video(false);
+                        p.set_bg_color(slint::Color::from_rgb_u8(0, 0, 0));
+                        limpiar_texto_proyeccion(&p);
+                        p.set_fondo_opacity(0.0);
+                        let aspecto = {
+                            let state = multi_state.read().unwrap();
+                            state
+                                .iter()
+                                .find(|i| i.path == ruta)
+                                .map(|i| i.aspecto.clone())
+                                .unwrap_or_default()
+                        };
+                        p.set_fondo_imagen_aspecto(slint::SharedString::from(&aspecto));
+                        p.set_fondo_imagen(img);
+                        p.set_mostrar_imagen(true);
+
+                        let mut e = overlay_mm.lock().unwrap();
                         e.video_activo = false;
                         e.texto.clear();
                         e.referencia.clear();
-                        e.fondo_tipo    = "imagen".to_string();
+                        e.fondo_tipo = "imagen".to_string();
                         e.fondo_opacity = 0.0;
-                        e.fondo_ajuste  = "contain".to_string();
-                        if let Ok(bytes) = std::fs::read(&ruta_pagina) {
-                            e.fondo_imagen_content_type = content_type_desde_extension(&ruta_pagina).to_string();
+                        e.fondo_ajuste = match aspecto.as_str() {
+                            "rellenar" => "cover".to_string(),
+                            "estirar" => "fill".to_string(),
+                            _ => "contain".to_string(),
+                        };
+                        if let Ok(bytes) = std::fs::read(&ruta) {
+                            e.fondo_imagen_content_type =
+                                content_type_desde_extension(&ruta).to_string();
                             e.fondo_imagen_bytes = bytes;
                         }
                         e.fondo_version += 1;
                     }
-                }
-            }
-        });
-    }
-
-    ui.on_eliminar_pdf(move |_idx| { /* Lógica de borrado local */ });
-
-    {
-        let multi_state   = Arc::clone(&multimedia_state);
-        let refresh_clone = refresh_multimedia.clone();
-        let bsc_aspecto   = build_and_save_config.clone();
-        ui.on_cambiar_aspecto_multimedia(move |idx, aspecto| {
-            let mut state = multi_state.write().unwrap();
-            if let Some(item) = state.get_mut(idx as usize) { item.aspecto = aspecto.to_string(); }
-            drop(state);
-            refresh_clone();
-            bsc_aspecto();
-        });
-    }
-
-    {
-        let multi_state   = Arc::clone(&multimedia_state);
-        let refresh_clone = refresh_multimedia.clone();
-        let ui_handle     = ui.as_weak();
-        let bsc_del_multi = build_and_save_config.clone();
-        ui.on_eliminar_multimedia(move |idx| {
-            let mut state = multi_state.write().unwrap();
-            if (idx as usize) < state.len() { state.remove(idx as usize); }
-            drop(state);
-            let ui = ui_handle.unwrap();
-            ui.set_selected_media_idx(-1);
-            refresh_clone();
-            bsc_del_multi();
-        });
-    }
-
-    {
-        let ui_h = ui.as_weak();
-        let multi_state = Arc::clone(&multimedia_state);
-        let img_cache_fondo_sel = Arc::clone(&image_cache_fondo);
-        ui.on_seleccionar_media_item(move |idx| {
-            let ui = ui_h.unwrap();
-            let path = {
-                let state = multi_state.read().unwrap();
-                state.get(idx as usize).map(|i| i.path.clone())
-            };
-            if let Some(p) = path {
-                if let Some(img_prev) = load_image_preview_cached(&img_cache_fondo_sel, &p) {
-                    ui.set_selected_media_full_img(img_prev);
-                }
-            }
-        });
-    }
-
-    {
-    let p_handle  = proyector.as_weak();
-    let multi_state = Arc::clone(&multimedia_state);
-    let vp        = Arc::clone(&video_player);
-    let vp_lib_mm = Arc::clone(&biblioteca_video_player);   // ← AÑADIR
-    let ui_h      = ui.as_weak();
-    let bloqueo   = Arc::clone(&bloqueo_estilos);
-    let image_cache_mm   = Arc::clone(&image_cache);
-    let refresh_multimedia_mm = refresh_multimedia.clone();
-    let bsc_multi_mm      = build_and_save_config.clone();
-    let overlay_mm = Arc::clone(&overlay_estado);
-    ui.on_proyectar_multimedia(move |idx| {
-        let p        = p_handle.unwrap();
-        let ui_local = ui_h.unwrap();
-        bloqueo.store(true, Ordering::Release);
-        ui_local.set_is_video_projecting(false);
-
-        let ruta = {
-            let state = multi_state.read().unwrap();
-            state.get(idx as usize).map(|item| item.path.clone())
-        };
-
-        let Some(ruta) = ruta else { return };
-
-        if !archivo_existe(&ruta) {
-            multi_state.write().unwrap().retain(|item| item.path != ruta);
-            image_cache_mm.lock().unwrap().remove(&ruta);
-            ui_local.set_selected_media_idx(-1);
-            refresh_multimedia_mm();
-            bsc_multi_mm();
-            mostrar_aviso(&ui_h, "El archivo ya no existe y fue removido de la biblioteca.");
-            return;
-        }
-
-        if let Ok(img) = slint::Image::load_from_path(std::path::Path::new(&ruta)) {
-            detener_todo_video(&p, &vp, &vp_lib_mm);   // ← REEMPLAZA a "vp.lock().unwrap().detener();" y las 2 líneas de biblioteca_video_frame
-            p.set_es_video(false);
-            p.set_bg_color(slint::Color::from_rgb_u8(0, 0, 0));
-            limpiar_texto_proyeccion(&p);
-            p.set_fondo_opacity(0.0);
-            let aspecto = { let state = multi_state.read().unwrap(); state.iter().find(|i| i.path == ruta).map(|i| i.aspecto.clone()).unwrap_or_default() };
-            p.set_fondo_imagen_aspecto(slint::SharedString::from(&aspecto));
-            p.set_fondo_imagen(img);
-            p.set_mostrar_imagen(true);
-
-            let mut e = overlay_mm.lock().unwrap();
-            e.video_activo = false;
-            e.texto.clear();
-            e.referencia.clear();
-            e.fondo_tipo    = "imagen".to_string();
-            e.fondo_opacity = 0.0;
-            e.fondo_ajuste  = match aspecto.as_str() {
-                "rellenar" => "cover".to_string(),
-                "estirar"  => "fill".to_string(),
-                _          => "contain".to_string(),
-            };
-            if let Ok(bytes) = std::fs::read(&ruta) {
-                e.fondo_imagen_content_type = content_type_desde_extension(&ruta).to_string();
-                e.fondo_imagen_bytes = bytes;
-            }
-            e.fondo_version += 1;
-        }
-    });
-}
-    // ── Vídeos proyectables ──────────────────────────────────────────────────
-    let refresh_videos = {
-        let ui_handle = ui.as_weak();
-        let state_arc = Arc::clone(&video_state);
-        let img_cache_rv = Arc::clone(&image_cache);
-        move || {
-            let ui    = ui_handle.unwrap();
-            let items = state_arc.read().unwrap();
-            let slint_items: Vec<MediaItem> = items.iter().enumerate().map(|(i, item)| {
-                let img = img_cache_rv.lock().unwrap().get(&item.path).cloned()
-                    .unwrap_or_else(|| {
-                        let pixel_buffer = SharedPixelBuffer::<slint::Rgba8Pixel>::new(80, 45);
-                        slint::Image::from_rgba8(pixel_buffer)
-                    });
-                MediaItem {
-                    id:      i as i32,
-                    nombre:  SharedString::from(&item.name),
-                    path:    SharedString::from(&item.path),
-                    img,
-                    aspecto: SharedString::from("rellenar"),
-                    is_loop: item.is_loop,
-                }
-            }).collect();
-            ui.set_video_items(ModelRc::from(Rc::new(VecModel::from(slint_items))));
-        }
-    };
-    refresh_multimedia();
-    refresh_videos();
-
-    {
-        let mut paths_init: Vec<String> = video_state.read().unwrap().iter().map(|v| v.path.clone()).collect();
-        paths_init.extend(state.lock().unwrap().biblias_video_paths.clone());
-        paths_init.extend(state.lock().unwrap().cantos_video_paths.clone());
-        let udd_init = user_data_dir_cfg.clone();
-        let tx_init  = thumb_tx.clone();
-        thread::spawn(move || {
-            for ruta in paths_init {
-                if let Some(dynimg) = obtener_o_crear_miniatura_video(&ruta, &udd_init, 160) {
-                    let rgba = dynimg.to_rgba8();
-                    let (w, h) = (rgba.width(), rgba.height());
-                    let raw = rgba.into_raw();
-                    let _ = tx_init.send((ruta.clone(), w, h, raw));
-                }
-            }
-        });
-    }
-
-        // ── Timer que recoge miniaturas de video del canal y actualiza la UI ──
-    {
-        let img_cache_poll = Arc::clone(&image_cache);
-        let refresh_poll   = refresh_videos.clone();
-        let ui_gal_poll    = ui.as_weak();
-        let state_gal_poll = Arc::clone(&state);
-        let thumb_timer = slint::Timer::default();
-        thumb_timer.start(slint::TimerMode::Repeated, std::time::Duration::from_millis(300), move || {
-            let mut hubo_actualizacion = false;
-            while let Ok((ruta, w, h, raw)) = thumb_rx.try_recv() {
-                let mut buf = SharedPixelBuffer::<slint::Rgba8Pixel>::new(w, h);
-                buf.make_mut_bytes().copy_from_slice(&raw);
-                img_cache_poll.lock().unwrap().insert(ruta, slint::Image::from_rgba8(buf));
-                hubo_actualizacion = true;
-            }
-            if hubo_actualizacion {
-                refresh_poll();
-                if let Some(ui) = ui_gal_poll.upgrade() {
-                    let (pb, pc) = {
-                        let st = state_gal_poll.lock().unwrap();
-                        (st.biblias_video_paths.clone(), st.cantos_video_paths.clone())
-                    };
-                    ui.set_biblias_video_gallery(ModelRc::from(Rc::new(VecModel::from(construir_video_gallery(&pb, &img_cache_poll)))));
-                    ui.set_cantos_video_gallery(ModelRc::from(Rc::new(VecModel::from(construir_video_gallery(&pc, &img_cache_poll)))));
-                }
-            }
-        });
-        std::mem::forget(thumb_timer);
-    }
-
-     {
-        let vid_state       = Arc::clone(&video_state);
-        let refresh_clone   = refresh_videos.clone();
-        let bsc_add_vid     = build_and_save_config.clone();
-        let udd_av          = user_data_dir_cfg.clone();
-        let tx_av           = thumb_tx.clone();
-        ui.on_agregar_video(move || {
-            if let Some(path) = rfd::FileDialog::new()
-                .add_filter("Videos", &["mp4","mkv","avi","mov"]).pick_file()
-            {
-                let file_name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
-                let path_str  = path.to_string_lossy().to_string();
-                vid_state.write().unwrap().push(MediaData {
-                    path:    path_str.clone(),
-                    name:    file_name,
-                    aspecto: "rellenar".to_string(),
-                    is_loop: false,
                 });
-                refresh_clone();
-                bsc_add_vid();
+            }
+            // ── Vídeos proyectables ──────────────────────────────────────────────────
+            let refresh_videos = {
+                let ui_handle = ui.as_weak();
+                let state_arc = Arc::clone(&video_state);
+                let img_cache_rv = Arc::clone(&image_cache);
+                move || {
+                    let ui = ui_handle.unwrap();
+                    let items = state_arc.read().unwrap();
+                    let slint_items: Vec<MediaItem> = items
+                        .iter()
+                        .enumerate()
+                        .map(|(i, item)| {
+                            let img = img_cache_rv
+                                .lock()
+                                .unwrap()
+                                .get(&item.path)
+                                .cloned()
+                                .unwrap_or_else(|| {
+                                    let pixel_buffer =
+                                        SharedPixelBuffer::<slint::Rgba8Pixel>::new(80, 45);
+                                    slint::Image::from_rgba8(pixel_buffer)
+                                });
+                            MediaItem {
+                                id: i as i32,
+                                nombre: SharedString::from(&item.name),
+                                path: SharedString::from(&item.path),
+                                img,
+                                aspecto: SharedString::from("rellenar"),
+                                is_loop: item.is_loop,
+                            }
+                        })
+                        .collect();
+                    ui.set_video_items(ModelRc::from(Rc::new(VecModel::from(slint_items))));
+                }
+            };
+            refresh_multimedia();
+            refresh_videos();
 
-                // Genera la miniatura en un hilo aparte y la manda por el canal.
-                // Nada de slint::Image se toca aquí: solo bytes crudos (Send).
-                let udd_t = udd_av.clone();
-                let tx_t  = tx_av.clone();
+            {
+                let mut paths_init: Vec<String> = video_state
+                    .read()
+                    .unwrap()
+                    .iter()
+                    .map(|v| v.path.clone())
+                    .collect();
+                paths_init.extend(state.lock().unwrap().biblias_video_paths.clone());
+                paths_init.extend(state.lock().unwrap().cantos_video_paths.clone());
+                let udd_init = user_data_dir_cfg.clone();
+                let tx_init = thumb_tx.clone();
                 thread::spawn(move || {
-                    if let Some(dynimg) = obtener_o_crear_miniatura_video(&path_str, &udd_t, 160) {
-                        let rgba = dynimg.to_rgba8();
-                        let (w, h) = (rgba.width(), rgba.height());
-                        let raw = rgba.into_raw();
-                        let _ = tx_t.send((path_str.clone(), w, h, raw));
+                    for ruta in paths_init {
+                        if let Some(dynimg) = obtener_o_crear_miniatura_video(&ruta, &udd_init, 160)
+                        {
+                            let rgba = dynimg.to_rgba8();
+                            let (w, h) = (rgba.width(), rgba.height());
+                            let raw = rgba.into_raw();
+                            let _ = tx_init.send((ruta.clone(), w, h, raw));
+                        }
                     }
                 });
             }
-        });
-    }
 
-    {
-        let vid_state       = Arc::clone(&video_state);
-        let refresh_clone   = refresh_videos.clone();
-        let ui_handle       = ui.as_weak();
-        let prev_del        = Arc::clone(&preview_player);
-        let bsc_del_vid     = build_and_save_config.clone();
-        ui.on_eliminar_video(move |idx| {
-            let mut state = vid_state.write().unwrap();
-            if (idx as usize) < state.len() { state.remove(idx as usize); }
-            drop(state);
-            let ui = ui_handle.unwrap();
-            ui.set_selected_video_idx(-1);
-            prev_del.lock().unwrap().detener();
-            refresh_clone();
-            bsc_del_vid();
-        });
-    }
-
-    {
-        let ui_handle   = ui.as_weak();
-        let prev_sel    = Arc::clone(&preview_player);
-        ui.on_seleccionar_video_lista(move |idx| {
-            let ui = ui_handle.unwrap();
-            ui.set_selected_video_idx(idx);
-            prev_sel.lock().unwrap().detener();
-            ui.set_is_preview_playing(false);
-            ui.set_preview_video_frame(slint::Image::default());
-            ui.set_is_video_projecting(false);
-        });
-    }
-
-    {
-        let vid_state   = Arc::clone(&video_state);
-        let ui_handle   = ui.as_weak();
-        let prev_clone  = Arc::clone(&preview_player);
-        ui.on_toggle_preview_video(move |idx| {
-            let ui    = ui_handle.unwrap();
-            let state = vid_state.read().unwrap();
-            if let Some(item) = state.get(idx as usize) {
-                let mut player     = prev_clone.lock().unwrap();
-                let is_playing     = ui.get_is_preview_playing();
-                if !is_playing {
-                    if player.pipeline.is_some() {
-                        let playing = player.toggle_play_pause();
-                        ui.set_is_preview_playing(playing);
-                    } else {
-                        player.reproducir_preview(&item.path, ui.as_weak());
-                        ui.set_is_preview_playing(true);
-                    }
-                } else {
-                    let playing = player.toggle_play_pause();
-                    ui.set_is_preview_playing(playing);
-                }
-            }
-        });
-    }
-
-    {
-        let vid_state   = Arc::clone(&video_state);
-        let ui_handle   = ui.as_weak();
-        let prev_clone  = Arc::clone(&preview_player);
-        ui.on_seek_preview_relativo(move |delta_secs| {
-            let ui = ui_handle.unwrap();
-            let idx = ui.get_selected_video_idx();
-            if idx < 0 { return; }
-            let mut player = prev_clone.lock().unwrap();
-            if player.pipeline.is_none() {
-                let state = vid_state.read().unwrap();
-                if let Some(item) = state.get(idx as usize) {
-                    player.reproducir_preview(&item.path, ui.as_weak());
-                    ui.set_is_preview_playing(true);
-                }
-            }
-            player.seek_relativo(delta_secs as f64);
-        });
-    }
-
-         {
-    let p_handle    = proyector.as_weak();
-    let vid_state   = Arc::clone(&video_state);
-    let vp_lib      = Arc::clone(&biblioteca_video_player);
-    let vp_fondo_v  = Arc::clone(&video_player);   // ← AÑADIR
-    let ui_h        = ui.as_weak();
-    let bloqueo     = Arc::clone(&bloqueo_estilos);
-    let bsc_video_vv = build_and_save_config.clone();
-    let overlay_vid  = Arc::clone(&overlay_estado);
-    ui.on_proyectar_video(move |idx| {
-        let p  = p_handle.unwrap();
-        let ui = ui_h.unwrap();
-        bloqueo.store(true, Ordering::Release);
-
-        let item_info = {
-            let state = vid_state.read().unwrap();
-            state.get(idx as usize).map(|i| (i.path.clone(), i.is_loop))
-        };
-        let Some((ruta, is_loop)) = item_info else { return };
-
-        if !archivo_existe(&ruta) {
-                vid_state.write().unwrap().retain(|item| item.path != ruta);
-
-                // Reconstruye la lista visible sin depender de refresh_videos
-                // (evita problemas de orden de declaración en el archivo).
-                let items = vid_state.read().unwrap();
-                let slint_items: Vec<MediaItem> = items.iter().enumerate().map(|(i, item)| {
-                    let pixel_buffer = SharedPixelBuffer::<slint::Rgba8Pixel>::new(80, 45);
-                    MediaItem {
-                        id:      i as i32,
-                        nombre:  SharedString::from(&item.name),
-                        path:    SharedString::from(&item.path),
-                        img:     slint::Image::from_rgba8(pixel_buffer),
-                        aspecto: SharedString::from("rellenar"),
-                        is_loop: item.is_loop,
-                    }
-                }).collect();
-                drop(items);
-                ui.set_video_items(ModelRc::from(Rc::new(VecModel::from(slint_items))));
-
-                ui.set_selected_video_idx(-1);
-                bsc_video_vv();
-                mostrar_aviso(&ui_h, "El video ya no existe y fue removido de la biblioteca.");
-                return;
-            }
-
-            // NOTA: no tocamos p.set_es_video / p.set_bg_color / p.set_fondo_imagen / etc.
-            // Esas propiedades siguen describiendo el FONDO de biblias/cantos intacto.
-            vp_fondo_v.lock().unwrap().detener();  
-             p.set_mostrar_video_biblioteca(true);
-            vp_lib.lock().unwrap().reproducir(&ruta, p.as_weak(), is_loop, true);
-            ui.set_is_video_projecting(true);
-            ui.set_is_proyector_playing(true);
-
-            // ── AGREGAR: Notificar a OBS (video con audio) ──
-            // Servimos el archivo tal cual con soporte de Range; el
-            // <video> del navegador de OBS lo descarga y decodifica solo.
+            // ── Timer que recoge miniaturas de video del canal y actualiza la UI ──
             {
-                let mut e = overlay_vid.lock().unwrap();
-                e.video_activo = true;
-                e.video_ruta   = ruta.clone();
-                e.video_loop   = is_loop;
-                e.video_token += 1;
-            }
-        });
-    }
-
-     {
-        let vp_controls = Arc::clone(&biblioteca_video_player);
-        let ui_h        = ui.as_weak();
-        ui.on_toggle_proyector_play(move || {
-            let ui        = ui_h.unwrap();
-            let is_playing = vp_controls.lock().unwrap().toggle_play_pause();
-            ui.set_is_proyector_playing(is_playing);
-        });
-    }
-
-    {
-        let vp_mute = Arc::clone(&biblioteca_video_player);
-        let ui_h    = ui.as_weak();
-        ui.on_toggle_proyector_mute(move || {
-            let ui            = ui_h.unwrap();
-            let new_mute      = !ui.get_is_proyector_muted();
-            vp_mute.lock().unwrap().set_mute(new_mute);
-            ui.set_is_proyector_muted(new_mute);
-        });
-    }
-
-     {
-        let vp_seek = Arc::clone(&biblioteca_video_player);
-        ui.on_seek_proyector_video(move |percent| { vp_seek.lock().unwrap().seek_percentage(percent); });
-    }
-
-    // Evitar que el proyector sea minimizado (Win+D, Super+H, etc.)
-// Impedir que el proyector sea minimizado por atajos de teclado (Super+H, Win+D, etc.)
-// Anti-minimize: 100ms es lo suficientemente rápido para ser imperceptible
-let p_restore = proyector.as_weak();
-let pa_timer  = Arc::clone(&proyector_abierto);
-let _restore_timer = slint::Timer::default();
-_restore_timer.start(
-    
-    slint::TimerMode::Repeated,
-    std::time::Duration::from_millis(350), // antes 100ms — 3.5x menos wakeups
-    move || {
-        if pa_timer.load(Ordering::Acquire) {
-            if let Some(p) = p_restore.upgrade() {
-                p.window().set_minimized(false);
-            }
-        }
-    },
-);
-std::mem::forget(_restore_timer); 
-
-let vp_timer       = Arc::clone(&biblioteca_video_player);
-    let ui_timer_handle = ui.as_weak();
-    let _video_timer   = slint::Timer::default();
-    _video_timer.start(slint::TimerMode::Repeated, std::time::Duration::from_millis(750), move || {
-        if let Some(ui) = ui_timer_handle.upgrade() {
-            if ui.get_is_video_projecting() {
-                let (pos_ms, dur_ms) = vp_timer.lock().unwrap().get_position_and_duration();
-                if dur_ms > 0 {
-                    let progress  = pos_ms as f32 / dur_ms as f32;
-                    ui.set_proyector_progress(progress);
-                    let pos_sec   = pos_ms / 1000;
-                    let dur_sec   = dur_ms / 1000;
-                    let time_str  = format!("{:02}:{:02} / {:02}:{:02}",
-                        pos_sec / 60, pos_sec % 60,
-                        dur_sec / 60, dur_sec % 60);
-                    ui.set_proyector_time(slint::SharedString::from(time_str));
-                }
-            }
-        }
-    });
-    std::mem::forget(_video_timer);
-
-    // OPT-8: Timer declarado como variable local — vive hasta el final de main().
-    //        El Box::leak original era un memory leak innecesario.
-    let vp_timer       = Arc::clone(&biblioteca_video_player);
-    let ui_timer_handle = ui.as_weak();
-    let _video_timer   = slint::Timer::default(); // '_' evita unused-variable warning
-    _video_timer.start(slint::TimerMode::Repeated, std::time::Duration::from_millis(750), move || {
-        if let Some(ui) = ui_timer_handle.upgrade() {
-            if ui.get_is_video_projecting() {
-                let (pos_ms, dur_ms) = vp_timer.lock().unwrap().get_position_and_duration();
-                if dur_ms > 0 {
-                    let progress  = pos_ms as f32 / dur_ms as f32;
-                    ui.set_proyector_progress(progress);
-                    let pos_sec   = pos_ms / 1000;
-                    let dur_sec   = dur_ms / 1000;
-                    let time_str  = format!("{:02}:{:02} / {:02}:{:02}",
-                        pos_sec / 60, pos_sec % 60,
-                        dur_sec / 60, dur_sec % 60);
-                    ui.set_proyector_time(slint::SharedString::from(time_str));
-                }
-            }
-        }
-    });
-
-    {
-        let vid_state_mode = Arc::clone(&video_state);
-        let refresh_clone  = refresh_videos.clone();
-        let bsc_modo       = build_and_save_config.clone();
-        ui.on_cambiar_modo_reproduccion(move |idx, modo| {
-            let mut state = vid_state_mode.write().unwrap();
-            if let Some(item) = state.get_mut(idx as usize) { item.is_loop = modo == "bucle"; }
-            drop(state);
-            refresh_clone();
-            bsc_modo();
-        });
-    }
-
-    // ── Favoritos — cantos ───────────────────────────────────────────────────
-    {
-        let ui_h   = ui.as_weak();
-        let state  = Arc::clone(&state);
-        let c_clone = cargar_cantos.clone();
-        ui.on_toggle_favorito_canto(move |id| {
-            let ui    = ui_h.unwrap();
-            let favs  = {
-                let estado = state.lock().unwrap();
-                estado.toggle_favorito_canto(id, &estado.get_canto_titulo(id));
-                estado.get_all_favoritos()
-            };
-            ui.set_favoritos(ModelRc::from(Rc::new(VecModel::from(favs))));
-            c_clone(ui.get_buscador_texto().to_string());
-        });
-    }
-
-    // ── Favoritos — versículos ───────────────────────────────────────────────
-    {
-        let ui_h    = ui.as_weak();
-        let state   = Arc::clone(&state);
-        let cb_lib  = Arc::clone(&current_biblia_libro);
-        let cb_cap  = Arc::clone(&current_biblia_capitulo);
-        ui.on_toggle_favorito_estrofa(move |referencia, texto| {
-            let ui  = ui_h.unwrap();
-            { state.lock().unwrap().toggle_favorito_versiculo(&referencia, &texto); }
-            let lib = *cb_lib.lock().unwrap();
-            let cap = *cb_cap.lock().unwrap();
-            let (versiculos, fav_refs, favs, titulo_cap) = {
-                let mut estado    = state.lock().unwrap();
-                let book_name     = ui.get_selected_bible_book().nombre.to_string();
-                let t             = format!("{} {}", book_name, cap);
-                let vs = if lib != -1 && cap != -1 { estado.get_capitulo(lib, cap) } else { Vec::new() };
-                let fr = estado.get_favoritos_refs_versiculos_actual();
-                let fa = estado.get_all_favoritos();
-                (vs, fr, fa, t)
-            };
-            if !versiculos.is_empty() {
-                let diapos: Vec<DiapositivaUI> = versiculos.iter()
-                    .map(|v| versiculo_a_ui_fav(v, &fav_refs, &titulo_cap))
-                    .collect();
-                ui.set_estrofas_actuales(ModelRc::from(Rc::new(VecModel::from(diapos))));
-            }
-            ui.set_favoritos(ModelRc::from(Rc::new(VecModel::from(favs))));
-        });
-    }
-
-    // ── Eliminar favorito ───────────────────────────────────────────────────
-    {
-        let ui_h    = ui.as_weak();
-        let state   = Arc::clone(&state);
-        let c_clone = cargar_cantos.clone();
-        let cb_lib  = Arc::clone(&current_biblia_libro);
-        let cb_cap  = Arc::clone(&current_biblia_capitulo);
-        ui.on_eliminar_favorito(move |fav| {
-            let ui = ui_h.unwrap();
-            let (favs, versiculos, fav_refs, titulo_cap) = {
-                let mut estado = state.lock().unwrap();
-                estado.eliminar_favorito_item(fav.id, fav.tipo.as_str(), fav.referencia.as_str(), fav.version.as_str());
-                let fa = estado.get_all_favoritos();
-                let fr = estado.get_favoritos_refs_versiculos_actual();
-                let lib = *cb_lib.lock().unwrap();
-                let cap = *cb_cap.lock().unwrap();
-                let book_name = ui.get_selected_bible_book().nombre.to_string();
-                let t = format!("{} {}", book_name, cap);
-                let vs = if lib != -1 && cap != -1 { estado.get_capitulo(lib, cap) } else { Vec::new() };
-                (fa, vs, fr, t)
-            };
-            ui.set_favoritos(ModelRc::from(Rc::new(VecModel::from(favs))));
-            c_clone(ui.get_buscador_texto().to_string());
-            if !versiculos.is_empty() {
-                let diapos: Vec<DiapositivaUI> = versiculos.iter()
-                    .map(|v| versiculo_a_ui_fav(v, &fav_refs, &titulo_cap))
-                    .collect();
-                ui.set_estrofas_actuales(ModelRc::from(Rc::new(VecModel::from(diapos))));
-            }
-        });
-    }
-
-    // ── Abrir favorito ───────────────────────────────────────────────────────
-    {
-        let ui_h    = ui.as_weak();
-        let state   = Arc::clone(&state);
-        let cb_lib  = Arc::clone(&current_biblia_libro);
-        let cb_cap  = Arc::clone(&current_biblia_capitulo);
-        ui.on_abrir_favorito(move |fav| {
-            let ui = ui_h.unwrap();
-            if fav.tipo == "canto" {
-                *cb_lib.lock().unwrap() = -1;
-                *cb_cap.lock().unwrap() = -1;
-                ui.set_active_tab(SharedString::from("cantos"));
-                ui.set_scroll_to_y(0.0);
-                let id = fav.id;
-                let state_t = Arc::clone(&state);
-                let ui_t    = ui.as_weak();
-                let fav_titulo = fav.titulo.to_string();
-                thread::spawn(move || {
-                    let (titulo, diapos_db) = {
-                        let estado = state_t.lock().unwrap();
-                        let mut diapos = estado.get_canto_diapositivas(id);
-                        let mut tit = estado.get_canto_titulo(id);
-                        if diapos.is_empty() && !fav_titulo.is_empty() {
-                            if let Ok(canto_id) = estado.cantos_db.query_row(
-                                "SELECT id FROM cantos WHERE titulo = ? LIMIT 1",
-                                [&fav_titulo],
-                                |r| r.get::<_, i32>(0)
-                            ) {
-                                diapos = estado.get_canto_diapositivas(canto_id);
-                                tit = estado.get_canto_titulo(canto_id);
+                let img_cache_poll = Arc::clone(&image_cache);
+                let refresh_poll = refresh_videos.clone();
+                let ui_gal_poll = ui.as_weak();
+                let state_gal_poll = Arc::clone(&state);
+                let thumb_timer = slint::Timer::default();
+                thumb_timer.start(
+                    slint::TimerMode::Repeated,
+                    std::time::Duration::from_millis(300),
+                    move || {
+                        let mut hubo_actualizacion = false;
+                        while let Ok((ruta, w, h, raw)) = thumb_rx.try_recv() {
+                            let mut buf = SharedPixelBuffer::<slint::Rgba8Pixel>::new(w, h);
+                            buf.make_mut_bytes().copy_from_slice(&raw);
+                            img_cache_poll
+                                .lock()
+                                .unwrap()
+                                .insert(ruta, slint::Image::from_rgba8(buf));
+                            hubo_actualizacion = true;
+                        }
+                        if hubo_actualizacion {
+                            refresh_poll();
+                            if let Some(ui) = ui_gal_poll.upgrade() {
+                                let (pb, pc) = {
+                                    let st = state_gal_poll.lock().unwrap();
+                                    (
+                                        st.biblias_video_paths.clone(),
+                                        st.cantos_video_paths.clone(),
+                                    )
+                                };
+                                ui.set_biblias_video_gallery(ModelRc::from(Rc::new(
+                                    VecModel::from(construir_video_gallery(&pb, &img_cache_poll)),
+                                )));
+                                ui.set_cantos_video_gallery(ModelRc::from(Rc::new(
+                                    VecModel::from(construir_video_gallery(&pc, &img_cache_poll)),
+                                )));
                             }
                         }
-                        if tit.is_empty() && !fav_titulo.is_empty() {
-                            tit = fav_titulo;
-                        }
-                        (tit, diapos)
-                    };
-                    let diapos: Vec<DiapositivaUI> = diapos_db.iter().map(diapositiva_a_ui).collect();
-                    let _ = slint::invoke_from_event_loop(move || {
-                        if let Some(ui) = ui_t.upgrade() {
-                            ui.set_elemento_seleccionado(SharedString::from(&titulo));
-                            ui.set_scroll_to_y(0.0);
-                            ui.set_estrofas_actuales(ModelRc::from(Rc::new(VecModel::from(diapos))));
-                            ui.set_active_estrofa_index(-1);
-                            ui.set_scroll_to_y(0.0);
-                            ui.invoke_focus_panel();
-                        }
-                    });
-                });
-            } else {
-                ui.set_active_tab(SharedString::from("biblias"));
-                let ref_str = fav.referencia.to_string();
-                let fav_version_str = fav.version.to_string();
-                let fav_version_id = fav.id;
-                // OPT-1: RE_FAV compilada una sola vez
-                if let Some(caps) = RE_FAV.captures(&ref_str) {
-                    let libro_nombre  = caps[1].to_string();
-                    let capitulo: i32 = caps[2].parse().unwrap_or(1);
-                    let versiculo_num: i32 = caps[3].parse().unwrap_or(1);
-                    if let Some((libro_id, nombre_real)) = buscar_libro_inteligente(&libro_nombre) {
-                        *cb_lib.lock().unwrap() = libro_id;
-                        *cb_cap.lock().unwrap() = capitulo;
-                        let titulo = format!("{} {}", nombre_real, capitulo);
-                        ui.set_elemento_seleccionado(SharedString::from(&titulo));
-                        ui.set_selected_bible_book(BookInfo {
-                            id: libro_id,
-                            nombre: SharedString::from(&nombre_real),
-                            capitulos: 0,
+                    },
+                );
+                std::mem::forget(thumb_timer);
+            }
+
+            {
+                let vid_state = Arc::clone(&video_state);
+                let refresh_clone = refresh_videos.clone();
+                let bsc_add_vid = build_and_save_config.clone();
+                let udd_av = user_data_dir_cfg.clone();
+                let tx_av = thumb_tx.clone();
+                ui.on_agregar_video(move || {
+                    if let Some(path) = rfd::FileDialog::new()
+                        .add_filter("Videos", &["mp4", "mkv", "avi", "mov"])
+                        .pick_file()
+                    {
+                        let file_name = path
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .to_string();
+                        let path_str = path.to_string_lossy().to_string();
+                        vid_state.write().unwrap().push(MediaData {
+                            path: path_str.clone(),
+                            name: file_name,
+                            aspecto: "rellenar".to_string(),
+                            is_loop: false,
                         });
-                        let state_t = Arc::clone(&state);
-                        let ui_t    = ui.as_weak();
+                        refresh_clone();
+                        bsc_add_vid();
+
+                        // Genera la miniatura en un hilo aparte y la manda por el canal.
+                        // Nada de slint::Image se toca aquí: solo bytes crudos (Send).
+                        let udd_t = udd_av.clone();
+                        let tx_t = tx_av.clone();
                         thread::spawn(move || {
-                            let (versiculos, fav_refs, nombre_version_completo) = {
-                                let mut estado = state_t.lock().unwrap();
-                                
-                                let matched_version = if fav_version_id > 0 {
-                                    estado.versiones.iter().find(|v| v.id == fav_version_id).cloned()
-                                } else {
-                                    None
-                                }.or_else(|| {
-                                    if !fav_version_str.is_empty() {
-                                        estado.versiones.iter().find(|v| v.sigla.eq_ignore_ascii_case(&fav_version_str) || v.nombre_completo.eq_ignore_ascii_case(&fav_version_str)).cloned()
-                                    } else {
-                                        None
-                                    }
-                                });
-
-                                if let Some(v_info) = &matched_version {
-                                    estado.current_version_id = v_info.id;
-                                }
-
-                                let ver_name = matched_version.map(|v| v.nombre_completo).unwrap_or_default();
-                                let vs = estado.get_capitulo(libro_id, capitulo);
-                                let fr = estado.get_favoritos_refs_versiculos_actual();
-                                (vs, fr, ver_name)
-                            };
-                            let _ = slint::invoke_from_event_loop(move || {
-                                let ui = ui_t.unwrap();
-                                if !nombre_version_completo.is_empty() {
-                                    ui.set_current_bible_version(SharedString::from(&nombre_version_completo));
-                                }
-                                let mut target_idx = 0i32;
-                                let diapos: Vec<DiapositivaUI> = versiculos.iter().enumerate().map(|(i, v)| {
-                                    if v.versiculo == versiculo_num { target_idx = i as i32; }
-                                    versiculo_a_ui_fav(v, &fav_refs, &titulo)
-                                }).collect();
-                                ui.set_estrofas_actuales(ModelRc::from(Rc::new(VecModel::from(diapos.clone()))));
-                                ui.set_active_estrofa_index(target_idx);
-                                let offset = target_idx as f32 * 115.0;
-                                ui.set_scroll_to_y(if offset > 150.0 { -(offset - 150.0) } else { 0.0 });
-                                if (target_idx as usize) < diapos.len() {
-                                    let text = diapos[target_idx as usize].texto.clone();
-                                    let ord  = diapos[target_idx as usize].orden.clone();
-                                    ui.invoke_proyectar_estrofa(
-                                        text,
-                                        SharedString::from(format!("{}:{}", titulo, ord)),
-                                    );
-                                }
-                                ui.invoke_focus_panel();
-                            });
+                            if let Some(dynimg) =
+                                obtener_o_crear_miniatura_video(&path_str, &udd_t, 160)
+                            {
+                                let rgba = dynimg.to_rgba8();
+                                let (w, h) = (rgba.width(), rgba.height());
+                                let raw = rgba.into_raw();
+                                let _ = tx_t.send((path_str.clone(), w, h, raw));
+                            }
                         });
                     }
-                }
+                });
             }
-        });
-    }
 
-      {
-        let p_close = proyector.as_weak();
-        ui.window().on_close_requested(move || {
-            if let Some(p) = p_close.upgrade() {
-                p.hide().unwrap();
+            {
+                let vid_state = Arc::clone(&video_state);
+                let refresh_clone = refresh_videos.clone();
+                let ui_handle = ui.as_weak();
+                let prev_del = Arc::clone(&preview_player);
+                let bsc_del_vid = build_and_save_config.clone();
+                ui.on_eliminar_video(move |idx| {
+                    let mut state = vid_state.write().unwrap();
+                    if (idx as usize) < state.len() {
+                        state.remove(idx as usize);
+                    }
+                    drop(state);
+                    let ui = ui_handle.unwrap();
+                    ui.set_selected_video_idx(-1);
+                    prev_del.lock().unwrap().detener();
+                    refresh_clone();
+                    bsc_del_vid();
+                });
             }
-            slint::CloseRequestResponse::HideWindow
-        });
-    }
 
-    // ── Auto-proyección en segunda pantalla al iniciar ───────────────────────
-    // Se dispara DESPUÉS de registrar todos los callbacks (incluido
-    // on_abrir_proyector), reutilizando exactamente la misma lógica que usa
-    // el botón LIVE — mismo código, mismo comportamiento en Windows y Linux.
-    if cfg.auto_proyectar_inicio && segunda_pantalla.lock().unwrap().is_some() {
-        let ui_auto = ui.as_weak();
-        let timer_auto = slint::Timer::default();
-        timer_auto.start(slint::TimerMode::SingleShot, std::time::Duration::from_millis(300), move || {
-            if let Some(ui) = ui_auto.upgrade() {
-                ui.invoke_abrir_proyector();
+            {
+                let ui_handle = ui.as_weak();
+                let prev_sel = Arc::clone(&preview_player);
+                ui.on_seleccionar_video_lista(move |idx| {
+                    let ui = ui_handle.unwrap();
+                    ui.set_selected_video_idx(idx);
+                    prev_sel.lock().unwrap().detener();
+                    ui.set_is_preview_playing(false);
+                    ui.set_preview_video_frame(slint::Image::default());
+                    ui.set_is_video_projecting(false);
+                });
             }
-        });
-        std::mem::forget(timer_auto);
-    }
-// Primero mostramos la ventana principal ya creada
+
+            {
+                let vid_state = Arc::clone(&video_state);
+                let ui_handle = ui.as_weak();
+                let prev_clone = Arc::clone(&preview_player);
+                ui.on_toggle_preview_video(move |idx| {
+                    let ui = ui_handle.unwrap();
+                    let state = vid_state.read().unwrap();
+                    if let Some(item) = state.get(idx as usize) {
+                        let mut player = prev_clone.lock().unwrap();
+                        let is_playing = ui.get_is_preview_playing();
+                        if !is_playing {
+                            if player.pipeline.is_some() {
+                                let playing = player.toggle_play_pause();
+                                ui.set_is_preview_playing(playing);
+                            } else {
+                                player.reproducir_preview(&item.path, ui.as_weak());
+                                ui.set_is_preview_playing(true);
+                            }
+                        } else {
+                            let playing = player.toggle_play_pause();
+                            ui.set_is_preview_playing(playing);
+                        }
+                    }
+                });
+            }
+
+            {
+                let vid_state = Arc::clone(&video_state);
+                let ui_handle = ui.as_weak();
+                let prev_clone = Arc::clone(&preview_player);
+                ui.on_seek_preview_relativo(move |delta_secs| {
+                    let ui = ui_handle.unwrap();
+                    let idx = ui.get_selected_video_idx();
+                    if idx < 0 {
+                        return;
+                    }
+                    let mut player = prev_clone.lock().unwrap();
+                    if player.pipeline.is_none() {
+                        let state = vid_state.read().unwrap();
+                        if let Some(item) = state.get(idx as usize) {
+                            player.reproducir_preview(&item.path, ui.as_weak());
+                            ui.set_is_preview_playing(true);
+                        }
+                    }
+                    player.seek_relativo(delta_secs as f64);
+                });
+            }
+
+            {
+                let p_handle = proyector.as_weak();
+                let vid_state = Arc::clone(&video_state);
+                let vp_lib = Arc::clone(&biblioteca_video_player);
+                let vp_fondo_v = Arc::clone(&video_player); // ← AÑADIR
+                let ui_h = ui.as_weak();
+                let bloqueo = Arc::clone(&bloqueo_estilos);
+                let bsc_video_vv = build_and_save_config.clone();
+                let overlay_vid = Arc::clone(&overlay_estado);
+                ui.on_proyectar_video(move |idx| {
+                    let p = p_handle.unwrap();
+                    let ui = ui_h.unwrap();
+                    bloqueo.store(true, Ordering::Release);
+
+                    let item_info = {
+                        let state = vid_state.read().unwrap();
+                        state.get(idx as usize).map(|i| (i.path.clone(), i.is_loop))
+                    };
+                    let Some((ruta, is_loop)) = item_info else {
+                        return;
+                    };
+
+                    if !archivo_existe(&ruta) {
+                        vid_state.write().unwrap().retain(|item| item.path != ruta);
+
+                        // Reconstruye la lista visible sin depender de refresh_videos
+                        // (evita problemas de orden de declaración en el archivo).
+                        let items = vid_state.read().unwrap();
+                        let slint_items: Vec<MediaItem> = items
+                            .iter()
+                            .enumerate()
+                            .map(|(i, item)| {
+                                let pixel_buffer =
+                                    SharedPixelBuffer::<slint::Rgba8Pixel>::new(80, 45);
+                                MediaItem {
+                                    id: i as i32,
+                                    nombre: SharedString::from(&item.name),
+                                    path: SharedString::from(&item.path),
+                                    img: slint::Image::from_rgba8(pixel_buffer),
+                                    aspecto: SharedString::from("rellenar"),
+                                    is_loop: item.is_loop,
+                                }
+                            })
+                            .collect();
+                        drop(items);
+                        ui.set_video_items(ModelRc::from(Rc::new(VecModel::from(slint_items))));
+
+                        ui.set_selected_video_idx(-1);
+                        bsc_video_vv();
+                        mostrar_aviso(
+                            &ui_h,
+                            "El video ya no existe y fue removido de la biblioteca.",
+                        );
+                        return;
+                    }
+
+                    // NOTA: no tocamos p.set_es_video / p.set_bg_color / p.set_fondo_imagen / etc.
+                    // Esas propiedades siguen describiendo el FONDO de biblias/cantos intacto.
+                    vp_fondo_v.lock().unwrap().detener();
+                    p.set_mostrar_video_biblioteca(true);
+                    vp_lib
+                        .lock()
+                        .unwrap()
+                        .reproducir(&ruta, p.as_weak(), is_loop, true);
+                    ui.set_is_video_projecting(true);
+                    ui.set_is_proyector_playing(true);
+
+                    // ── AGREGAR: Notificar a OBS (video con audio) ──
+                    // Servimos el archivo tal cual con soporte de Range; el
+                    // <video> del navegador de OBS lo descarga y decodifica solo.
+                    {
+                        let mut e = overlay_vid.lock().unwrap();
+                        e.video_activo = true;
+                        e.video_ruta = ruta.clone();
+                        e.video_loop = is_loop;
+                        e.video_token += 1;
+                    }
+                });
+            }
+
+            {
+                let vp_controls = Arc::clone(&biblioteca_video_player);
+                let ui_h = ui.as_weak();
+                ui.on_toggle_proyector_play(move || {
+                    let ui = ui_h.unwrap();
+                    let is_playing = vp_controls.lock().unwrap().toggle_play_pause();
+                    ui.set_is_proyector_playing(is_playing);
+                });
+            }
+
+            {
+                let vp_mute = Arc::clone(&biblioteca_video_player);
+                let ui_h = ui.as_weak();
+                ui.on_toggle_proyector_mute(move || {
+                    let ui = ui_h.unwrap();
+                    let new_mute = !ui.get_is_proyector_muted();
+                    vp_mute.lock().unwrap().set_mute(new_mute);
+                    ui.set_is_proyector_muted(new_mute);
+                });
+            }
+
+            {
+                let vp_seek = Arc::clone(&biblioteca_video_player);
+                ui.on_seek_proyector_video(move |percent| {
+                    vp_seek.lock().unwrap().seek_percentage(percent);
+                });
+            }
+
+            // Evitar que el proyector sea minimizado (Win+D, Super+H, etc.)
+            // Impedir que el proyector sea minimizado por atajos de teclado (Super+H, Win+D, etc.)
+            // Anti-minimize: 100ms es lo suficientemente rápido para ser imperceptible
+            let p_restore = proyector.as_weak();
+            let pa_timer = Arc::clone(&proyector_abierto);
+            let _restore_timer = slint::Timer::default();
+            _restore_timer.start(
+                slint::TimerMode::Repeated,
+                std::time::Duration::from_millis(350), // antes 100ms — 3.5x menos wakeups
+                move || {
+                    if pa_timer.load(Ordering::Acquire) {
+                        if let Some(p) = p_restore.upgrade() {
+                            p.window().set_minimized(false);
+                        }
+                    }
+                },
+            );
+            std::mem::forget(_restore_timer);
+
+            let vp_timer = Arc::clone(&biblioteca_video_player);
+            let ui_timer_handle = ui.as_weak();
+            let _video_timer = slint::Timer::default();
+            _video_timer.start(
+                slint::TimerMode::Repeated,
+                std::time::Duration::from_millis(750),
+                move || {
+                    if let Some(ui) = ui_timer_handle.upgrade() {
+                        if ui.get_is_video_projecting() {
+                            let (pos_ms, dur_ms) =
+                                vp_timer.lock().unwrap().get_position_and_duration();
+                            if dur_ms > 0 {
+                                let progress = pos_ms as f32 / dur_ms as f32;
+                                ui.set_proyector_progress(progress);
+                                let pos_sec = pos_ms / 1000;
+                                let dur_sec = dur_ms / 1000;
+                                let time_str = format!(
+                                    "{:02}:{:02} / {:02}:{:02}",
+                                    pos_sec / 60,
+                                    pos_sec % 60,
+                                    dur_sec / 60,
+                                    dur_sec % 60
+                                );
+                                ui.set_proyector_time(slint::SharedString::from(time_str));
+                            }
+                        }
+                    }
+                },
+            );
+            std::mem::forget(_video_timer);
+
+            // OPT-8: Timer declarado como variable local — vive hasta el final de main().
+            //        El Box::leak original era un memory leak innecesario.
+            let vp_timer = Arc::clone(&biblioteca_video_player);
+            let ui_timer_handle = ui.as_weak();
+            let _video_timer = slint::Timer::default(); // '_' evita unused-variable warning
+            _video_timer.start(
+                slint::TimerMode::Repeated,
+                std::time::Duration::from_millis(750),
+                move || {
+                    if let Some(ui) = ui_timer_handle.upgrade() {
+                        if ui.get_is_video_projecting() {
+                            let (pos_ms, dur_ms) =
+                                vp_timer.lock().unwrap().get_position_and_duration();
+                            if dur_ms > 0 {
+                                let progress = pos_ms as f32 / dur_ms as f32;
+                                ui.set_proyector_progress(progress);
+                                let pos_sec = pos_ms / 1000;
+                                let dur_sec = dur_ms / 1000;
+                                let time_str = format!(
+                                    "{:02}:{:02} / {:02}:{:02}",
+                                    pos_sec / 60,
+                                    pos_sec % 60,
+                                    dur_sec / 60,
+                                    dur_sec % 60
+                                );
+                                ui.set_proyector_time(slint::SharedString::from(time_str));
+                            }
+                        }
+                    }
+                },
+            );
+
+            {
+                let vid_state_mode = Arc::clone(&video_state);
+                let refresh_clone = refresh_videos.clone();
+                let bsc_modo = build_and_save_config.clone();
+                ui.on_cambiar_modo_reproduccion(move |idx, modo| {
+                    let mut state = vid_state_mode.write().unwrap();
+                    if let Some(item) = state.get_mut(idx as usize) {
+                        item.is_loop = modo == "bucle";
+                    }
+                    drop(state);
+                    refresh_clone();
+                    bsc_modo();
+                });
+            }
+
+            // ── Favoritos — cantos ───────────────────────────────────────────────────
+            {
+                let ui_h = ui.as_weak();
+                let state = Arc::clone(&state);
+                let c_clone = cargar_cantos.clone();
+                ui.on_toggle_favorito_canto(move |id| {
+                    let ui = ui_h.unwrap();
+                    let favs = {
+                        let estado = state.lock().unwrap();
+                        estado.toggle_favorito_canto(id, &estado.get_canto_titulo(id));
+                        estado.get_all_favoritos()
+                    };
+                    ui.set_favoritos(ModelRc::from(Rc::new(VecModel::from(favs))));
+                    c_clone(ui.get_buscador_texto().to_string());
+                });
+            }
+
+            // ── Favoritos — versículos ───────────────────────────────────────────────
+            {
+                let ui_h = ui.as_weak();
+                let state = Arc::clone(&state);
+                let cb_lib = Arc::clone(&current_biblia_libro);
+                let cb_cap = Arc::clone(&current_biblia_capitulo);
+                ui.on_toggle_favorito_estrofa(move |referencia, texto| {
+                    let ui = ui_h.unwrap();
+                    {
+                        state
+                            .lock()
+                            .unwrap()
+                            .toggle_favorito_versiculo(&referencia, &texto);
+                    }
+                    let lib = *cb_lib.lock().unwrap();
+                    let cap = *cb_cap.lock().unwrap();
+                    let (versiculos, fav_refs, favs, titulo_cap) = {
+                        let mut estado = state.lock().unwrap();
+                        let book_name = ui.get_selected_bible_book().nombre.to_string();
+                        let t = format!("{} {}", book_name, cap);
+                        let vs = if lib != -1 && cap != -1 {
+                            estado.get_capitulo(lib, cap)
+                        } else {
+                            Vec::new()
+                        };
+                        let fr = estado.get_favoritos_refs_versiculos_actual();
+                        let fa = estado.get_all_favoritos();
+                        (vs, fr, fa, t)
+                    };
+                    if !versiculos.is_empty() {
+                        let diapos: Vec<DiapositivaUI> = versiculos
+                            .iter()
+                            .map(|v| versiculo_a_ui_fav(v, &fav_refs, &titulo_cap))
+                            .collect();
+                        ui.set_estrofas_actuales(ModelRc::from(Rc::new(VecModel::from(diapos))));
+                    }
+                    ui.set_favoritos(ModelRc::from(Rc::new(VecModel::from(favs))));
+                });
+            }
+
+            // ── Eliminar favorito ───────────────────────────────────────────────────
+            {
+                let ui_h = ui.as_weak();
+                let state = Arc::clone(&state);
+                let c_clone = cargar_cantos.clone();
+                let cb_lib = Arc::clone(&current_biblia_libro);
+                let cb_cap = Arc::clone(&current_biblia_capitulo);
+                ui.on_eliminar_favorito(move |fav| {
+                    let ui = ui_h.unwrap();
+                    let (favs, versiculos, fav_refs, titulo_cap) = {
+                        let mut estado = state.lock().unwrap();
+                        estado.eliminar_favorito_item(
+                            fav.id,
+                            fav.tipo.as_str(),
+                            fav.referencia.as_str(),
+                            fav.version.as_str(),
+                        );
+                        let fa = estado.get_all_favoritos();
+                        let fr = estado.get_favoritos_refs_versiculos_actual();
+                        let lib = *cb_lib.lock().unwrap();
+                        let cap = *cb_cap.lock().unwrap();
+                        let book_name = ui.get_selected_bible_book().nombre.to_string();
+                        let t = format!("{} {}", book_name, cap);
+                        let vs = if lib != -1 && cap != -1 {
+                            estado.get_capitulo(lib, cap)
+                        } else {
+                            Vec::new()
+                        };
+                        (fa, vs, fr, t)
+                    };
+                    ui.set_favoritos(ModelRc::from(Rc::new(VecModel::from(favs))));
+                    c_clone(ui.get_buscador_texto().to_string());
+                    if !versiculos.is_empty() {
+                        let diapos: Vec<DiapositivaUI> = versiculos
+                            .iter()
+                            .map(|v| versiculo_a_ui_fav(v, &fav_refs, &titulo_cap))
+                            .collect();
+                        ui.set_estrofas_actuales(ModelRc::from(Rc::new(VecModel::from(diapos))));
+                    }
+                });
+            }
+
+            // ── Abrir favorito ───────────────────────────────────────────────────────
+            {
+                let ui_h = ui.as_weak();
+                let state = Arc::clone(&state);
+                let cb_lib = Arc::clone(&current_biblia_libro);
+                let cb_cap = Arc::clone(&current_biblia_capitulo);
+                ui.on_abrir_favorito(move |fav| {
+                    let ui = ui_h.unwrap();
+                    if fav.tipo == "canto" {
+                        *cb_lib.lock().unwrap() = -1;
+                        *cb_cap.lock().unwrap() = -1;
+                        ui.set_active_tab(SharedString::from("cantos"));
+                        ui.set_scroll_to_y(0.0);
+                        let id = fav.id;
+                        let state_t = Arc::clone(&state);
+                        let ui_t = ui.as_weak();
+                        let fav_titulo = fav.titulo.to_string();
+                        thread::spawn(move || {
+                            let (titulo, diapos_db) = {
+                                let estado = state_t.lock().unwrap();
+                                let mut diapos = estado.get_canto_diapositivas(id);
+                                let mut tit = estado.get_canto_titulo(id);
+                                if diapos.is_empty() && !fav_titulo.is_empty() {
+                                    if let Ok(canto_id) = estado.cantos_db.query_row(
+                                        "SELECT id FROM cantos WHERE titulo = ? LIMIT 1",
+                                        [&fav_titulo],
+                                        |r| r.get::<_, i32>(0),
+                                    ) {
+                                        diapos = estado.get_canto_diapositivas(canto_id);
+                                        tit = estado.get_canto_titulo(canto_id);
+                                    }
+                                }
+                                if tit.is_empty() && !fav_titulo.is_empty() {
+                                    tit = fav_titulo;
+                                }
+                                (tit, diapos)
+                            };
+                            let diapos: Vec<DiapositivaUI> =
+                                diapos_db.iter().map(diapositiva_a_ui).collect();
+                            let _ = slint::invoke_from_event_loop(move || {
+                                if let Some(ui) = ui_t.upgrade() {
+                                    ui.set_elemento_seleccionado(SharedString::from(&titulo));
+                                    ui.set_scroll_to_y(0.0);
+                                    ui.set_estrofas_actuales(ModelRc::from(Rc::new(
+                                        VecModel::from(diapos),
+                                    )));
+                                    ui.set_active_estrofa_index(-1);
+                                    ui.set_scroll_to_y(0.0);
+                                    ui.invoke_focus_panel();
+                                }
+                            });
+                        });
+                    } else {
+                        ui.set_active_tab(SharedString::from("biblias"));
+                        let ref_str = fav.referencia.to_string();
+                        let fav_version_str = fav.version.to_string();
+                        let fav_version_id = fav.id;
+                        // OPT-1: RE_FAV compilada una sola vez
+                        if let Some(caps) = RE_FAV.captures(&ref_str) {
+                            let libro_nombre = caps[1].to_string();
+                            let capitulo: i32 = caps[2].parse().unwrap_or(1);
+                            let versiculo_num: i32 = caps[3].parse().unwrap_or(1);
+                            if let Some((libro_id, nombre_real)) =
+                                buscar_libro_inteligente(&libro_nombre)
+                            {
+                                *cb_lib.lock().unwrap() = libro_id;
+                                *cb_cap.lock().unwrap() = capitulo;
+                                let titulo = format!("{} {}", nombre_real, capitulo);
+                                ui.set_elemento_seleccionado(SharedString::from(&titulo));
+                                ui.set_selected_bible_book(BookInfo {
+                                    id: libro_id,
+                                    nombre: SharedString::from(&nombre_real),
+                                    capitulos: 0,
+                                });
+                                let state_t = Arc::clone(&state);
+                                let ui_t = ui.as_weak();
+                                thread::spawn(move || {
+                                    let (versiculos, fav_refs, nombre_version_completo) = {
+                                        let mut estado = state_t.lock().unwrap();
+
+                                        let matched_version = if fav_version_id > 0 {
+                                            estado
+                                                .versiones
+                                                .iter()
+                                                .find(|v| v.id == fav_version_id)
+                                                .cloned()
+                                        } else {
+                                            None
+                                        }
+                                        .or_else(|| {
+                                            if !fav_version_str.is_empty() {
+                                                estado
+                                                    .versiones
+                                                    .iter()
+                                                    .find(|v| {
+                                                        v.sigla
+                                                            .eq_ignore_ascii_case(&fav_version_str)
+                                                            || v.nombre_completo
+                                                                .eq_ignore_ascii_case(
+                                                                    &fav_version_str,
+                                                                )
+                                                    })
+                                                    .cloned()
+                                            } else {
+                                                None
+                                            }
+                                        });
+
+                                        if let Some(v_info) = &matched_version {
+                                            estado.current_version_id = v_info.id;
+                                        }
+
+                                        let ver_name = matched_version
+                                            .map(|v| v.nombre_completo)
+                                            .unwrap_or_default();
+                                        let vs = estado.get_capitulo(libro_id, capitulo);
+                                        let fr = estado.get_favoritos_refs_versiculos_actual();
+                                        (vs, fr, ver_name)
+                                    };
+                                    let _ = slint::invoke_from_event_loop(move || {
+                                        let ui = ui_t.unwrap();
+                                        if !nombre_version_completo.is_empty() {
+                                            ui.set_current_bible_version(SharedString::from(
+                                                &nombre_version_completo,
+                                            ));
+                                        }
+                                        let mut target_idx = 0i32;
+                                        let diapos: Vec<DiapositivaUI> = versiculos
+                                            .iter()
+                                            .enumerate()
+                                            .map(|(i, v)| {
+                                                if v.versiculo == versiculo_num {
+                                                    target_idx = i as i32;
+                                                }
+                                                versiculo_a_ui_fav(v, &fav_refs, &titulo)
+                                            })
+                                            .collect();
+                                        ui.set_estrofas_actuales(ModelRc::from(Rc::new(
+                                            VecModel::from(diapos.clone()),
+                                        )));
+                                        ui.set_active_estrofa_index(target_idx);
+                                        let offset = target_idx as f32 * 115.0;
+                                        ui.set_scroll_to_y(if offset > 150.0 {
+                                            -(offset - 150.0)
+                                        } else {
+                                            0.0
+                                        });
+                                        if (target_idx as usize) < diapos.len() {
+                                            let text = diapos[target_idx as usize].texto.clone();
+                                            let ord = diapos[target_idx as usize].orden.clone();
+                                            ui.invoke_proyectar_estrofa(
+                                                text,
+                                                SharedString::from(format!("{}:{}", titulo, ord)),
+                                            );
+                                        }
+                                        ui.invoke_focus_panel();
+                                    });
+                                });
+                            }
+                        }
+                    }
+                });
+            }
+
+            {
+                let p_close = proyector.as_weak();
+                ui.window().on_close_requested(move || {
+                    if let Some(p) = p_close.upgrade() {
+                        p.hide().unwrap();
+                    }
+                    slint::CloseRequestResponse::HideWindow
+                });
+            }
+
+            // ── Auto-proyección en segunda pantalla al iniciar ───────────────────────
+            // Se dispara DESPUÉS de registrar todos los callbacks (incluido
+            // on_abrir_proyector), reutilizando exactamente la misma lógica que usa
+            // el botón LIVE — mismo código, mismo comportamiento en Windows y Linux.
+            if cfg.auto_proyectar_inicio && segunda_pantalla.lock().unwrap().is_some() {
+                let ui_auto = ui.as_weak();
+                let timer_auto = slint::Timer::default();
+                timer_auto.start(
+                    slint::TimerMode::SingleShot,
+                    std::time::Duration::from_millis(300),
+                    move || {
+                        if let Some(ui) = ui_auto.upgrade() {
+                            ui.invoke_abrir_proyector();
+                        }
+                    },
+                );
+                std::mem::forget(timer_auto);
+            }
+            // Primero mostramos la ventana principal ya creada
             ui.window().show().unwrap();
 
             // Inmediatamente después ocultamos el splash (cero espacios vacíos ni parpadeos)
@@ -5627,13 +6968,12 @@ let vp_timer       = Arc::clone(&biblioteca_video_player);
 
             // ==========================================================
             // --- ¡NUEVO! EVITAR QUE RUST DESTRUYA LAS VENTANAS ---
-            // Mantenemos vivas las referencias fuertes de las ventanas 
+            // Mantenemos vivas las referencias fuertes de las ventanas
             // para que los botones (como el de Live) las encuentren al hacer clic.
             // ==========================================================
             std::mem::forget(proyector);
             std::mem::forget(medidor_win);
             std::mem::forget(ui);
-
         }); // <- Aquí termina el bloque invoke_from_event_loop
     }); // <- Aquí termina el hilo secundario
 
@@ -5642,4 +6982,103 @@ let vp_timer       = Arc::clone(&biblioteca_video_player);
     slint::run_event_loop()?;
 
     Ok(())
+}
+#[cfg(test)]
+mod performance_regression_tests {
+    use super::*;
+
+    #[test]
+    fn frame_brightness_preserves_threshold_and_formats() {
+        for brightness in [0, 14, 15, 128, 255] {
+            let rgba = image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
+                3,
+                2,
+                image::Rgba([brightness, brightness, brightness, 255]),
+            ));
+            let rgb = image::DynamicImage::ImageRgb8(rgba.to_rgb8());
+            let gray = image::DynamicImage::ImageLuma8(rgba.to_luma8());
+            for frame in [rgba, rgb, gray] {
+                assert_eq!(es_frame_casi_negro(&frame), brightness < 15);
+            }
+        }
+    }
+
+    #[test]
+    fn stopping_player_releases_idle_bus_thread() {
+        gst::init().unwrap();
+        for flushing in [false, true] {
+            let pipeline = gst::Pipeline::new();
+            let bus = pipeline.bus().unwrap();
+            bus.set_flushing(flushing);
+            let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+            let (done_tx, done_rx) = std::sync::mpsc::channel();
+            let mut player = NativeVideoPlayer::new();
+            player.pipeline = Some(pipeline.upcast());
+            let generacion = Arc::clone(&player.generacion);
+            let mi_generacion = generacion.load(Ordering::Acquire);
+            player.bus_thread = Some(thread::spawn(move || {
+                ready_tx.send(()).unwrap();
+                while siguiente_mensaje_pipeline(&bus, &generacion, mi_generacion).is_some() {}
+                done_tx.send(()).unwrap();
+            }));
+            ready_rx.recv().unwrap();
+            // Ejecutar detener fuera del hilo de prueba para detectar bloqueos.
+            let stop_thread = thread::spawn(move || {
+                player.detener();
+                assert!(player.pipeline.is_none());
+                assert!(player.bus_thread.is_none());
+                player.detener();
+            });
+            done_rx
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .unwrap();
+            stop_thread.join().unwrap();
+        }
+    }
+}
+
+#[cfg(test)]
+mod theme_tests {
+    use super::*;
+
+    #[test]
+    fn legacy_configuration_preserves_light_and_dark_themes() {
+        for oscuro in [false, true] {
+            let mut config = serde_json::to_value(ConfigApp::default()).unwrap();
+            config.as_object_mut().unwrap().remove("tema");
+            config["tema_oscuro"] = oscuro.into();
+            let loaded: ConfigApp = serde_json::from_value(config).unwrap();
+            assert_eq!(loaded.tema, None);
+            assert_eq!(
+                TemaInterfaz::desde_flags(loaded.tema_oscuro, false),
+                if oscuro {
+                    TemaInterfaz::AzulOscuro
+                } else {
+                    TemaInterfaz::Blanco
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn all_three_themes_survive_configuration_roundtrip() {
+        for tema in [
+            TemaInterfaz::Blanco,
+            TemaInterfaz::AzulOscuro,
+            TemaInterfaz::Negro,
+        ] {
+            let config = ConfigApp {
+                tema: Some(tema),
+                tema_oscuro: tema != TemaInterfaz::Blanco,
+                ..ConfigApp::default()
+            };
+            let loaded: ConfigApp =
+                serde_json::from_str(&serde_json::to_string(&config).unwrap()).unwrap();
+            assert_eq!(loaded.tema, Some(tema));
+            assert_eq!(
+                TemaInterfaz::desde_flags(loaded.tema_oscuro, tema == TemaInterfaz::Negro),
+                tema
+            );
+        }
+    }
 }

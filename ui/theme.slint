@@ -1,0 +1,73 @@
+// ─────────────────────────────────────────────────────────────
+//  TEMA GLOBAL — Blanco / Azul oscuro / Negro
+//  Paleta compartida: Blanco, Azul oscuro y Negro de alto contraste
+//  Colores y superficies compartidos; el cambio de tema es reactivo.
+// ─────────────────────────────────────────────────────────────
+export global Theme {
+    in-out property <bool> is_dark: false;
+    in-out property <bool> is_black: false;
+    out property <string> name: root.is_black ? "Negro" : (root.is_dark ? "Azul oscuro" : "Blanco");
+
+    // ── Fondos ───────────────────────────────────────────────
+    // Colores base compatibles con los bindings existentes.
+    out property <color> bg_main:       root.is_black ? #000000 : (root.is_dark ? #151a21 : #f4f6f8);
+    out property <color> bg_sidebar:    root.is_black ? #000000 : (root.is_dark ? #191f28 : #f5f7fa);
+    out property <color> bg_topbar:     root.is_black ? #000000 : (root.is_dark ? #191f28 : #f4f6f9);
+    out property <color> bg_input:      root.is_black ? #080808 : (root.is_dark ? #202733 : #ffffff);
+    out property <color> bg_list:       root.is_black ? #000000 : (root.is_dark ? #161c24 : #f5f7fa);
+    out property <color> bg_card:       root.is_black ? #080808 : (root.is_dark ? #1d2530 : #f7f9fc);
+    out property <color> bg_card_hover: root.is_black ? #202020 : (root.is_dark ? #293343 : #eaf0f7);
+    out property <color> bg_popup:      root.is_black ? #050505 : (root.is_dark ? #202733 : #f7f9fc); // menús contextuales y modales
+
+    // ── Bordes ───────────────────────────────────────────────
+    // Los contornos de controles son discretos; sólo las divisiones principales se marcan.
+    out property <color> border_subtle: root.is_black ? #303030 : (root.is_dark ? #344154 : #d6dde7);
+    out property <color> border_input:  root.is_black ? #626262 : (root.is_dark ? #53637b : #a7b3c3);
+    out property <color> border_strong: root.is_black ? #454545 : (root.is_dark ? #46556b : #bdc8d6); // contorno de controles secundarios
+    out property <color> separator:     root.is_black ? #252525 : (root.is_dark ? #2d394a : #e0e5ec); // separadores discretos dentro de menús
+
+    // Superficies: degradados estáticos y suaves, sin sombras por cada fila.
+    out property <color> separator_main: root.is_black ? #858585 : (root.is_dark ? #60718a : #9aa8ba);
+    out property <color> tint_main: root.is_black ? #060606 : (root.is_dark ? #1b2330 : #ffffff);
+    out property <color> tint_panel: root.is_black ? #0c0c0c : (root.is_dark ? #232e40 : #ffffff);
+    out property <color> tint_card: root.is_black ? #141414 : (root.is_dark ? #273246 : #ffffff);
+    out property <brush> surface_main: @linear-gradient(180deg, root.tint_main 0%, root.bg_main 100%);
+    out property <brush> surface_sidebar: @linear-gradient(180deg, root.tint_panel 0%, root.bg_sidebar 100%);
+    out property <brush> surface_topbar: @linear-gradient(180deg, root.tint_panel 0%, root.bg_topbar 100%);
+    out property <brush> surface_list: @linear-gradient(180deg, root.tint_main 0%, root.bg_list 100%);
+    out property <brush> surface_card: @linear-gradient(180deg, root.tint_card 0%, root.bg_card 100%);
+    out property <brush> surface_popup: @linear-gradient(180deg, root.tint_panel 0%, root.bg_popup 100%);
+    out property <brush> surface_input: @linear-gradient(180deg, root.bg_input 0%, root.bg_list 100%);
+
+    // ── Texto ────────────────────────────────────────────────
+    // Modo claro: negro casi puro para texto principal, jerarquía marcada
+    // pero siempre legible (nada de grises lavados).
+    out property <color> text_primary:   root.is_black ? #ffffff : (root.is_dark ? #e9edf3 : #1d2939);
+    out property <color> text_secondary: root.is_black ? #ffffff : (root.is_dark ? #bdc6d2 : #475467);
+    out property <color> text_muted:     root.is_black ? #ffffff : (root.is_dark ? #97a3b3 : #5e6b7e);
+
+    out property <color> accent: root.is_black ? #ffffff : (root.is_dark ? #93b4e7 : #315c9b);
+    out property <color> accent_hover: root.is_dark ? #294c81 : #294c81;
+    out property <color> accent_soft: root.is_black ? #202020 : (root.is_dark ? rgba(147,180,231,0.14) : rgba(49,92,155,0.10));
+    out property <color> menu_hover: root.is_black ? #202020 : (root.is_dark ? #293343 : #eaf0f7);
+    out property <color> menu_text: root.is_black ? #ffffff : (root.is_dark ? #e9edf3 : #1d2939);
+    out property <color> menu_icon: root.is_black ? #ffffff : (root.is_dark ? #bdc6d2 : #475467);
+    out property <color> overlay: root.is_black ? rgba(0,0,0,0.76) : (root.is_dark ? rgba(8,12,18,0.72) : rgba(16,24,40,0.40));
+    out property <color> shadow: root.is_black ? rgba(0,0,0,0.55) : (root.is_dark ? rgba(0,0,0,0.24) : rgba(16,24,40,0.10));
+    out property <color> accent_fill: #315c9b;
+    out property <color> success: root.is_black ? #ffffff : (root.is_dark ? #91c9ad : #18794e);
+    out property <color> success_fill: #18794e;
+    out property <color> danger: root.is_black ? #ffffff : (root.is_dark ? #f1a6a0 : #b42318);
+    out property <color> danger_fill: #b42318;
+    out property <color> danger_hover: #912018;
+    out property <color> warning: root.is_black ? #ffffff : (root.is_dark ? #d6b77b : #8a6118);
+
+    out property <length> radius_control: 6px;
+    out property <length> radius_surface: 8px;
+    out property <length> radius_modal: 12px;
+    out property <length> popup_shadow_blur: 18px;
+    out property <length> popup_shadow_offset: 4px;
+    out property <int> font_weight_body: 500;
+    out property <int> font_weight_heading: 700;
+
+}

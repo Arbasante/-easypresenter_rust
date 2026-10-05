@@ -1,4 +1,6 @@
 #![windows_subsystem = "windows"]
+mod online_backup;
+mod projector_window;
 use directories::ProjectDirs;
 use display_info::DisplayInfo;
 use lru::LruCache;
@@ -1045,7 +1047,7 @@ struct AppState {
 }
 
 impl AppState {
-    fn new() -> Result<Self> {
+    fn new() -> std::result::Result<Self, Box<dyn std::error::Error>> {
         // 1. Determinar las rutas de forma inteligente
         //
         // PRINCIPIO UNIFICADO (Windows y Linux):
@@ -1086,79 +1088,22 @@ impl AppState {
         println!(" DIRECTORIO DE BASES DE DATOS: {:?}", user_data_dir);
 
         // 2. Crear la carpeta si no existe
-        std::fs::create_dir_all(&user_data_dir).ok();
+        std::fs::create_dir_all(&user_data_dir)?;
 
         let cantos_path = user_data_dir.join("cantos.db");
         let biblias_path = user_data_dir.join("biblias.db");
 
-        // 3. PRIMERA EJECUCIÓN (Solo copia si estamos en Linux/Windows instalado y faltan archivos)
-        let cantos_ok = Connection::open(&cantos_path)
-            .ok()
-            .map(|c| {
-                let _ = c.execute_batch("PRAGMA journal_mode = WAL;");
-                verificar_integridad_db(&c) && verificar_datos_cantos(&c)
-            })
-            .unwrap_or(false);
-
-        if !cantos_ok {
-            println!(
-                "cantos.db ausente, corrupta o incompleta. Restaurando desde la copia de instalación..."
-            );
-
-            // Limpia también los archivos -wal / -shm que puedan haber
-            // quedado a medias de un cierre abrupto anterior.
-            let _ = std::fs::remove_file(&cantos_path);
-            let _ = std::fs::remove_file(user_data_dir.join("cantos.db-wal"));
-            let _ = std::fs::remove_file(user_data_dir.join("cantos.db-shm"));
-
-            let sys_cantos = system_data_dir.join("cantos.db");
-            if sys_cantos.exists() {
-                std::fs::copy(&sys_cantos, &cantos_path)
-                    .unwrap_or_else(|e| panic!("No se pudo copiar cantos.db: {}", e));
-
-                // Verifica que la copia restaurada también esté sana.
-                // Si la copia "semilla" en sí misma está dañada (caso raro
-                // pero posible), es mejor fallar con un mensaje claro que
-                // dejar que la app arranque con datos inconsistentes.
-                let copia_ok = Connection::open(&cantos_path)
-                    .ok()
-                    .map(|c| verificar_integridad_db(&c) && verificar_datos_cantos(&c))
-                    .unwrap_or(false);
-
-                if !copia_ok {
-                    panic!(
-                        "La base de datos de cantos sigue inválida incluso después de \
-                         restaurarla desde la instalación. Reinstala la aplicación."
-                    );
-                }
-                println!("cantos.db restaurada correctamente.");
-            } else {
-                panic!(
-                    "No se encontró la base de datos semilla en {:?}",
-                    sys_cantos
-                );
+        // Copiar semillas solo cuando falta el archivo. Nunca reemplazar bases existentes.
+        online_backup::prepare_local_file(&cantos_path, &system_data_dir.join("cantos.db"))?;
+        online_backup::prepare_local_file(&biblias_path, &system_data_dir.join("biblias.db"))?;
+        let flags = rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE;
+        let mut cantos_db = Connection::open_with_flags(&cantos_path, flags)?;
+        let mut biblias_db = Connection::open_with_flags(&biblias_path, flags)?;
+        for (path, conn) in [(&cantos_path, &cantos_db), (&biblias_path, &biblias_db)] {
+            if !verificar_integridad_db(conn) {
+                return Err(format!("La base de datos {:?} no pasó la verificación de integridad; se conserva sin reemplazarla.", path).into());
             }
         }
-
-        let biblias_ok = Connection::open(&biblias_path)
-            .ok()
-            .and_then(|c| {
-                c.query_row("SELECT 1 FROM versiculos LIMIT 1", [], |_| Ok(()))
-                    .ok()
-            })
-            .is_some();
-
-        if !biblias_ok {
-            let sys_biblias = system_data_dir.join("biblias.db");
-            if sys_biblias.exists() {
-                std::fs::copy(&sys_biblias, &biblias_path)
-                    .unwrap_or_else(|e| panic!("No se pudo copiar biblias.db: {}", e));
-            }
-        }
-
-        // 4. Abrir la conexión a las bases de datos (ahora garantizado que existen y tienen permisos)
-        let cantos_db = Connection::open(cantos_path)?;
-        let biblias_db = Connection::open(biblias_path)?;
 
         // Optimizaciones de SQLite de alto rendimiento (WAL, MMAP para lectura sin copias, caché en RAM ampliada)
         cantos_db.execute_batch(
@@ -1184,25 +1129,11 @@ impl AppState {
         cantos_db.set_prepared_statement_cache_capacity(64);
         biblias_db.set_prepared_statement_cache_capacity(64);
 
-        cantos_db.execute_batch(
-            "
-            CREATE TABLE IF NOT EXISTS favoritos (
-                id         INTEGER PRIMARY KEY AUTOINCREMENT,
-                tipo       TEXT    NOT NULL DEFAULT 'canto',
-                ref_id     INTEGER NOT NULL DEFAULT 0,
-                referencia TEXT    NOT NULL DEFAULT '',
-                titulo     TEXT    NOT NULL DEFAULT '',
-                version    TEXT    NOT NULL DEFAULT ''
-            );
-            CREATE INDEX IF NOT EXISTS idx_diapositivas_canto ON diapositivas(canto_id, orden);
+        online_backup::migrate(&mut cantos_db, online_backup::Dataset::Cantos)?;
+        online_backup::migrate(&mut biblias_db, online_backup::Dataset::Biblias)?;
+        cantos_db.execute_batch("CREATE INDEX IF NOT EXISTS idx_diapositivas_canto ON diapositivas(canto_id, orden);
             CREATE INDEX IF NOT EXISTS idx_favoritos_lookup ON favoritos(tipo, ref_id);
-            CREATE INDEX IF NOT EXISTS idx_favoritos_ref ON favoritos(tipo, referencia);
-        ",
-        )?;
-        let _ = cantos_db.execute(
-            "ALTER TABLE favoritos ADD COLUMN version TEXT NOT NULL DEFAULT ''",
-            [],
-        );
+            CREATE INDEX IF NOT EXISTS idx_favoritos_ref ON favoritos(tipo, referencia);")?;
 
         let mut state = Self {
             cantos_db,
@@ -1767,7 +1698,7 @@ impl AppState {
             .map_err(|e| format!("No se pudo copiar el archivo a la carpeta de datos: {}", e))?;
 
         // Reabrir conexión SQLite
-        let new_conn = Connection::open(&cantos_path).map_err(|e| {
+        let mut new_conn = Connection::open(&cantos_path).map_err(|e| {
             format!(
                 "No se pudo reconectar a la nueva base de datos de cantos: {}",
                 e
@@ -1788,6 +1719,8 @@ impl AppState {
             .map_err(|e| format!("Error configurando pragmas de SQLite: {}", e))?;
         new_conn.set_prepared_statement_cache_capacity(64);
 
+        online_backup::migrate(&mut new_conn, online_backup::Dataset::Cantos)
+            .map_err(|e| format!("Error preparando respaldo de cantos: {e}"))?;
         self.cantos_db = new_conn;
         Ok(())
     }
@@ -1870,7 +1803,7 @@ impl AppState {
             .map_err(|e| format!("No se pudo copiar el archivo a la carpeta de datos: {}", e))?;
 
         // Reabrir conexión SQLite
-        let new_conn = Connection::open(&biblias_path).map_err(|e| {
+        let mut new_conn = Connection::open(&biblias_path).map_err(|e| {
             format!(
                 "No se pudo reconectar a la nueva base de datos de biblias: {}",
                 e
@@ -1891,6 +1824,8 @@ impl AppState {
             .map_err(|e| format!("Error configurando pragmas de SQLite: {}", e))?;
         new_conn.set_prepared_statement_cache_capacity(64);
 
+        online_backup::migrate(&mut new_conn, online_backup::Dataset::Biblias)
+            .map_err(|e| format!("Error preparando respaldo de Biblias: {e}"))?;
         self.biblias_db = new_conn;
         self.chapter_cache.clear();
         self.versiones.clear();
@@ -1902,6 +1837,7 @@ impl AppState {
 // ---------------------------------------------------------------------------
 // Proyector
 // ---------------------------------------------------------------------------
+#[cfg(not(target_os = "windows"))]
 fn mover_proyector_a_pantalla(
     p_weak: slint::Weak<ProjectorWindow>,
     x: i32,
@@ -1909,11 +1845,7 @@ fn mover_proyector_a_pantalla(
     width: u32,
     height: u32,
 ) {
-    let intentos: &[(u64, bool)] = if cfg!(target_os = "windows") {
-        &[(100, false), (400, true)]
-    } else {
-        &[(200, false), (700, true)]
-    };
+    let intentos: &[(u64, bool)] = &[(200, false), (700, true)];
     for &(delay_ms, es_ultimo) in intentos {
         let p_clone = p_weak.clone();
         thread::spawn(move || {
@@ -2692,90 +2624,6 @@ fn actualizar_overlay_estilos(
     e.fondo_version += 1;
 }
 
-fn configurar_ventana_proyector_linux(wid_store: Arc<Mutex<Option<String>>>) {
-    #[cfg(target_os = "linux")]
-    {
-        let pid = std::process::id().to_string();
-        thread::spawn(move || {
-            //for delay_ms in [600u64, 1200u64, 2500u64, 4000u64] {
-            for delay_ms in [500u64, 1500u64] {
-                thread::sleep(std::time::Duration::from_millis(delay_ms));
-
-                let Ok(out) = std::process::Command::new("xdotool")
-                    .args(["search", "--pid", &pid])
-                    .output()
-                else {
-                    continue;
-                };
-
-                let wids_raw = String::from_utf8_lossy(&out.stdout);
-                let wids: Vec<&str> = wids_raw.split_whitespace().collect();
-                if wids.is_empty() {
-                    continue;
-                }
-
-                // ── CLAVE: buscar la ventana SIN título (el proyector tiene title: "")
-                let mut proyector_wid: Option<String> = None;
-                for wid in &wids {
-                    let nombre_out = std::process::Command::new("xdotool")
-                        .args(["getwindowname", wid])
-                        .output();
-                    let nombre = match nombre_out {
-                        Ok(o) => String::from_utf8_lossy(&o.stdout).trim().to_string(),
-                        Err(_) => continue,
-                    };
-                    // El proyector tiene title vacío en el .slint
-                    if nombre.is_empty() || nombre == "Slint Window" && wids.len() == 1 {
-                        proyector_wid = Some(wid.to_string());
-                        break;
-                    }
-                }
-
-                let wid = match proyector_wid {
-                    Some(w) => w,
-                    None => continue,
-                };
-
-                println!("✅ Proyector encontrado: wid={}", wid);
-                *wid_store.lock().unwrap() = Some(wid.clone());
-
-                // Quitar acción minimizar
-                let _ = std::process::Command::new("xprop")
-                    .args([
-                        "-id",
-                        &wid,
-                        "-f",
-                        "_NET_WM_ALLOWED_ACTIONS",
-                        "32a",
-                        "-set",
-                        "_NET_WM_ALLOWED_ACTIONS",
-                        "_NET_WM_ACTION_MOVE,_NET_WM_ACTION_RESIZE,\
-                         _NET_WM_ACTION_MAXIMIZE_HORZ,_NET_WM_ACTION_MAXIMIZE_VERT,\
-                         _NET_WM_ACTION_FULLSCREEN,_NET_WM_ACTION_CHANGE_DESKTOP,\
-                         _NET_WM_ACTION_CLOSE",
-                    ])
-                    .output();
-
-                // Ocultar del taskbar
-                let _ = std::process::Command::new("xprop")
-                    .args([
-                        "-id",
-                        &wid,
-                        "-f",
-                        "_NET_WM_STATE",
-                        "32a",
-                        "-set",
-                        "_NET_WM_STATE",
-                        "_NET_WM_STATE_SKIP_TASKBAR,_NET_WM_STATE_SKIP_PAGER",
-                    ])
-                    .output();
-
-                break;
-            }
-        });
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Estructuras auxiliares para multimedia/PDF
 // ---------------------------------------------------------------------------
@@ -3281,7 +3129,12 @@ fn iniciar_servidor_overlay(
 // main()
 // ---------------------------------------------------------------------------
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // --- 1. CREAR EL SPLASH SCREEN Y MOSTRARLO DE INMEDIATO ---
+    // Preparar y migrar los datos antes de crear cualquier ventana Slint.
+    let app_state = AppState::new()?;
+
+    projector_window::initialize_backend()?;
+
+    // --- 1. CREAR EL SPLASH SCREEN ---
     let splash = SplashWindow::new()?;
     // Asocia las ventanas con ReadyShow.desktop en X11 y Wayland.
     slint::set_xdg_app_id("ReadyShow")?;
@@ -3322,7 +3175,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let _ = &*RE_FAV;
         let _ = &*DECODIFICADOR_HW;
 
-        let app_state = AppState::new().expect("Error iniciando AppState");
         std::thread::sleep(std::time::Duration::from_secs(2));
 
         // --- 3. CONSTRUIR LA UI PRINCIPAL DENTRO DEL HILO DE EVENTOS ---
@@ -3334,7 +3186,87 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             let state = Arc::new(Mutex::new(app_state));
             let ui = AppWindow::new().unwrap();
-            let proyector = ProjectorWindow::new().unwrap();
+            {
+                let dir = state.lock().unwrap().user_data_dir.clone();
+                let ui_weak = ui.as_weak();
+                let sync_state = Arc::clone(&state);
+                let commands = online_backup::start(dir, move |status| {
+                    // Refresh expensive database models outside Slint's event loop.
+                    let models = if status.restored {
+                        let mut st = sync_state.lock().unwrap();
+                        st.chapter_cache.clear();
+                        st.versiones.clear();
+                        st.procesar_versiones();
+                        let favorites = st.get_favoritos_ids_cantos();
+                        let songs: Vec<Canto> = st
+                            .get_all_cantos()
+                            .into_iter()
+                            .map(|c| Canto {
+                                id: c.id,
+                                titulo: c.titulo.into(),
+                                letra: "".into(),
+                                favorito: favorites.contains(&c.id),
+                            })
+                            .collect();
+                        let versions: Vec<SharedString> = st
+                            .versiones
+                            .iter()
+                            .map(|v| v.nombre_completo.as_str().into())
+                            .collect();
+                        let first = versions.first().cloned().unwrap_or_default();
+                        let books: Vec<BookInfo> = st
+                            .get_libros_biblia()
+                            .into_iter()
+                            .map(|b| BookInfo {
+                                id: b.id,
+                                nombre: b.nombre.into(),
+                                capitulos: b.capitulos,
+                            })
+                            .collect();
+                        Some((songs, st.get_all_favoritos(), versions, first, books))
+                    } else {
+                        None
+                    };
+                    let weak = ui_weak.clone();
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = weak.upgrade() {
+                            ui.set_respaldo_estado(status.text.into());
+                            ui.set_respaldo_ocupado(status.busy);
+                            ui.set_respaldo_conectado(status.connected);
+                            if let Some((songs, favorites, versions, first, books)) = models {
+                                ui.set_cantos(ModelRc::from(Rc::new(VecModel::from(songs))));
+                                ui.set_favoritos(ModelRc::from(Rc::new(VecModel::from(favorites))));
+                                ui.set_bible_versions(ModelRc::from(Rc::new(VecModel::from(versions))));
+                                ui.set_current_bible_version(first);
+                                ui.set_bible_books(ModelRc::from(Rc::new(VecModel::from(books))));
+                            }
+                        }
+                    });
+                });
+                let login_commands = commands.clone();
+                let weak = ui.as_weak();
+                ui.on_respaldo_iniciar_sesion(move || {
+                    if login_commands
+                        .try_send(online_backup::Command::Login)
+                        .is_err()
+                    {
+                        if let Some(ui) = weak.upgrade() {
+                            ui.set_respaldo_ocupado(false);
+                            ui.set_respaldo_estado("No se pudo iniciar el respaldo".into());
+                        }
+                    }
+                });
+                let weak = ui.as_weak();
+                ui.on_respaldo_restaurar(move || {
+                    if commands.try_send(online_backup::Command::Restore).is_err() {
+                        if let Some(ui) = weak.upgrade() {
+                            ui.set_respaldo_ocupado(false);
+                            ui.set_respaldo_estado("No se pudo iniciar la restauración".into());
+                        }
+                    }
+                });
+            }
+            let proyector = projector_window::create().unwrap();
             let medidor_win = MedidorWindow::new().unwrap();
             let video_player = Arc::new(Mutex::new(NativeVideoPlayer::new()));
             let biblioteca_video_player = Arc::new(Mutex::new(NativeVideoPlayer::new()));
@@ -3358,8 +3290,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let modo_en_vivo: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
 
             let proyector_abierto = Arc::new(AtomicBool::new(false));
-
-            let proyector_wid: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
 
             // Roles de pantallas: id_pantalla -> rol (0=sin asignar, 1=operador, 2=proyector, 3=stage)
             let _roles_pantallas: Arc<Mutex<HashMap<i32, i32>>> =
@@ -3983,28 +3913,50 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let p_handle = proyector.as_weak();
                 let sp_clone = Arc::clone(&segunda_pantalla);
                 let pa = Arc::clone(&proyector_abierto); // ← agregar
-                let wid_clone = Arc::clone(&proyector_wid);
                 ui.on_abrir_proyector(move || {
                     let p = p_handle.unwrap();
                     let info = *sp_clone.lock().unwrap();
-                    pa.store(true, Ordering::Release); // ← agregar
-                    if let Some((x, y, width, height)) = info {
-                        p.show().unwrap();
-                        configurar_ventana_proyector_linux(Arc::clone(&wid_clone));
-                        mover_proyector_a_pantalla(p.as_weak(), x, y, width, height);
-                    } else {
-                        p.show().unwrap();
-                        configurar_ventana_proyector_linux(Arc::clone(&wid_clone));
-                        let p_weak = p.as_weak();
-                        thread::spawn(move || {
-                            thread::sleep(std::time::Duration::from_millis(100));
-                            let _ = slint::invoke_from_event_loop(move || {
-                                if let Some(p) = p_weak.upgrade() {
-                                    p.window().set_maximized(true);
-                                }
-                            });
-                        });
-                    }
+                    let pa = Arc::clone(&pa);
+                    slint::spawn_local(async move {
+                        if let Err(error) = projector_window::prepare(p.window()).await {
+                            eprintln!("No se pudo configurar la ventana de proyección: {error}");
+                            return;
+                        }
+                        #[cfg(target_os = "windows")]
+                        {
+                            let target = info.map(|(x, y, _, _)| (x, y));
+                            if let Err(error) = projector_window::fullscreen_on_monitor(p.window(), target) {
+                                eprintln!("No se pudo desplegar el proyector a pantalla completa: {error}");
+                                return;
+                            }
+                            p.show().unwrap();
+                            // Showing the window can refresh native styles; enforce the
+                            // physical monitor bounds and topmost position afterwards too.
+                            if let Err(error) = projector_window::fullscreen_on_monitor(p.window(), target) {
+                                eprintln!("No se pudo ajustar la pantalla completa del proyector: {error}");
+                            }
+                        }
+                        #[cfg(not(target_os = "windows"))]
+                        {
+                            if let Some((x, y, width, height)) = info {
+                                p.show().unwrap();
+                                mover_proyector_a_pantalla(p.as_weak(), x, y, width, height);
+                            } else {
+                                p.show().unwrap();
+                                let p_weak = p.as_weak();
+                                thread::spawn(move || {
+                                    thread::sleep(std::time::Duration::from_millis(100));
+                                    let _ = slint::invoke_from_event_loop(move || {
+                                        if let Some(p) = p_weak.upgrade() {
+                                            p.window().set_maximized(true);
+                                        }
+                                    });
+                                });
+                            }
+                        }
+                        pa.store(true, Ordering::Release);
+                    })
+                    .unwrap();
                 });
             }
 

@@ -4,7 +4,7 @@
   "biblias_video_paths": [],
   "cantos_video_paths": [],
   "tema_oscuro": true,
-  "tema": "azul_oscuro",
+  "tema": "negro",
   "biblias_selected_img": -1,
   "cantos_selected_img": -1,
   "biblias_selected_vid": -1,
@@ -39,7 +39,12 @@
   "margen_inferior": 0.0,
   "default_bg_type": "",
   "default_bg_idx": 0,
-  "pantallas_roles": [],
+  "pantallas_roles": [
+    [
+      0,
+      1
+    ]
+  ],
   "auto_proyectar_inicio": false,
   "proyeccion_font_family": "Google Sans",
   "gemini_api_key": ""

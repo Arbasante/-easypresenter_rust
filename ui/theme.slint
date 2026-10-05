@@ -1,66 +1,229 @@
-// ─────────────────────────────────────────────────────────────
-//  TEMA GLOBAL — Blanco / Azul oscuro / Negro
-//  Paleta compartida: Blanco, Azul oscuro y Negro de alto contraste
-//  Colores y superficies compartidos; el cambio de tema es reactivo.
-// ─────────────────────────────────────────────────────────────
+// Paletas reactivas de la interfaz; sólo contienen valores de color.
+// Los tonos de texto y los rellenos con texto blanco se ajustan para WCAG AA.
+// Los colores de proyección elegidos por el usuario son independientes del tema.
+export global BlackPalette {
+    out property <color> bg_list: #0a0a0a;
+    out property <color> bg_sidebar: #121212;
+    out property <color> bg_main: #1a1a1a;
+    out property <color> bg_panel_right: #1a1a1a;
+    out property <color> bg_input: #232323;
+    out property <color> bg_titlebar: #2b2b2b;
+    out property <color> border_main: #2a2a2a;
+    out property <color> border_input: #3a3a3a;
+    out property <color> border_list_item: #1f1f1f;
+    out property <color> border_dashed: #333333;
+    out property <color> text_primary: #ffffff;
+    out property <color> text_list: #e8e8e8;
+    out property <color> text_menu: #b5b5b5;
+    out property <color> text_header: #969696;
+    out property <color> text_section: #929fab;
+    out property <color> text_placeholder: #969696;
+    out property <color> text_muted: #969696;
+    out property <color> text_empty: #878787;
+    out property <color> accent_amber: #e69a1a;
+    out property <color> icon_settings: #8a8a8a;
+    out property <color> accent_text: #65b5f3;
+    out property <color> accent_hover: #006cbe;
+    out property <color> accent_soft: #102c40;
+    out property <color> menu_hover: #212121;
+    out property <color> list_hover: #191919;
+    out property <color> panel_hover: #292929;
+    out property <color> success: #91c9ad;
+    out property <color> danger: #f1a6a0;
+    out property <color> warning_soft: #302516;
+    out property <color> danger_soft: #38201e;
+    out property <color> success_soft: #1c3026;
+    out property <color> overlay: rgba(0,0,0,0.76);
+    out property <color> shadow: rgba(0,0,0,0.55);
+    out property <color> bg_preview: #000000;
+    out property <color> text_on_accent: #ffffff;
+    out property <color> bg_hover: #292929;
+    out property <color> accent: #0078d4;
+    out property <color> accent_icon: #1e90e0;
+    out property <color> scroll_thumb: #3a3a3a;
+    out property <color> success_fill: #18794e;
+    out property <color> danger_fill: #b42318;
+    out property <color> danger_hover: #912018;
+    out property <color> disabled_fill: #3a3a3a;
+    out property <color> media_overlay: #121212;
+    out property <color> media_hover: #292929;
+    out property <color> media_text: #ffffff;
+    out property <color> media_muted: #b5b5b5;
+    out property <color> media_border: #3a3a3a;
+}
+
+export global NavyPalette {
+    out property <color> bg_preview: #050b16;
+    out property <color> bg_list: #0a1424;
+    out property <color> bg_sidebar: #0d1b2e;
+    out property <color> bg_main: #12233a;
+    out property <color> bg_panel_right: #12233a;
+    out property <color> bg_input: #1a2e4a;
+    out property <color> bg_titlebar: #1f3555;
+    out property <color> border_main: #1e3352;
+    out property <color> border_input: #2f4a70;
+    out property <color> border_list_item: #172a44;
+    out property <color> border_dashed: #2a4468;
+    out property <color> text_primary: #ffffff;
+    out property <color> text_on_accent: #ffffff;
+    out property <color> text_list: #e3ecf8;
+    out property <color> text_menu: #a9bcd6;
+    out property <color> text_header: #8ba0bc;
+    out property <color> text_section: #88a0bb;
+    out property <color> text_placeholder: #8da0b8;
+    out property <color> text_muted: #8da0b9;
+    out property <color> text_empty: #7b8a9f;
+    out property <color> accent: #1b79cc;
+    out property <color> accent_icon: #4da3ff;
+    out property <color> accent_amber: #f0a020;
+    out property <color> icon_settings: #8aa4c6;
+    out property <color> bg_hover: #1a2e4a;
+    out property <color> scroll_thumb: #2f4a70;
+    out property <color> accent_text: #73b7fa;
+    out property <color> accent_hover: #176fbc;
+    out property <color> accent_soft: #183653;
+    out property <color> menu_hover: #1a2e4a;
+    out property <color> list_hover: #1a2e4a;
+    out property <color> panel_hover: #1a2e4a;
+    out property <color> success: #98ceb3;
+    out property <color> danger: #f4aaa6;
+    out property <color> warning_soft: #302c27;
+    out property <color> danger_soft: #352638;
+    out property <color> success_soft: #173b3e;
+    out property <color> overlay: rgba(5,11,22,0.76);
+    out property <color> shadow: rgba(5,11,22,0.55);
+    out property <color> success_fill: #20664d;
+    out property <color> danger_fill: #a52f40;
+    out property <color> danger_hover: #862638;
+    out property <color> disabled_fill: #2f4a70;
+    out property <color> media_overlay: #0d1b2e;
+    out property <color> media_hover: #1a2e4a;
+    out property <color> media_text: #ffffff;
+    out property <color> media_muted: #a9bcd6;
+    out property <color> media_border: #2f4a70;
+}
+
+export global LightPalette {
+    out property <color> bg_preview: #edeff2;
+    out property <color> bg_list: #ffffff;
+    out property <color> bg_sidebar: #f1f3f5;
+    out property <color> bg_main: #ffffff;
+    out property <color> bg_panel_right: #f8f9fb;
+    out property <color> bg_input: #f0f2f5;
+    out property <color> bg_titlebar: #e1e4e8;
+    out property <color> border_main: #e1e4e8;
+    out property <color> border_input: #cbd0d6;
+    out property <color> border_list_item: #eceef1;
+    out property <color> border_dashed: #c5cad1;
+    out property <color> text_primary: #111827;
+    out property <color> text_on_accent: #ffffff;
+    out property <color> text_list: #1f2937;
+    out property <color> text_menu: #4b5563;
+    out property <color> text_header: #606673;
+    out property <color> text_section: #59677c;
+    out property <color> text_placeholder: #62666e;
+    out property <color> text_muted: #60666f;
+    out property <color> text_empty: #73767a;
+    out property <color> accent: #0078d4;
+    out property <color> accent_icon: #0a84e0;
+    out property <color> accent_amber: #935800;
+    out property <color> icon_settings: #6b7280;
+    out property <color> bg_hover: #e9ecf0;
+    out property <color> scroll_thumb: #c5cad1;
+    out property <color> accent_text: #0067b6;
+    out property <color> accent_hover: #006cbe;
+    out property <color> accent_soft: #e2edf8;
+    out property <color> menu_hover: #e9ecf0;
+    out property <color> list_hover: #e9ecf0;
+    out property <color> panel_hover: #e9ecf0;
+    out property <color> success: #17744b;
+    out property <color> danger: #b42318;
+    out property <color> warning_soft: #fff0d6;
+    out property <color> danger_soft: #fce8e6;
+    out property <color> success_soft: #e5f4eb;
+    out property <color> overlay: rgba(17,24,39,0.40);
+    out property <color> shadow: rgba(17,24,39,0.10);
+    out property <color> success_fill: #176d47;
+    out property <color> danger_fill: #ac2318;
+    out property <color> danger_hover: #902117;
+    out property <color> disabled_fill: #5e6875;
+    out property <color> media_overlay: #f1f3f5;
+    out property <color> media_hover: #e9ecf0;
+    out property <color> media_text: #111827;
+    out property <color> media_muted: #4b5563;
+    out property <color> media_border: #cbd0d6;
+}
+
 export global Theme {
     in-out property <bool> is_dark: false;
     in-out property <bool> is_black: false;
     out property <string> name: root.is_black ? "Negro" : (root.is_dark ? "Azul oscuro" : "Blanco");
 
-    // ── Fondos ───────────────────────────────────────────────
-    // Colores base compatibles con los bindings existentes.
-    out property <color> bg_main:       root.is_black ? #000000 : (root.is_dark ? #151a21 : #f4f6f8);
-    out property <color> bg_sidebar:    root.is_black ? #000000 : (root.is_dark ? #191f28 : #f5f7fa);
-    out property <color> bg_topbar:     root.is_black ? #000000 : (root.is_dark ? #191f28 : #f4f6f9);
-    out property <color> bg_input:      root.is_black ? #080808 : (root.is_dark ? #202733 : #ffffff);
-    out property <color> bg_list:       root.is_black ? #000000 : (root.is_dark ? #161c24 : #f5f7fa);
-    out property <color> bg_card:       root.is_black ? #080808 : (root.is_dark ? #1d2530 : #f7f9fc);
-    out property <color> bg_card_hover: root.is_black ? #202020 : (root.is_dark ? #293343 : #eaf0f7);
-    out property <color> bg_popup:      root.is_black ? #050505 : (root.is_dark ? #202733 : #f7f9fc); // menús contextuales y modales
-
-    // ── Bordes ───────────────────────────────────────────────
-    // Los contornos de controles son discretos; sólo las divisiones principales se marcan.
-    out property <color> border_subtle: root.is_black ? #303030 : (root.is_dark ? #344154 : #d6dde7);
-    out property <color> border_input:  root.is_black ? #626262 : (root.is_dark ? #53637b : #a7b3c3);
-    out property <color> border_strong: root.is_black ? #454545 : (root.is_dark ? #46556b : #bdc8d6); // contorno de controles secundarios
-    out property <color> separator:     root.is_black ? #252525 : (root.is_dark ? #2d394a : #e0e5ec); // separadores discretos dentro de menús
-
-    // Superficies: degradados estáticos y suaves, sin sombras por cada fila.
-    out property <color> separator_main: root.is_black ? #858585 : (root.is_dark ? #60718a : #9aa8ba);
-    out property <color> tint_main: root.is_black ? #060606 : (root.is_dark ? #1b2330 : #ffffff);
-    out property <color> tint_panel: root.is_black ? #0c0c0c : (root.is_dark ? #232e40 : #ffffff);
-    out property <color> tint_card: root.is_black ? #141414 : (root.is_dark ? #273246 : #ffffff);
-    out property <brush> surface_main: @linear-gradient(180deg, root.tint_main 0%, root.bg_main 100%);
-    out property <brush> surface_sidebar: @linear-gradient(180deg, root.tint_panel 0%, root.bg_sidebar 100%);
-    out property <brush> surface_topbar: @linear-gradient(180deg, root.tint_panel 0%, root.bg_topbar 100%);
-    out property <brush> surface_list: @linear-gradient(180deg, root.tint_main 0%, root.bg_list 100%);
-    out property <brush> surface_card: @linear-gradient(180deg, root.tint_card 0%, root.bg_card 100%);
-    out property <brush> surface_popup: @linear-gradient(180deg, root.tint_panel 0%, root.bg_popup 100%);
-    out property <brush> surface_input: @linear-gradient(180deg, root.bg_input 0%, root.bg_list 100%);
-
-    // ── Texto ────────────────────────────────────────────────
-    // Modo claro: negro casi puro para texto principal, jerarquía marcada
-    // pero siempre legible (nada de grises lavados).
-    out property <color> text_primary:   root.is_black ? #ffffff : (root.is_dark ? #e9edf3 : #1d2939);
-    out property <color> text_secondary: root.is_black ? #ffffff : (root.is_dark ? #bdc6d2 : #475467);
-    out property <color> text_muted:     root.is_black ? #ffffff : (root.is_dark ? #97a3b3 : #5e6b7e);
-
-    out property <color> accent: root.is_black ? #ffffff : (root.is_dark ? #93b4e7 : #315c9b);
-    out property <color> accent_hover: root.is_dark ? #294c81 : #294c81;
-    out property <color> accent_soft: root.is_black ? #202020 : (root.is_dark ? rgba(147,180,231,0.14) : rgba(49,92,155,0.10));
-    out property <color> menu_hover: root.is_black ? #202020 : (root.is_dark ? #293343 : #eaf0f7);
-    out property <color> menu_text: root.is_black ? #ffffff : (root.is_dark ? #e9edf3 : #1d2939);
-    out property <color> menu_icon: root.is_black ? #ffffff : (root.is_dark ? #bdc6d2 : #475467);
-    out property <color> overlay: root.is_black ? rgba(0,0,0,0.76) : (root.is_dark ? rgba(8,12,18,0.72) : rgba(16,24,40,0.40));
-    out property <color> shadow: root.is_black ? rgba(0,0,0,0.55) : (root.is_dark ? rgba(0,0,0,0.24) : rgba(16,24,40,0.10));
-    out property <color> accent_fill: #315c9b;
-    out property <color> success: root.is_black ? #ffffff : (root.is_dark ? #91c9ad : #18794e);
-    out property <color> success_fill: #18794e;
-    out property <color> danger: root.is_black ? #ffffff : (root.is_dark ? #f1a6a0 : #b42318);
-    out property <color> danger_fill: #b42318;
-    out property <color> danger_hover: #912018;
-    out property <color> warning: root.is_black ? #ffffff : (root.is_dark ? #d6b77b : #8a6118);
+    out property <color> bg_main: root.is_black ? BlackPalette.bg_main : (root.is_dark ? NavyPalette.bg_main : LightPalette.bg_main);
+    out property <color> bg_sidebar: root.is_black ? BlackPalette.bg_sidebar : (root.is_dark ? NavyPalette.bg_sidebar : LightPalette.bg_sidebar);
+    out property <color> bg_topbar: root.is_black ? BlackPalette.bg_titlebar : (root.is_dark ? NavyPalette.bg_titlebar : LightPalette.bg_titlebar);
+    out property <color> bg_input: root.is_black ? BlackPalette.bg_input : (root.is_dark ? NavyPalette.bg_input : LightPalette.bg_input);
+    out property <color> bg_list: root.is_black ? BlackPalette.bg_list : (root.is_dark ? NavyPalette.bg_list : LightPalette.bg_list);
+    out property <color> bg_card: root.is_black ? BlackPalette.bg_input : (root.is_dark ? NavyPalette.bg_input : LightPalette.bg_input);
+    out property <color> bg_card_hover: root.is_black ? BlackPalette.panel_hover : (root.is_dark ? NavyPalette.panel_hover : LightPalette.panel_hover);
+    out property <color> bg_popup: root.is_black ? BlackPalette.bg_main : (root.is_dark ? NavyPalette.bg_main : LightPalette.bg_main);
+    out property <color> bg_preview: root.is_black ? BlackPalette.bg_preview : (root.is_dark ? NavyPalette.bg_preview : LightPalette.bg_preview);
+    out property <color> bg_panel_right: root.is_black ? BlackPalette.bg_panel_right : (root.is_dark ? NavyPalette.bg_panel_right : LightPalette.bg_panel_right);
+    out property <color> bg_titlebar: root.is_black ? BlackPalette.bg_titlebar : (root.is_dark ? NavyPalette.bg_titlebar : LightPalette.bg_titlebar);
+    out property <color> border_subtle: root.is_black ? BlackPalette.border_main : (root.is_dark ? NavyPalette.border_main : LightPalette.border_main);
+    out property <color> border_input: root.is_black ? BlackPalette.border_input : (root.is_dark ? NavyPalette.border_input : LightPalette.border_input);
+    out property <color> border_strong: root.is_black ? BlackPalette.border_input : (root.is_dark ? NavyPalette.border_input : LightPalette.border_input);
+    out property <color> separator: root.is_black ? BlackPalette.border_list_item : (root.is_dark ? NavyPalette.border_list_item : LightPalette.border_list_item);
+    out property <color> separator_main: root.is_black ? BlackPalette.border_main : (root.is_dark ? NavyPalette.border_main : LightPalette.border_main);
+    out property <color> border_dashed: root.is_black ? BlackPalette.border_dashed : (root.is_dark ? NavyPalette.border_dashed : LightPalette.border_dashed);
+    out property <color> tint_main: root.is_black ? BlackPalette.bg_main : (root.is_dark ? NavyPalette.bg_main : LightPalette.bg_main);
+    out property <color> tint_panel: root.is_black ? BlackPalette.bg_main : (root.is_dark ? NavyPalette.bg_main : LightPalette.bg_main);
+    out property <color> tint_card: root.is_black ? BlackPalette.bg_input : (root.is_dark ? NavyPalette.bg_input : LightPalette.bg_input);
+    out property <color> text_primary: root.is_black ? BlackPalette.text_primary : (root.is_dark ? NavyPalette.text_primary : LightPalette.text_primary);
+    out property <color> text_on_accent: root.is_black ? BlackPalette.text_on_accent : (root.is_dark ? NavyPalette.text_on_accent : LightPalette.text_on_accent);
+    out property <color> text_secondary: root.is_black ? BlackPalette.text_menu : (root.is_dark ? NavyPalette.text_menu : LightPalette.text_menu);
+    out property <color> text_muted: root.is_black ? BlackPalette.text_muted : (root.is_dark ? NavyPalette.text_muted : LightPalette.text_muted);
+    out property <color> text_list: root.is_black ? BlackPalette.text_list : (root.is_dark ? NavyPalette.text_list : LightPalette.text_list);
+    out property <color> text_menu: root.is_black ? BlackPalette.text_menu : (root.is_dark ? NavyPalette.text_menu : LightPalette.text_menu);
+    out property <color> text_header: root.is_black ? BlackPalette.text_header : (root.is_dark ? NavyPalette.text_header : LightPalette.text_header);
+    out property <color> text_section: root.is_black ? BlackPalette.text_section : (root.is_dark ? NavyPalette.text_section : LightPalette.text_section);
+    out property <color> text_placeholder: root.is_black ? BlackPalette.text_placeholder : (root.is_dark ? NavyPalette.text_placeholder : LightPalette.text_placeholder);
+    out property <color> text_empty: root.is_black ? BlackPalette.text_empty : (root.is_dark ? NavyPalette.text_empty : LightPalette.text_empty);
+    out property <color> accent: root.is_black ? BlackPalette.accent_text : (root.is_dark ? NavyPalette.accent_text : LightPalette.accent_text);
+    out property <color> accent_fill: root.is_black ? BlackPalette.accent : (root.is_dark ? NavyPalette.accent : LightPalette.accent);
+    out property <color> accent_icon: root.is_black ? BlackPalette.accent_icon : (root.is_dark ? NavyPalette.accent_icon : LightPalette.accent_icon);
+    out property <color> accent_hover: root.is_black ? BlackPalette.accent_hover : (root.is_dark ? NavyPalette.accent_hover : LightPalette.accent_hover);
+    out property <color> accent_soft: root.is_black ? BlackPalette.accent_soft : (root.is_dark ? NavyPalette.accent_soft : LightPalette.accent_soft);
+    out property <color> warning: root.is_black ? BlackPalette.accent_amber : (root.is_dark ? NavyPalette.accent_amber : LightPalette.accent_amber);
+    out property <color> warning_soft: root.is_black ? BlackPalette.warning_soft : (root.is_dark ? NavyPalette.warning_soft : LightPalette.warning_soft);
+    out property <color> menu_hover: root.is_black ? BlackPalette.menu_hover : (root.is_dark ? NavyPalette.menu_hover : LightPalette.menu_hover);
+    out property <color> menu_text: root.is_black ? BlackPalette.text_menu : (root.is_dark ? NavyPalette.text_menu : LightPalette.text_menu);
+    out property <color> menu_icon: root.is_black ? BlackPalette.text_menu : (root.is_dark ? NavyPalette.text_menu : LightPalette.text_menu);
+    out property <color> list_hover: root.is_black ? BlackPalette.list_hover : (root.is_dark ? NavyPalette.list_hover : LightPalette.list_hover);
+    out property <color> success: root.is_black ? BlackPalette.success : (root.is_dark ? NavyPalette.success : LightPalette.success);
+    out property <color> success_fill: root.is_black ? BlackPalette.success_fill : (root.is_dark ? NavyPalette.success_fill : LightPalette.success_fill);
+    out property <color> success_soft: root.is_black ? BlackPalette.success_soft : (root.is_dark ? NavyPalette.success_soft : LightPalette.success_soft);
+    out property <color> danger: root.is_black ? BlackPalette.danger : (root.is_dark ? NavyPalette.danger : LightPalette.danger);
+    out property <color> danger_fill: root.is_black ? BlackPalette.danger_fill : (root.is_dark ? NavyPalette.danger_fill : LightPalette.danger_fill);
+    out property <color> danger_hover: root.is_black ? BlackPalette.danger_hover : (root.is_dark ? NavyPalette.danger_hover : LightPalette.danger_hover);
+    out property <color> danger_soft: root.is_black ? BlackPalette.danger_soft : (root.is_dark ? NavyPalette.danger_soft : LightPalette.danger_soft);
+    out property <color> disabled_fill: root.is_black ? BlackPalette.disabled_fill : (root.is_dark ? NavyPalette.disabled_fill : LightPalette.disabled_fill);
+    out property <color> icon_settings: root.is_black ? BlackPalette.icon_settings : (root.is_dark ? NavyPalette.icon_settings : LightPalette.icon_settings);
+    out property <color> scroll_thumb: root.is_black ? BlackPalette.scroll_thumb : (root.is_dark ? NavyPalette.scroll_thumb : LightPalette.scroll_thumb);
+    out property <color> overlay: root.is_black ? BlackPalette.overlay : (root.is_dark ? NavyPalette.overlay : LightPalette.overlay);
+    out property <color> shadow: root.is_black ? BlackPalette.shadow : (root.is_dark ? NavyPalette.shadow : LightPalette.shadow);
+    out property <color> media_overlay: root.is_black ? BlackPalette.media_overlay : (root.is_dark ? NavyPalette.media_overlay : LightPalette.media_overlay);
+    out property <color> media_hover: root.is_black ? BlackPalette.media_hover : (root.is_dark ? NavyPalette.media_hover : LightPalette.media_hover);
+    out property <color> media_text: root.is_black ? BlackPalette.media_text : (root.is_dark ? NavyPalette.media_text : LightPalette.media_text);
+    out property <color> media_muted: root.is_black ? BlackPalette.media_muted : (root.is_dark ? NavyPalette.media_muted : LightPalette.media_muted);
+    out property <color> media_border: root.is_black ? BlackPalette.media_border : (root.is_dark ? NavyPalette.media_border : LightPalette.media_border);
+    out property <brush> surface_main: root.bg_main;
+    out property <brush> surface_sidebar: root.bg_sidebar;
+    out property <brush> surface_topbar: root.bg_topbar;
+    out property <brush> surface_list: root.bg_list;
+    out property <brush> surface_card: root.bg_card;
+    out property <brush> surface_popup: root.bg_popup;
+    out property <brush> surface_input: root.bg_input;
 
     out property <length> radius_control: 6px;
     out property <length> radius_surface: 8px;

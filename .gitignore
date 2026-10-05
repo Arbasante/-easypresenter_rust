@@ -6,3 +6,8 @@ node_modules/
 dist/
 */.json
 data/*:Zone.Identifier
+
+# Credenciales locales de Google OAuth
+data/google_oauth.json
+data/.google_oauth-*.tmp
+client_secret*.json

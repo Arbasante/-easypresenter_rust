@@ -8,6 +8,9 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # build.rs embeds the desktop client in Linux and Windows executables.
+  READYSHOW_GOOGLE_CLIENT_ID: ${{ secrets.READYSHOW_GOOGLE_CLIENT_ID }}
+  READYSHOW_GOOGLE_CLIENT_SECRET: ${{ secrets.READYSHOW_GOOGLE_CLIENT_SECRET }}
 
 jobs:
 

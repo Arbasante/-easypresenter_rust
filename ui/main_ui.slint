@@ -132,6 +132,37 @@ component TabButton inherits Rectangle {
 // ─────────────────────────────────────────────────────────────
 //  COMPONENTES PERSONALIZADOS (sin cambios)
 // ─────────────────────────────────────────────────────────────
+component FavoriteTab inherits Rectangle {
+    in property <string> text;
+    in property <int> count;
+    in property <bool> active: false;
+    callback clicked;
+
+    height: 22px;
+    horizontal-stretch: 0;
+    border-radius: 11px;
+    background: root.active ? Theme.accent_soft : (touch.has-hover ? Theme.menu_hover : transparent);
+    animate background { duration: 140ms; }
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+    HorizontalLayout {
+        padding-left: 8px; padding-right: 8px; spacing: 4px;
+        alignment: center;
+        Text {
+            text: root.text; font-size: 9px; font-weight: Theme.font_weight_body;
+            color: root.active ? Theme.accent : (touch.has-hover ? Theme.text_primary : Theme.text_muted);
+            vertical-alignment: center;
+        }
+        Text {
+            text: root.count; font-size: 8px;
+            color: root.active ? Theme.accent : Theme.text_muted;
+            vertical-alignment: center;
+        }
+    }
+}
+
 component TopMenuItem inherits Rectangle {
     in property <string> text;
     callback clicked;
@@ -307,6 +338,10 @@ export component AppWindow inherits Window {
     callback click_boton_ia();
 
     in property <[FavoritoItem]> favoritos: [];
+    in property <[FavoritoItem]> favoritos_cantos: [];
+    in property <[FavoritoItem]> favoritos_biblia: [];
+    in-out property <string> favoritos_tab: "cantos";
+    private property <[FavoritoItem]> favoritos_visibles: root.favoritos_tab == "cantos" ? root.favoritos_cantos : root.favoritos_biblia;
     callback toggle_favorito_canto(int);
     callback toggle_favorito_estrofa(string, string);  // referencia, texto
     callback abrir_favorito(FavoritoItem);
@@ -950,11 +985,25 @@ in property <[VideoGaleriaItem]> cantos_video_gallery: [];
                         VerticalLayout {
                             // Encabezado favoritos
                             Rectangle {
-                                height: 28px;
+                                height: 32px;
                                 HorizontalLayout {
-                                    padding-left: 12px; padding-right: 12px;
+                                    padding-left: 12px; padding-right: 8px;
+                                    padding-top: 5px; padding-bottom: 5px; spacing: 3px;
                                     Text { text: "FAVORITOS"; color: Theme.warning; font-size: 9px; font-weight: Theme.font_weight_body; letter-spacing: 0.8px; vertical-alignment: center; horizontal-stretch: 1; }
-                                    Text { text: root.favoritos.length > 0 ? root.favoritos.length + "" : ""; color: Theme.warning; font-size: 9px; font-weight: Theme.font_weight_body; vertical-alignment: center; }
+                                    FavoriteTab {
+                                        min-width: 62px;
+                                        text: "Cantos";
+                                        count: root.favoritos_cantos.length;
+                                        active: root.favoritos_tab == "cantos";
+                                        clicked => { root.favoritos_tab = "cantos"; }
+                                    }
+                                    FavoriteTab {
+                                        min-width: 58px;
+                                        text: "Biblia";
+                                        count: root.favoritos_biblia.length;
+                                        active: root.favoritos_tab == "biblia";
+                                        clicked => { root.favoritos_tab = "biblia"; }
+                                    }
                                 }
                                 Rectangle { y: parent.height - 1px; height: 1px; background: transparent; }
                             }
@@ -962,16 +1011,16 @@ in property <[VideoGaleriaItem]> cantos_video_gallery: [];
                             // Lista de favoritos
                             Rectangle {
                                 vertical-stretch: 1; clip: true;
-                                if (root.favoritos.length == 0) : Text {
-                                    text: "Pulsa la estrella (☆) en un canto o versículo\npara fijarlo aquí";
+                                if (root.favoritos_visibles.length == 0) : Text {
+                                    text: root.favoritos_tab == "cantos" ? "Pulsa la estrella (☆) en un canto\npara agregarlo a esta lista" : "Pulsa la estrella (☆) en un versículo\npara agregarlo a esta lista";
                                     color: Theme.text_muted; font-size: 9px; font-weight: Theme.font_weight_body;
                                     horizontal-alignment: center; vertical-alignment: center;
                                     wrap: word-wrap; width: 100%; height: 100%;
                                 }
-                                if (root.favoritos.length > 0) : ScrollView {
+                                if (root.favoritos_visibles.length > 0) : ScrollView {
                                     VerticalLayout {
                                         padding: 4px; spacing: 0px;
-                                        for fav in root.favoritos : Rectangle {
+                                        for fav[idx] in root.favoritos_visibles : Rectangle {
                                             height: 34px; border-radius: 4px;
                                             background: touch-fav.has-hover ? Theme.warning_soft : transparent;
                                             touch-fav := TouchArea {
@@ -982,6 +1031,12 @@ in property <[VideoGaleriaItem]> cantos_video_gallery: [];
                                             }
                                             HorizontalLayout {
                                                 padding-left: 9px; padding-right: 9px; spacing: 8px;
+                                                Text {
+                                                    text: (idx + 1) + ".";
+                                                    min-width: 18px;
+                                                    color: Theme.text_muted; font-size: 9px;
+                                                    vertical-alignment: center;
+                                                }
                                                 // Etiqueta tipo / versión
                                                 Rectangle {
                                                     width: fav.tipo == "canto" ? 44px : 48px; height: 18px; border-radius: 3px;

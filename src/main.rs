@@ -1011,6 +1011,23 @@ fn obtener_o_crear_miniatura_video(
     Some(img)
 }
 
+/// Actualiza ambas listas conservando el orden en que se agregaron los favoritos.
+fn actualizar_favoritos(ui: &AppWindow, favoritos: Vec<FavoritoItem>) {
+    let cantos: Vec<_> = favoritos
+        .iter()
+        .filter(|fav| fav.tipo == "canto")
+        .cloned()
+        .collect();
+    let biblia: Vec<_> = favoritos
+        .iter()
+        .filter(|fav| fav.tipo == "versiculo")
+        .cloned()
+        .collect();
+    ui.set_favoritos_cantos(ModelRc::from(Rc::new(VecModel::from(cantos))));
+    ui.set_favoritos_biblia(ModelRc::from(Rc::new(VecModel::from(biblia))));
+    ui.set_favoritos(ModelRc::from(Rc::new(VecModel::from(favoritos))));
+}
+
 /// Muestra un aviso breve (3s) en el banner inferior de la UI.
 fn mostrar_aviso(ui_weak: &slint::Weak<AppWindow>, mensaje: &str) {
     if let Some(ui) = ui_weak.upgrade() {
@@ -1451,7 +1468,7 @@ impl AppState {
         let mut stmt = self
             .cantos_db
             .prepare_cached(
-                "SELECT tipo, ref_id, titulo, referencia, version FROM favoritos ORDER BY id DESC",
+                "SELECT tipo, ref_id, titulo, referencia, version FROM favoritos ORDER BY id ASC",
             )
             .unwrap();
         stmt.query_map([], |r| {
@@ -3235,7 +3252,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             ui.set_respaldo_conectado(status.connected);
                             if let Some((songs, favorites, versions, first, books)) = models {
                                 ui.set_cantos(ModelRc::from(Rc::new(VecModel::from(songs))));
-                                ui.set_favoritos(ModelRc::from(Rc::new(VecModel::from(favorites))));
+                                actualizar_favoritos(&ui, favorites);
                                 ui.set_bible_versions(ModelRc::from(Rc::new(VecModel::from(versions))));
                                 ui.set_current_bible_version(first);
                                 ui.set_bible_books(ModelRc::from(Rc::new(VecModel::from(books))));
@@ -3682,7 +3699,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     ui.set_cantos(ModelRc::from(Rc::new(VecModel::from(cantos_slint))));
                     let favs = estado.get_all_favoritos();
-                    ui.set_favoritos(ModelRc::from(Rc::new(VecModel::from(favs))));
+                    actualizar_favoritos(&ui, favs);
                 }
             };
             cargar_cantos(String::new());
@@ -5383,7 +5400,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             match resultado {
                                 Ok(_) => {
                                     ui.set_cantos(ModelRc::from(Rc::new(VecModel::from(cantos_slint))));
-                                    ui.set_favoritos(ModelRc::from(Rc::new(VecModel::from(favs))));
+                                    actualizar_favoritos(&ui, favs);
                                     ui.set_db_modal_es_error(false);
                                     ui.set_db_modal_mensaje(SharedString::from(
                                         "Base de datos de cantos importada y optimizada con éxito."
@@ -6631,7 +6648,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         estado.toggle_favorito_canto(id, &estado.get_canto_titulo(id));
                         estado.get_all_favoritos()
                     };
-                    ui.set_favoritos(ModelRc::from(Rc::new(VecModel::from(favs))));
+                    actualizar_favoritos(&ui, favs);
                     c_clone(ui.get_buscador_texto().to_string());
                 });
             }
@@ -6672,7 +6689,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             .collect();
                         ui.set_estrofas_actuales(ModelRc::from(Rc::new(VecModel::from(diapos))));
                     }
-                    ui.set_favoritos(ModelRc::from(Rc::new(VecModel::from(favs))));
+                    actualizar_favoritos(&ui, favs);
                 });
             }
 
@@ -6706,7 +6723,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         };
                         (fa, vs, fr, t)
                     };
-                    ui.set_favoritos(ModelRc::from(Rc::new(VecModel::from(favs))));
+                    actualizar_favoritos(&ui, favs);
                     c_clone(ui.get_buscador_texto().to_string());
                     if !versiculos.is_empty() {
                         let diapos: Vec<DiapositivaUI> = versiculos

@@ -45,6 +45,29 @@ compilaciones sin cliente incluido. La configuración incluida tiene prioridad.
 Una compilación sin cliente permite usar las funciones locales, pero informa que
 el desarrollador debe habilitar Google Drive si se intenta iniciar sesión.
 
+### Instaladores generados en GitHub Actions
+
+El workflow `.github/workflows/build.yml` obtiene el cliente de escritorio de los
+secretos del repositorio y lo incluye en los instaladores de Linux y Windows:
+
+1. En Google Cloud, habilitar **Google Drive API**, configurar la pantalla de
+   consentimiento y crear un cliente OAuth de tipo **Aplicación de escritorio**.
+   Si la aplicación está en pruebas, añadir las cuentas que la probarán como
+   usuarios de prueba.
+2. En GitHub, abrir **Settings → Secrets and variables → Actions → New repository
+   secret** y crear `READYSHOW_GOOGLE_CLIENT_ID` y
+   `READYSHOW_GOOGLE_CLIENT_SECRET` con los valores `client_id` y `client_secret`
+   del JSON descargado de Google. No subir ese JSON al repositorio.
+3. Ejecutar nuevamente **Build Installers** desde la pestaña **Actions**, descargar
+   el nuevo instalador e instalarlo en el equipo de destino.
+
+El JSON local ignorado por Git no llega al runner de GitHub. Sin el secreto del
+cliente, este workflow falla al validar el `client_id` durante la compilación;
+así se evita entregar otro instalador sin respaldo en línea. Los paquetes ya
+descargados no se actualizan al configurar los secretos: hay que recompilarlos.
+Firefox puede abrir el inicio de sesión como navegador predeterminado; este
+mensaje de cliente ausente se resuelve en la compilación del instalador.
+
 ## Permisos y bloqueo de Google durante pruebas
 
 Se solicita `drive.file`, para operar los archivos creados por ReadyShow. Utilizar

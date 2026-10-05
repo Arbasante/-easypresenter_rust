@@ -68,6 +68,14 @@ descargados no se actualizan al configurar los secretos: hay que recompilarlos.
 Firefox puede abrir el inicio de sesión como navegador predeterminado; este
 mensaje de cliente ausente se resuelve en la compilación del instalador.
 
+Si la compilación indica que `READYSHOW_GOOGLE_CLIENT_ID` está vacío, comprobar
+que el secreto existe y está disponible para el workflow. Si indica que no es
+válido, reemplazar su contenido por **solo el valor** de `installed.client_id`,
+terminado en `.apps.googleusercontent.com`, sin comillas ni el JSON completo.
+`READYSHOW_GOOGLE_CLIENT_SECRET` debe contener el valor de `installed.client_secret`.
+El marcador `***` en los logs es el enmascaramiento de GitHub y no permite
+identificar el valor configurado. No publicar las credenciales para depurarlo.
+
 ## Permisos y bloqueo de Google durante pruebas
 
 Se solicita `drive.file`, para operar los archivos creados por ReadyShow. Utilizar

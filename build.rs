@@ -40,6 +40,13 @@ fn bundle_google_client() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or_else(|| PathBuf::from("data/google_oauth.json"));
     println!("cargo:rerun-if-changed={}", file.display());
     let config = if let Ok(id) = env::var("READYSHOW_GOOGLE_CLIENT_ID") {
+        if id.trim().is_empty() {
+            return Err("READYSHOW_GOOGLE_CLIENT_ID está vacío. En GitHub Actions, configura el secreto del repositorio en Settings > Secrets and variables > Actions con el campo client_id del JSON OAuth de escritorio de Google".into());
+        }
+        let id = id.trim();
+        if !id.ends_with(".apps.googleusercontent.com") || id.chars().any(char::is_whitespace) {
+            return Err("READYSHOW_GOOGLE_CLIENT_ID no es válido: debe contener solo el campo client_id del JSON OAuth de escritorio de Google, terminado en .apps.googleusercontent.com; no el JSON completo, el client_secret ni el nombre del campo".into());
+        }
         Some(
             serde_json::json!({"installed": {"client_id": id, "client_secret": env::var("READYSHOW_GOOGLE_CLIENT_SECRET").ok()}}),
         )

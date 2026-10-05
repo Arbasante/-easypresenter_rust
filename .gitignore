@@ -11,3 +11,4 @@ data/*:Zone.Identifier
 data/google_oauth.json
 data/.google_oauth-*.tmp
 client_secret*.json
+migrations

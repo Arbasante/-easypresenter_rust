@@ -1,4 +1,14 @@
+#[path = "src/bible_seed.rs"]
+mod bible_seed;
+
 fn main() {
+    println!("cargo:rerun-if-changed=data/biblias.db.gz");
+    println!("cargo:rerun-if-changed=data/biblias.db");
+    bible_seed::decompress_if_missing(
+        std::path::Path::new("data/biblias.db.gz"),
+        std::path::Path::new("data/biblias.db"),
+    )
+    .expect("No se pudo preparar data/biblias.db desde data/biblias.db.gz");
     bundle_google_client().expect("No se pudo preparar el cliente OAuth de ReadyShow");
     println!("cargo:rerun-if-changed=assets/icon.ico");
     slint_build::compile("ui/main_ui.slint").unwrap();

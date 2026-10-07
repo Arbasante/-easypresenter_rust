@@ -14,3 +14,4 @@ data/*.db
 data/google_oauth.json
 data/.google_oauth-*.tmp
 client_secret*.json
+data/biblas.db

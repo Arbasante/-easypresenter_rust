@@ -4,7 +4,7 @@
 ; ============================================================
 
 #define MyAppName "ReadyShow"
-#define MyAppVersion "0.4.5"
+#define MyAppVersion "0.4.6"
 #define MyAppPublisher "Arbasante"
 #define MyAppExeName "ReadyShow.exe"
 
@@ -72,7 +72,9 @@ Source: "{#BuildDir}\lib\gstreamer-1.0\*"; DestDir: "{app}\lib\gstreamer-1.0"; F
 ; ============================================================
 ; DATOS
 ; ============================================================
-Source: "data\*"; DestDir: "{app}\data"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
+Source: "data\biblias.db"; DestDir: "{app}\data"; Flags: ignoreversion
+Source: "data\biblias.db.gz"; DestDir: "{app}\data"; Flags: ignoreversion
+Source: "data\*"; DestDir: "{app}\data"; Excludes: "biblias.db,biblas.db,biblias.db.gz,*.db-wal,*.db-shm"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 
 ; ============================================================
 ; ASSETS

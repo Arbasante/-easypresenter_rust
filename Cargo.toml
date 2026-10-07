@@ -1,12 +1,14 @@
 [package]
 name = "ReadyShow"
-version = "0.4.5"
+version = "0.4.6"
 edition = "2024"
 build = "build.rs"
 description = "Software de presentación multimedia, letras y Biblias con soporte de video nativo"
 license = "MIT"        
 
 [dependencies]
+flate2 = "1"
+tempfile = "3"
 slint = { version = "1.17.1", features = ["unstable-winit-030"] }
 rusqlite = { version = "0.31.0", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
@@ -36,6 +38,8 @@ x11rb = "0.13"
 
 
 [build-dependencies]
+flate2 = "1"
+tempfile = "3"
 serde_json = "1"
 slint-build = "1.17.1" # VERSIÓN ACTUALIZADA
 embed-manifest = "1"
@@ -54,7 +58,9 @@ con soporte de video nativo mediante GStreamer.
 depends = "$auto, libgstreamer1.0-0, gstreamer1.0-plugins-base, gstreamer1.0-plugins-good, gstreamer1.0-plugins-bad, gstreamer1.0-plugins-ugly, gstreamer1.0-libav"
 assets = [
     ["target/release/ReadyShow", "usr/bin/ReadyShow", "755"],
-    ["data/*.db", "usr/share/readyshow/data/", "644"],
+    ["data/cantos.db", "usr/share/readyshow/data/", "644"],
+    ["data/biblias.db", "usr/share/readyshow/data/", "644"],
+    ["data/biblias.db.gz", "usr/share/readyshow/data/", "644"],
     ["assets/ReadyShow.desktop", "usr/share/applications/", "644"],
     ["assets/icons/hicolor/16x16/apps/ReadyShow.png", "usr/share/icons/hicolor/16x16/apps/ReadyShow.png", "644"],
     ["assets/icons/hicolor/24x24/apps/ReadyShow.png", "usr/share/icons/hicolor/24x24/apps/ReadyShow.png", "644"],

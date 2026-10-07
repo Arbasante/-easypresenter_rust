@@ -1,4 +1,6 @@
 #![windows_subsystem = "windows"]
+mod bible_seed;
+mod data_paths;
 mod online_backup;
 mod projector_window;
 use directories::ProjectDirs;
@@ -1076,9 +1078,11 @@ impl AppState {
         //     escribir ahí sin admin falla. Por eso usamos ProjectDirs también en
         //     Windows, que resuelve a una carpeta 100% del usuario, sin admin:
         //     C:\Users\<usuario>\AppData\Roaming\Arbasante\EasyPresenter\data
-        let (user_data_dir, system_data_dir) = if std::path::Path::new("data/cantos.db").exists() {
-            //  MODO DESARROLLADOR: Si corres 'cargo run', usa la carpeta local
-            let base = std::env::current_dir().unwrap().join("data");
+        let development_data_dir = std::env::current_dir().ok().and_then(|directory| {
+            data_paths::development_data_dir(&directory, cfg!(debug_assertions))
+        });
+        let (user_data_dir, system_data_dir) = if let Some(base) = development_data_dir {
+            // Solo una compilación de desarrollo ejecutada desde el repositorio usa datos locales.
             (base.clone(), base)
         } else {
             let proj_dirs = ProjectDirs::from("com", "Arbasante", "EasyPresenter")
@@ -1112,7 +1116,15 @@ impl AppState {
 
         // Copiar semillas solo cuando falta el archivo. Nunca reemplazar bases existentes.
         online_backup::prepare_local_file(&cantos_path, &system_data_dir.join("cantos.db"))?;
-        online_backup::prepare_local_file(&biblias_path, &system_data_dir.join("biblias.db"))?;
+        let biblias_seed = system_data_dir.join("biblias.db");
+        if biblias_path.try_exists()? || biblias_seed.try_exists()? {
+            online_backup::prepare_local_file(&biblias_path, &biblias_seed)?;
+        } else {
+            bible_seed::decompress_if_missing(
+                &system_data_dir.join("biblias.db.gz"),
+                &biblias_path,
+            )?;
+        }
         let flags = rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE;
         let mut cantos_db = Connection::open_with_flags(&cantos_path, flags)?;
         let mut biblias_db = Connection::open_with_flags(&biblias_path, flags)?;

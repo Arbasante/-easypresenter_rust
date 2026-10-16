@@ -3,6 +3,7 @@ mod bible_seed;
 mod data_paths;
 mod online_backup;
 mod projector_window;
+mod text_clipboard;
 use directories::ProjectDirs;
 use display_info::DisplayInfo;
 use lru::LruCache;
@@ -41,7 +42,7 @@ impl TemaInterfaz {
     }
 }
 
-#[derive(Serialize, Deserialize, Default, Clone)]
+#[derive(Serialize, Deserialize, Default, Clone)]  
 struct ConfigApp {
     // Galería de fondos
     biblias_image_paths: Vec<String>,
@@ -1103,6 +1104,10 @@ impl AppState {
                 std::path::PathBuf::from("/usr/share/readyshow/data")
             };
 
+            let sys_dir = match std::env::current_exe() {
+                Ok(executable) => data_paths::seed_data_dir(sys_dir, &executable),
+                Err(_) => sys_dir,
+            };
             (user_dir, sys_dir)
         };
 
@@ -3188,16 +3193,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .num_threads(hilos_rayon)
             .build_global();
 
-        #[cfg(target_os = "linux")]
-        {
-            if std::env::var("WAYLAND_DISPLAY").is_ok() {
-                println!("Detectado Wayland, forzando modo X11/XWayland...");
-                unsafe {
-                    std::env::set_var("WAYLAND_DISPLAY", "");
-                    std::env::set_var("GDK_BACKEND", "x11");
-                }
-            }
-        }
+        // El backend ya selecciona X11/XWayland. Conservar WAYLAND_DISPLAY permite
+        // que el portapapeles siga comunicándose con las aplicaciones Wayland.
 
         let _ = &*LIBROS_NORMALIZADOS;
         let _ = &*RE_BUSQUEDA;
@@ -3215,6 +3212,42 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             let state = Arc::new(Mutex::new(app_state));
             let ui = AppWindow::new().unwrap();
+            let clipboard = Rc::new(RefCell::new(None::<arboard::Clipboard>));
+            let paste_ui = ui.as_weak();
+            ui.on_pegar_texto_canto(move |text, anchor, cursor, single_line| {
+                let result = (|| {
+                    let mut clipboard = clipboard.borrow_mut();
+                    if clipboard.is_none() {
+                        *clipboard = Some(arboard::Clipboard::new()?);
+                    }
+                    clipboard.as_mut().unwrap().get_text()
+                })();
+                match result {
+                    Ok(pasted) => {
+                        let (texto, cursor) = text_clipboard::insert(
+                            text.as_str(),
+                            anchor,
+                            cursor,
+                            &pasted,
+                            single_line,
+                        );
+                        ResultadoPegado {
+                            texto: texto.into(),
+                            cursor,
+                            correcto: true,
+                        }
+                    }
+                    Err(error) => {
+                        eprintln!("No se pudo pegar el texto del portapapeles: {error}");
+                        mostrar_aviso(&paste_ui, "No se pudo leer texto del portapapeles");
+                        ResultadoPegado {
+                            texto: text,
+                            cursor,
+                            correcto: false,
+                        }
+                    }
+                }
+            });
             {
                 let dir = state.lock().unwrap().user_data_dir.clone();
                 let ui_weak = ui.as_weak();

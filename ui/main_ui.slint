@@ -1,3 +1,5 @@
+import { CampoTextoCanto, ResultadoPegado } from "canto_text_input.slint";
+export { ResultadoPegado }
 import { VerticalBox, HorizontalBox, ScrollView, ComboBox, Slider, Palette } from "std-widgets.slint";
 import { ProjectorWindow, MedidorWindow } from "projector_ui.slint";
 
@@ -271,6 +273,7 @@ export component IdentifyWindow inherits Window {
 //  APP WINDOW
 // ─────────────────────────────────────────────────────────────
 export component AppWindow inherits Window {
+    callback pegar-texto-canto(string, int, int, bool) -> ResultadoPegado;
     title: "ReadyShow";
     icon: @image-url("../assets/icon.png");
     min-width: 800px; min-height: 600px; background: Theme.surface_main; default-font-family: "Google Sans";
@@ -2487,8 +2490,26 @@ if (root.mostrar_acerca_de) : Rectangle {
                         padding: 24px; spacing: 14px;
                         HorizontalLayout { alignment: space-between; height: 32px; Text { text: root.form_id == -1 ? "AGREGAR CANTO" : "EDITAR CANTO"; color: Theme.accent; font-size: 13px; font-weight: Theme.font_weight_heading; vertical-alignment: center; horizontal-stretch: 1; } Rectangle { width: 28px; height: 28px; border-radius: Theme.radius_control; background: touch-close-form.has-hover ? Theme.bg_card_hover : transparent; touch-close-form := TouchArea { clicked => { root.mostrar_formulario = false; } } Text { text: "✕"; color: Theme.text_secondary; font-size: 13px; horizontal-alignment: center; vertical-alignment: center; } } }
                         Rectangle { height: 1px; background: Theme.bg_card_hover; }
-                        VerticalLayout { spacing: 6px; height: 62px; Text { text: "TÍTULO"; color: Theme.text_secondary; font-size: 9px; font-weight: Theme.font_weight_body; letter-spacing: 0.5px; height: 16px; } Rectangle { height: 38px; border-radius: Theme.radius_control; background: Theme.surface_input; border-width: 1px; border-color: Theme.border_subtle; TextInput { x: 12px; width: parent.width - 24px; height: 100%; text <=> root.form_titulo; color: Theme.text_primary; font-size: 12px; vertical-alignment: center; } } }
-                        VerticalLayout { vertical-stretch: 1; spacing: 6px; Text { text: "LETRA  (separa estrofas con una línea vacía)"; color: Theme.text_secondary; font-size: 9px; font-weight: Theme.font_weight_body; letter-spacing: 0.5px; height: 16px; } Rectangle { vertical-stretch: 1; border-radius: Theme.radius_control; background: Theme.surface_input; border-width: 1px; border-color: Theme.border_subtle; TextEdit { width: 100%; height: 100%; text <=> root.form_letra; font-size: 12px; } } }
+                        VerticalLayout {
+                            spacing: 6px; height: 62px;
+                            Text { text: "TÍTULO"; color: Theme.text_secondary; font-size: 9px; font-weight: Theme.font_weight_body; letter-spacing: 0.5px; height: 16px; }
+                            titulo-canto := CampoTextoCanto {
+                                height: 38px;
+                                text <=> root.form_titulo;
+                                single-line: true;
+                                solicitar-pegado(text, anchor, cursor, single-line) => { root.pegar-texto-canto(text, anchor, cursor, single-line) }
+                            }
+                        }
+                        VerticalLayout {
+                            vertical-stretch: 1; spacing: 6px;
+                            Text { text: "LETRA"; color: Theme.text_secondary; font-size: 9px; font-weight: Theme.font_weight_body; letter-spacing: 0.5px; height: 16px; }
+                            Text { text: "Separa estrofas con una línea vacía"; color: Theme.text_secondary; font-size: 9px; }
+                            letra-canto := CampoTextoCanto {
+                                vertical-stretch: 1;
+                                text <=> root.form_letra;
+                                solicitar-pegado(text, anchor, cursor, single-line) => { root.pegar-texto-canto(text, anchor, cursor, single-line) }
+                            }
+                        }
                         HorizontalLayout { alignment: end; spacing: 12px; height: 38px;
                             Rectangle { width: 110px; height: 38px; border-radius: Theme.radius_control; background: touch-cancel2.has-hover ? Theme.bg_card_hover : Theme.surface_input; border-width: 1px; border-color: Theme.border_strong; touch-cancel2 := TouchArea { clicked => { root.mostrar_formulario = false; } } Text { text: "Cancelar"; color: Theme.text_secondary; font-size: 11px; font-weight: Theme.font_weight_body; horizontal-alignment: center; vertical-alignment: center; } }
                             Rectangle { width: 110px; height: 38px; border-radius: Theme.radius_control; background: touch-save.has-hover ? Theme.accent_hover : Theme.accent_fill; touch-save := TouchArea { clicked => { root.guardar_canto(root.form_id, root.form_titulo, root.form_letra); root.mostrar_formulario = false; } } Text { text: "Guardar"; color: Theme.text_on_accent; font-size: 11px; font-weight: Theme.font_weight_body; horizontal-alignment: center; vertical-alignment: center; } }

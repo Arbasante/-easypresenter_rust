@@ -13,7 +13,7 @@ slint = { version = "1.17.1", features = ["unstable-winit-030"] }
 rusqlite = { version = "0.31.0", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-arboard = "3"
+arboard = { version = "3", features = ["wayland-data-control"] }
 pdfium-render = "0.8.20"
 rayon = "1.10"
 image = "0.25"

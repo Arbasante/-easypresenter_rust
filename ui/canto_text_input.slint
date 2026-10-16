@@ -1,0 +1,67 @@
+import { ScrollView } from "std-widgets.slint";
+import { Theme } from "theme.slint";
+
+export struct ResultadoPegado { texto: string, cursor: int, correcto: bool }
+
+export component CampoTextoCanto inherits Rectangle {
+    in-out property <string> text <=> input.text;
+    in property <bool> single-line: false;
+    callback solicitar-pegado(string, int, int, bool) -> ResultadoPegado;
+    forward-focus: input;
+    background: Theme.surface_input;
+    border-radius: Theme.radius_control;
+    border-width: 1px;
+    border-color: input.has-focus ? Theme.accent : Theme.border_subtle;
+
+    function pegar() {
+        let result = root.solicitar-pegado(input.text, input.anchor-position-byte-offset, input.cursor-position-byte-offset, root.single-line);
+        if result.correcto {
+            input.text = result.texto;
+            input.focus();
+            input.set-selection-offsets(result.cursor, result.cursor);
+        }
+    }
+
+    ContextMenuArea {
+        Menu {
+            MenuItem { title: "Pegar"; activated => { root.pegar(); } }
+            MenuItem { title: "Seleccionar todo"; activated => { input.focus(); input.select-all(); } }
+        }
+        scroll := ScrollView {
+            x: 10px; y: 6px;
+            width: parent.width - 20px; height: parent.height - 12px;
+            content-width: root.single-line ? max(self.visible-width, input.preferred-width) : self.visible-width;
+            content-height: max(self.visible-height, input.preferred-height);
+            input := TextInput {
+                width: root.single-line ? max(scroll.visible-width, self.preferred-width) : scroll.visible-width;
+                height: max(scroll.visible-height, self.preferred-height);
+                single-line: root.single-line;
+                wrap: root.single-line ? no-wrap : word-wrap;
+                color: Theme.text_primary;
+                font-size: 12px;
+                vertical-alignment: root.single-line ? center : top;
+                selection-background-color: Theme.accent;
+                selection-foreground-color: Theme.text_on_accent;
+                key-pressed(event) => {
+                    if event.modifiers.control && (event.text == "v" || event.text == "V" || event.text == "\u{16}") {
+                        root.pegar();
+                        return accept;
+                    }
+                    return reject;
+                }
+                cursor-position-changed(pos) => {
+                    if pos.y + scroll.content-y < 0px {
+                        scroll.content-y = -pos.y;
+                    } else if pos.y + scroll.content-y > scroll.visible-height - 20px {
+                        scroll.content-y = min(0px, scroll.visible-height - pos.y - 20px);
+                    }
+                    if pos.x + scroll.content-x < 0px {
+                        scroll.content-x = -pos.x;
+                    } else if pos.x + scroll.content-x > scroll.visible-width - 4px {
+                        scroll.content-x = min(0px, scroll.visible-width - pos.x - 4px);
+                    }
+                }
+            }
+        }
+    }
+}

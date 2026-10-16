@@ -456,6 +456,14 @@ jobs:
           Write-Host "Build completado."
 
 
+      - name: Verificar rutas de usuario y runtime Windows
+        shell: pwsh
+        run: |
+          cargo test --target x86_64-pc-windows-msvc windows_runtime::tests
+          if ($LASTEXITCODE -ne 0) { throw "Fallaron las pruebas del runtime Windows." }
+          cargo test --target x86_64-pc-windows-msvc data_paths::tests
+          if ($LASTEXITCODE -ne 0) { throw "Fallaron las pruebas de datos del usuario." }
+
       # ========================================================
       # PREPARAR ARCHIVOS WINDOWS
       # ========================================================
@@ -549,6 +557,17 @@ jobs:
 
           Write-Host ""
           Write-Host "DLLs copiadas."
+
+          # El scanner también necesita las DLLs del runtime. ReadyShow añade su
+          # directorio al PATH del proceso, sin modificar el entorno del usuario.
+          $scanner = Get-ChildItem $env:GST_ROOT_WIN -Recurse -File -Filter "gst-plugin-scanner.exe" |
+            Select-Object -First 1
+          if (-not $scanner) {
+            throw "No se encontró gst-plugin-scanner.exe para distribuir GStreamer."
+          }
+          $scannerDst = "$out\libexec\gstreamer-1.0"
+          New-Item -ItemType Directory -Force -Path $scannerDst | Out-Null
+          Copy-Item $scanner.FullName -Destination $scannerDst -Force
 
 
           # ----------------------------------------------------

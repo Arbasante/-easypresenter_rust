@@ -299,6 +299,7 @@ export component AppWindow inherits Window {
     callback respaldo_iniciar_sesion();
     callback respaldo_restaurar();
     in-out property <bool> overlay_servidor_activo: false;
+    in property <string> overlay_error: "";
     in-out property <int> overlay_puerto: 8090;
     in-out property <string> overlay_ip_local: "";
     in-out property <bool> overlay_solo_texto: false;
@@ -483,6 +484,12 @@ in property <[VideoGaleriaItem]> cantos_video_gallery: [];
     callback agregar_video();
     callback eliminar_video(int);
     callback proyectar_video(int);
+
+    in property <[string]> preview_resolutions: ["240p", "360p", "480p", "720p", "1080p", "1440p", "2160p", "Original"];
+    in-out property <int> image_preview_resolution: 2;
+    in-out property <int> video_preview_resolution: 2;
+    callback cambiar_resolucion_preview_imagen(int);
+    callback cambiar_resolucion_preview_video(int);
 
     in-out property <image> preview_video_frame;
     in-out property <bool> is_preview_playing: false;
@@ -982,7 +989,7 @@ in property <[VideoGaleriaItem]> cantos_video_gallery: [];
 
                     // ── SECCIÓN FAVORITOS ───────────────────────
                     Rectangle {
-                        height: 280px; background: Theme.surface_sidebar;
+                        height: 322px; background: Theme.surface_sidebar;
                         border-width: 0px; border-color: Theme.border_subtle;
 
                         VerticalLayout {
@@ -1448,7 +1455,16 @@ in property <[VideoGaleriaItem]> cantos_video_gallery: [];
                                 }
                                 if (root.selected_media_idx >= 0 && root.selected_media_idx < root.multimedia_items.length) : VerticalLayout {
                                     width: 100%; height: 100%;
-                                    padding: 12px;
+                                    padding: 12px; spacing: 10px;
+                                    HorizontalLayout {
+                                        height: 32px; spacing: 10px;
+                                        Text { text: "Previsualización"; color: Theme.text_secondary; font-size: 11px; vertical-alignment: center; horizontal-stretch: 1; }
+                                        ComboBox {
+                                            width: 135px; model: root.preview_resolutions;
+                                            current-index: root.image_preview_resolution;
+                                            selected(value) => { root.cambiar_resolucion_preview_imagen(self.current-index); }
+                                        }
+                                    }
                                     Rectangle {
                                         min-width: 0px; min-height: 0px;
                                         vertical-stretch: 1; horizontal-stretch: 1; clip: true; background: Theme.bg_preview; border-radius: Theme.radius_surface;
@@ -1480,6 +1496,15 @@ in property <[VideoGaleriaItem]> cantos_video_gallery: [];
                                 width: 100%; height: 100%; background: Theme.surface_main;
                                 if (root.selected_video_idx >= 0 && root.selected_video_idx < root.video_items.length) : VerticalLayout {
                                     padding: 16px; spacing: 12px;
+                                    HorizontalLayout {
+                                        height: 32px; spacing: 10px;
+                                        Text { text: "Previsualización"; color: Theme.text_secondary; font-size: 11px; vertical-alignment: center; horizontal-stretch: 1; }
+                                        ComboBox {
+                                            width: 135px; model: root.preview_resolutions;
+                                            current-index: root.video_preview_resolution;
+                                            selected(value) => { root.cambiar_resolucion_preview_video(self.current-index); }
+                                        }
+                                    }
                                     Rectangle {
                                         height: 45px; border-radius: Theme.radius_control;
                                         background: root.is_video_projecting ? Theme.danger_fill : Theme.accent_fill;
@@ -2833,6 +2858,7 @@ if (root.mostrar_acerca_de) : Rectangle {
                         width: 90px; height: 30px; border-radius: Theme.radius_control; background: Theme.surface_input; border-width: 1px; border-color: Theme.border_input;
                         TextInput {
                             text: root.overlay_puerto;
+                            enabled: !root.overlay_servidor_activo;
                             color: Theme.text_primary; font-size: 11px; horizontal-alignment: center; vertical-alignment: center;
                             input-type: number;
                             edited => {
@@ -2842,6 +2868,12 @@ if (root.mostrar_acerca_de) : Rectangle {
                             }
                         }
                     }
+                }
+
+                Text {
+                    visible: root.overlay_error != "";
+                    text: root.overlay_error;
+                    color: Theme.danger; font-size: 10px; wrap: word-wrap;
                 }
 
                 // ── Checkbox: Solo texto (sin fondo) ─────────────────────

@@ -83,4 +83,43 @@ mod tests {
             installed
         );
     }
+
+    #[test]
+    fn read_only_installed_seed_produces_writable_user_database() {
+        let directory = tempfile::tempdir().unwrap();
+        let installed = directory.path().join("installed.db");
+        let user_database = directory.path().join("user.db");
+        let source = rusqlite::Connection::open(&installed).unwrap();
+        source
+            .execute_batch("CREATE TABLE cantos (id INTEGER PRIMARY KEY);")
+            .unwrap();
+        drop(source);
+        let original_permissions = std::fs::metadata(&installed).unwrap().permissions();
+        let mut read_only = original_permissions.clone();
+        read_only.set_readonly(true);
+        std::fs::set_permissions(&installed, read_only).unwrap();
+
+        let copied = crate::online_backup::prepare_local_file(&user_database, &installed);
+        std::fs::set_permissions(&installed, original_permissions).unwrap();
+        copied.unwrap();
+        let user = rusqlite::Connection::open(&user_database).unwrap();
+        user.execute_batch("PRAGMA journal_mode=WAL; INSERT INTO cantos VALUES (1);")
+            .unwrap();
+        // Existing user data is also preserved when the application starts again.
+        crate::online_backup::prepare_local_file(&user_database, &installed).unwrap();
+        assert_eq!(
+            user.query_row("SELECT count(*) FROM cantos", [], |row| row
+                .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+        let source = rusqlite::Connection::open(&installed).unwrap();
+        assert_eq!(
+            source
+                .query_row("SELECT count(*) FROM cantos", [], |row| row
+                    .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+    }
 }

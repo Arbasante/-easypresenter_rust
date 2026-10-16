@@ -1,9 +1,14 @@
 #![windows_subsystem = "windows"]
 mod bible_seed;
 mod data_paths;
+mod memory_policy;
+mod obs_server;
 mod online_backup;
+use obs_server::EstadoOverlay;
+mod preview_resolution;
 mod projector_window;
 mod text_clipboard;
+mod windows_runtime;
 use directories::ProjectDirs;
 use display_info::DisplayInfo;
 use lru::LruCache;
@@ -544,11 +549,7 @@ static DECODIFICADOR_HW: LazyLock<Option<String>> = LazyLock::new(|| {
 
 /// Resolución de miniaturas (galería de imágenes/multimedia).
 fn resolucion_miniatura() -> u32 {
-    match *NIVEL_HARDWARE {
-        1 => 240,
-        2 => 360,
-        _ => 480,
-    }
+    memory_policy::THUMBNAIL_SIZE
 }
 
 fn resolucion_fondo_proyeccion() -> u32 {
@@ -578,22 +579,6 @@ fn tamano_cache_capitulos() -> usize {
 }
 
 /// Límite máximo de imágenes en memoria para no desbordar RAM.
-fn limite_cache_imagenes() -> usize {
-    match *NIVEL_HARDWARE {
-        1 => 60,
-        2 => 150,
-        _ => 300,
-    }
-}
-
-fn limite_cache_fondos() -> usize {
-    match *NIVEL_HARDWARE {
-        1 => 15,
-        2 => 30,
-        _ => 60,
-    }
-}
-
 // ---------------------------------------------------------------------------
 // Funciones de utilidad — #[inline] en hot-paths cortos
 // ---------------------------------------------------------------------------
@@ -633,20 +618,6 @@ fn content_type_desde_extension(path: &str) -> &'static str {
         "webp" => "image/webp",
         "gif" => "image/gif",
         _ => "image/jpeg",
-    }
-}
-
-fn video_content_type_desde_extension(path: &str) -> &'static str {
-    let ext = std::path::Path::new(path)
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("")
-        .to_lowercase();
-    match ext.as_str() {
-        "webm" => "video/webm",
-        "mov" => "video/quicktime",
-        "mkv" => "video/x-matroska",
-        _ => "video/mp4",
     }
 }
 
@@ -704,11 +675,11 @@ fn versiculo_a_ui_fav(
 // OPT-7: Caché de imágenes global para evitar releer disco (lento en E1-6015)
 // ---------------------------------------------------------------------------
 fn load_image_cached(
-    cache: &Arc<Mutex<HashMap<String, slint::Image>>>,
+    cache: &Arc<Mutex<memory_policy::ImageCache>>,
     path: &str,
 ) -> Option<slint::Image> {
     {
-        let lock = cache.lock().unwrap();
+        let mut lock = cache.lock().unwrap();
         if let Some(img) = lock.get(path) {
             return Some(img.clone());
         }
@@ -723,21 +694,16 @@ fn load_image_cached(
     let img = slint::Image::from_rgba8(pixel_buffer);
 
     let mut lock = cache.lock().unwrap();
-    if lock.len() >= limite_cache_imagenes() {
-        if let Some(first_key) = lock.keys().next().cloned() {
-            lock.remove(&first_key);
-        }
-    }
     lock.insert(path.to_string(), img.clone());
     Some(img)
 }
 
 fn load_image_fondo_cached(
-    cache: &Arc<Mutex<HashMap<String, slint::Image>>>,
+    cache: &Arc<Mutex<memory_policy::ImageCache>>,
     path: &str,
 ) -> Option<slint::Image> {
     {
-        let lock = cache.lock().unwrap();
+        let mut lock = cache.lock().unwrap();
         if let Some(img) = lock.get(path) {
             return Some(img.clone());
         }
@@ -752,28 +718,31 @@ fn load_image_fondo_cached(
     let img = slint::Image::from_rgba8(pixel_buffer);
 
     let mut lock = cache.lock().unwrap();
-    if lock.len() >= limite_cache_fondos() {
-        if let Some(first_key) = lock.keys().next().cloned() {
-            lock.remove(&first_key);
-        }
-    }
     lock.insert(path.to_string(), img.clone());
     Some(img)
 }
 
-/// Decodifica la vista previa a 480p para una carga ligera y fluida en la UI.
+/// Caché independiente por resolución para las previsualizaciones de imágenes.
 fn load_image_preview_cached(
-    cache: &Arc<Mutex<HashMap<String, slint::Image>>>,
+    cache: &Arc<Mutex<memory_policy::ImageCache>>,
     path: &str,
+    height: u32,
 ) -> Option<slint::Image> {
+    let key = format!("preview:{height}:{path}");
     {
-        let lock = cache.lock().unwrap();
-        if let Some(img) = lock.get(path) {
+        let mut lock = cache.lock().unwrap();
+        if let Some(img) = lock.get(&key) {
             return Some(img.clone());
         }
     }
-    let tam = 480; // 480p exacto para vista previa
-    let thumb = image::open(path).ok()?.thumbnail(tam, tam).into_rgba8();
+    let source = image::open(path).ok()?;
+    let (width, height) = preview_resolution::dimensions(source.width(), source.height(), height);
+    let thumb = if (width, height) == (source.width(), source.height()) {
+        source
+    } else {
+        source.resize_exact(width, height, image::imageops::FilterType::Triangle)
+    }
+    .into_rgba8();
     let (w, h) = (thumb.width(), thumb.height());
     let mut pixel_buffer = SharedPixelBuffer::<slint::Rgba8Pixel>::new(w, h);
     pixel_buffer
@@ -782,12 +751,7 @@ fn load_image_preview_cached(
     let img = slint::Image::from_rgba8(pixel_buffer);
 
     let mut lock = cache.lock().unwrap();
-    if lock.len() >= limite_cache_fondos() {
-        if let Some(first_key) = lock.keys().next().cloned() {
-            lock.remove(&first_key);
-        }
-    }
-    lock.insert(path.to_string(), img.clone());
+    lock.insert(key, img.clone());
     Some(img)
 }
 
@@ -809,33 +773,56 @@ fn decodificar_miniaturas_paralelo(paths: &[String]) -> Vec<Option<(u32, u32, Ve
         .collect()
 }
 
-/// Precarga en el caché todas las rutas que aún no estén decodificadas,
-/// usando decodificación en paralelo. Los slint::Image finales se
-/// construyen aquí mismo, en el hilo que llama a esta función (rápido:
-/// solo copia de memoria, no hay decode de imagen en este paso).
-fn precargar_cache_paralelo(cache: &Arc<Mutex<HashMap<String, slint::Image>>>, paths: &[String]) {
-    let faltantes: Vec<String> = {
-        let lock = cache.lock().unwrap();
-        paths
+/// Decodifica galerías en lotes pequeños: las miniaturas se guardan en el
+/// modelo, pero las imágenes originales y los buffers temporales no se acumulan.
+fn load_gallery_images(
+    cache: &Arc<Mutex<memory_policy::ImageCache>>,
+    paths: &[String],
+) -> Vec<Option<slint::Image>> {
+    load_gallery_images_reusing(cache, paths, &HashMap::new())
+}
+
+fn load_gallery_images_reusing(
+    cache: &Arc<Mutex<memory_policy::ImageCache>>,
+    paths: &[String],
+    existing: &HashMap<String, slint::Image>,
+) -> Vec<Option<slint::Image>> {
+    let mut result = Vec::with_capacity(paths.len());
+    for chunk in paths.chunks(2) {
+        let mut images: HashMap<String, slint::Image> = {
+            let mut cache = cache.lock().unwrap();
+            chunk
+                .iter()
+                .filter_map(|path| {
+                    existing
+                        .get(path)
+                        .filter(|image| image.size().width > 0)
+                        .cloned()
+                        .or_else(|| cache.get(path).cloned())
+                        .map(|image| (path.clone(), image))
+                })
+                .collect()
+        };
+        let missing: Vec<String> = chunk
             .iter()
-            .filter(|p| !lock.contains_key(*p))
+            .filter(|path| !images.contains_key(*path))
             .cloned()
-            .collect()
-    };
-    if faltantes.is_empty() {
-        return;
-    }
-
-    let decodificadas = decodificar_miniaturas_paralelo(&faltantes);
-
-    let mut lock = cache.lock().unwrap();
-    for (path, resultado) in faltantes.iter().zip(decodificadas.into_iter()) {
-        if let Some((w, h, raw)) = resultado {
-            let mut buf = SharedPixelBuffer::<slint::Rgba8Pixel>::new(w, h);
-            buf.make_mut_bytes().copy_from_slice(&raw);
-            lock.insert(path.clone(), slint::Image::from_rgba8(buf));
+            .collect();
+        for (path, decoded) in missing
+            .iter()
+            .zip(decodificar_miniaturas_paralelo(&missing))
+        {
+            if let Some((width, height, raw)) = decoded {
+                let mut pixels = SharedPixelBuffer::<slint::Rgba8Pixel>::new(width, height);
+                pixels.make_mut_bytes().copy_from_slice(&raw);
+                let image = slint::Image::from_rgba8(pixels);
+                cache.lock().unwrap().insert(path.clone(), image.clone());
+                images.insert(path.clone(), image);
+            }
         }
+        result.extend(chunk.iter().map(|path| images.get(path).cloned()));
     }
+    result
 }
 
 /// Verifica si un archivo sigue existiendo en disco. Úsalo SIEMPRE antes de
@@ -971,7 +958,7 @@ fn ruta_thumb_video(ruta_video: &str, user_data_dir: &std::path::Path) -> PathBu
 /// de imágenes si ya existe la miniatura, o un placeholder si aún no.
 fn construir_video_gallery(
     paths: &[String],
-    img_cache: &Arc<Mutex<HashMap<String, slint::Image>>>,
+    img_cache: &Arc<Mutex<memory_policy::ImageCache>>,
 ) -> Vec<VideoGaleriaItem> {
     paths
         .iter()
@@ -1037,17 +1024,11 @@ fn mostrar_aviso(ui_weak: &slint::Weak<AppWindow>, mensaje: &str) {
         ui.set_aviso_mensaje(SharedString::from(mensaje));
     }
     let ui_t = ui_weak.clone();
-    let timer = slint::Timer::default();
-    timer.start(
-        slint::TimerMode::SingleShot,
-        std::time::Duration::from_secs(3),
-        move || {
-            if let Some(ui) = ui_t.upgrade() {
-                ui.set_aviso_mensaje(SharedString::from(""));
-            }
-        },
-    );
-    std::mem::forget(timer); // timer de un solo uso, vive lo justo para dispararse
+    slint::Timer::single_shot(std::time::Duration::from_secs(3), move || {
+        if let Some(ui) = ui_t.upgrade() {
+            ui.set_aviso_mensaje(SharedString::from(""));
+        }
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -1133,21 +1114,20 @@ impl AppState {
         let flags = rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE;
         let mut cantos_db = Connection::open_with_flags(&cantos_path, flags)?;
         let mut biblias_db = Connection::open_with_flags(&biblias_path, flags)?;
+        memory_policy::configure_sqlite(&cantos_db)?;
+        memory_policy::configure_sqlite(&biblias_db)?;
         for (path, conn) in [(&cantos_path, &cantos_db), (&biblias_path, &biblias_db)] {
             if !verificar_integridad_db(conn) {
                 return Err(format!("La base de datos {:?} no pasó la verificación de integridad; se conserva sin reemplazarla.", path).into());
             }
         }
 
-        // Optimizaciones de SQLite de alto rendimiento (WAL, MMAP para lectura sin copias, caché en RAM ampliada)
+        // WAL conserva la fluidez de las lecturas con las cachés de memoria acotadas.
         cantos_db.execute_batch(
             "
             PRAGMA journal_mode = WAL;
             PRAGMA synchronous = NORMAL;
             PRAGMA busy_timeout = 5000;
-            PRAGMA cache_size = -64000;
-            PRAGMA mmap_size = 268435456;
-            PRAGMA temp_store = MEMORY;
         ",
         )?;
         biblias_db.execute_batch(
@@ -1155,9 +1135,6 @@ impl AppState {
             PRAGMA journal_mode = WAL;
             PRAGMA synchronous = NORMAL;
             PRAGMA busy_timeout = 5000;
-            PRAGMA cache_size = -64000;
-            PRAGMA mmap_size = 268435456;
-            PRAGMA temp_store = MEMORY;
         ",
         )?;
         cantos_db.set_prepared_statement_cache_capacity(64);
@@ -1184,6 +1161,8 @@ impl AppState {
             user_data_dir: user_data_dir.clone(),
         };
         state.procesar_versiones();
+        state.cantos_db.execute_batch("PRAGMA shrink_memory;")?;
+        state.biblias_db.execute_batch("PRAGMA shrink_memory;")?;
         Ok(state)
     }
 
@@ -1745,12 +1724,11 @@ impl AppState {
             PRAGMA journal_mode = WAL;
             PRAGMA synchronous = NORMAL;
             PRAGMA busy_timeout = 5000;
-            PRAGMA cache_size = -64000;
-            PRAGMA mmap_size = 268435456;
-            PRAGMA temp_store = MEMORY;
         ",
             )
             .map_err(|e| format!("Error configurando pragmas de SQLite: {}", e))?;
+        memory_policy::configure_sqlite(&new_conn)
+            .map_err(|error| format!("Error limitando la memoria de SQLite: {error}"))?;
         new_conn.set_prepared_statement_cache_capacity(64);
 
         online_backup::migrate(&mut new_conn, online_backup::Dataset::Cantos)
@@ -1850,12 +1828,11 @@ impl AppState {
             PRAGMA journal_mode = WAL;
             PRAGMA synchronous = NORMAL;
             PRAGMA busy_timeout = 5000;
-            PRAGMA cache_size = -64000;
-            PRAGMA mmap_size = 268435456;
-            PRAGMA temp_store = MEMORY;
         ",
             )
             .map_err(|e| format!("Error configurando pragmas de SQLite: {}", e))?;
+        memory_policy::configure_sqlite(&new_conn)
+            .map_err(|error| format!("Error limitando la memoria de SQLite: {error}"))?;
         new_conn.set_prepared_statement_cache_capacity(64);
 
         online_backup::migrate(&mut new_conn, online_backup::Dataset::Biblias)
@@ -2011,9 +1988,57 @@ fn siguiente_mensaje_pipeline(
     None
 }
 
+fn preview_pixel_buffer(
+    sample: &gst::Sample,
+    cached: &mut Option<(gst::Caps, gst_video::VideoInfo)>,
+) -> Option<SharedPixelBuffer<slint::Rgba8Pixel>> {
+    let caps = sample.caps()?;
+    if cached
+        .as_ref()
+        .is_none_or(|(previous, _)| previous.as_ref() != caps)
+    {
+        *cached = Some((caps.to_owned(), gst_video::VideoInfo::from_caps(caps).ok()?));
+    }
+    let info = &cached.as_ref()?.1;
+    let map = sample.buffer()?.map_readable().ok()?;
+    let stride = usize::try_from(info.stride()[0]).ok()?;
+    let offset = info.offset()[0];
+    let row_bytes = info.width() as usize * 4;
+    let mut pixels = SharedPixelBuffer::<slint::Rgba8Pixel>::new(info.width(), info.height());
+    for (row, destination) in pixels
+        .make_mut_bytes()
+        .chunks_exact_mut(row_bytes)
+        .enumerate()
+    {
+        let start = offset + row * stride;
+        destination.copy_from_slice(map.as_slice().get(start..start + row_bytes)?);
+    }
+    Some(pixels)
+}
+
+fn queue_video_frame(
+    queue: &Arc<memory_policy::LatestFrame<SharedPixelBuffer<slint::Rgba8Pixel>>>,
+    pixels: SharedPixelBuffer<slint::Rgba8Pixel>,
+    render: impl FnOnce(SharedPixelBuffer<slint::Rgba8Pixel>) + Send + 'static,
+) {
+    if queue.submit(pixels) {
+        let pending = Arc::clone(queue);
+        if slint::invoke_from_event_loop(move || {
+            if let Some(pixels) = pending.take() {
+                render(pixels);
+            }
+        })
+        .is_err()
+        {
+            queue.take();
+        }
+    }
+}
+
 struct NativeVideoPlayer {
     pipeline: Option<gst::Element>,
     bus_thread: Option<thread::JoinHandle<()>>,
+    preview_capsfilter: Option<gst::Element>,
     generacion: Arc<std::sync::atomic::AtomicU64>,
     pausado_por_usuario: Arc<AtomicBool>,
 }
@@ -2023,6 +2048,7 @@ impl NativeVideoPlayer {
         Self {
             pipeline: None,
             bus_thread: None,
+            preview_capsfilter: None,
             generacion: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             pausado_por_usuario: Arc::new(AtomicBool::new(false)),
         }
@@ -2113,6 +2139,7 @@ impl NativeVideoPlayer {
         // Las caps suelen ser constantes durante miles de frames; recalcular
         // VideoInfo únicamente cuando se renegocian.
         let mut cached_video_info: Option<(gst::Caps, gst_video::VideoInfo)> = None;
+        let frame_queue = Arc::new(memory_policy::LatestFrame::default());
         appsink.set_callbacks(
             gst_app::AppSinkCallbacks::builder()
                 .new_sample(move |appsink| {
@@ -2144,7 +2171,7 @@ impl NativeVideoPlayer {
 
                     let proj_clone = proj_weak.clone();
                     let es_bib = es_biblioteca;
-                    let _ = slint::invoke_from_event_loop(move || {
+                    queue_video_frame(&frame_queue, pixel_buffer, move |pixel_buffer| {
                         if let Some(p) = proj_clone.upgrade() {
                             let img = slint::Image::from_rgba8(pixel_buffer);
                             if es_bib {
@@ -2211,6 +2238,7 @@ impl NativeVideoPlayer {
         // anterior, para que no reaccione a mensajes tardíos del pipeline
         // viejo (causa raíz de los 3 bugs reportados).
         self.generacion.fetch_add(1, Ordering::AcqRel);
+        self.preview_capsfilter = None;
         let pipeline = self.pipeline.take();
         if let Some(pipeline) = &pipeline {
             // Despierta el consumidor sin esperar al siguiente timeout.
@@ -2235,7 +2263,7 @@ impl NativeVideoPlayer {
         }
     }
 
-    pub fn reproducir_preview(&mut self, ruta: &str, ui_weak: slint::Weak<AppWindow>) {
+    pub fn reproducir_preview(&mut self, ruta: &str, ui_weak: slint::Weak<AppWindow>, height: u32) {
         self.detener();
         let path = std::path::Path::new(ruta)
             .canonicalize()
@@ -2252,23 +2280,11 @@ impl NativeVideoPlayer {
                 factory.set_rank(gst::Rank::from(<i32>::from(gst::Rank::PRIMARY) + 100));
             }
         }
-        // ── Downscale ANTES del appsink: sin esto, cada frame llega a
-        //    resolución nativa del video (a veces 1080p/4K), lo que dispara
-        //    tanto el costo de copiar el buffer completo cada frame como el
-        //    costo de que Slint componga una imagen de ese tamaño 30-60
-        //    veces por segundo. Limitar el ancho aquí (reutilizando tu
-        //    detección de hardware ya existente) reduce ambos costos
-        //    drásticamente sin que se note diferencia visual proyectando.
+        // La calidad seleccionada solo limita los frames de la vista previa.
         let videoconvert = gst::ElementFactory::make("videoconvert").build().unwrap();
         let videoscale = gst::ElementFactory::make("videoscale").build().unwrap();
         let capsfilter = gst::ElementFactory::make("capsfilter")
-            .property(
-                "caps",
-                &gst::Caps::builder("video/x-raw")
-                    .field("format", "RGBA")
-                    .field("width", resolucion_fondo_proyeccion() as i32)
-                    .build(),
-            )
+            .property("caps", preview_resolution::video_caps(height))
             .build()
             .unwrap();
 
@@ -2301,10 +2317,14 @@ impl NativeVideoPlayer {
 
         pipeline.set_property("video-sink", &sink_bin);
 
+        self.preview_capsfilter = Some(capsfilter.clone());
         let ui_weak_appsink = ui_weak.clone();
+        let ui_weak_preroll = ui_weak.clone();
         // Las caps suelen ser constantes durante miles de frames; recalcular
         // VideoInfo únicamente cuando se renegocian.
         let mut cached_video_info: Option<(gst::Caps, gst_video::VideoInfo)> = None;
+        let frame_queue = Arc::new(memory_policy::LatestFrame::default());
+        let preroll_queue = Arc::clone(&frame_queue);
         appsink.set_callbacks(
             gst_app::AppSinkCallbacks::builder()
                 .new_sample(move |appsink| {
@@ -2312,30 +2332,31 @@ impl NativeVideoPlayer {
                         Ok(s) => s,
                         Err(_) => return Ok(gst::FlowSuccess::Ok),
                     };
-                    let buffer = sample.buffer().unwrap();
-                    let caps = sample.caps().unwrap();
-                    if cached_video_info
-                        .as_ref()
-                        .is_none_or(|(cached_caps, _)| cached_caps.as_ref() != caps)
-                    {
-                        cached_video_info = Some((
-                            caps.to_owned(),
-                            gst_video::VideoInfo::from_caps(caps).unwrap(),
-                        ));
-                    }
-                    let info = &cached_video_info.as_ref().unwrap().1;
-                    let map = buffer.map_readable().unwrap();
-                    let mut pixel_buffer =
-                        SharedPixelBuffer::<slint::Rgba8Pixel>::new(info.width(), info.height());
-                    pixel_buffer
-                        .make_mut_bytes()
-                        .copy_from_slice(map.as_slice());
+                    let Some(pixel_buffer) = preview_pixel_buffer(&sample, &mut cached_video_info)
+                    else {
+                        return Ok(gst::FlowSuccess::Ok);
+                    };
                     let ui_clone = ui_weak_appsink.clone();
-                    let _ = slint::invoke_from_event_loop(move || {
+                    queue_video_frame(&frame_queue, pixel_buffer, move |pixel_buffer| {
                         if let Some(ui) = ui_clone.upgrade() {
                             ui.set_preview_video_frame(slint::Image::from_rgba8(pixel_buffer));
                         }
                     });
+                    Ok(gst::FlowSuccess::Ok)
+                })
+                .new_preroll(move |appsink| {
+                    if let Ok(sample) = appsink.pull_preroll() {
+                        if let Some(pixel_buffer) = preview_pixel_buffer(&sample, &mut None) {
+                            let weak = ui_weak_preroll.clone();
+                            queue_video_frame(&preroll_queue, pixel_buffer, move |pixel_buffer| {
+                                if let Some(ui) = weak.upgrade() {
+                                    ui.set_preview_video_frame(slint::Image::from_rgba8(
+                                        pixel_buffer,
+                                    ));
+                                }
+                            });
+                        }
+                    }
                     Ok(gst::FlowSuccess::Ok)
                 })
                 .build(),
@@ -2387,6 +2408,19 @@ impl NativeVideoPlayer {
             return;
         }
         self.pipeline = Some(pipeline);
+    }
+
+    pub fn set_preview_resolution(&self, height: u32) {
+        if let Some(filter) = &self.preview_capsfilter {
+            filter.set_property("caps", preview_resolution::video_caps(height));
+            // Un seek al mismo punto renegocia también el frame de un video pausado.
+            if let Some(pipeline) = &self.pipeline {
+                if let Some(position) = pipeline.query_position::<gst::ClockTime>() {
+                    let _ = pipeline
+                        .seek_simple(gst::SeekFlags::FLUSH | gst::SeekFlags::ACCURATE, position);
+                }
+            }
+        }
     }
 
     pub fn toggle_play_pause(&mut self) -> bool {
@@ -2586,20 +2620,32 @@ fn actualizar_overlay_estilos(
         e.fondo_color.clear();
         e.fondo_opacity = 0.0;
         e.fondo_ajuste = "cover".to_string();
-        e.fondo_imagen_bytes.clear();
+        e.fondo_imagen_bytes = Default::default();
         e.color_texto = color_a_hex(font_color);
         e.fondo_version += 1;
         return;
     }
 
     if bg_type == "video" {
-        // Sin soporte de video en el overlay: fondo blanco, letra negra.
-        e.fondo_tipo = "color".to_string();
-        e.fondo_color = "#ffffff".to_string();
-        e.color_texto = "#000000".to_string();
-        e.fondo_opacity = 0.0;
+        let ruta = if is_biblia {
+            ui.get_biblias_video_path()
+        } else {
+            ui.get_cantos_video_path()
+        };
+        e.color_texto = color_a_hex(font_color);
+        e.fondo_imagen_bytes = Default::default();
+        e.fondo_opacity = opacity;
         e.fondo_ajuste = "cover".to_string();
-        e.fondo_imagen_bytes.clear();
+        if std::path::Path::new(ruta.as_str()).is_file() {
+            if e.fondo_video_ruta != ruta.as_str() {
+                e.fondo_video_ruta = ruta.to_string();
+                e.fondo_video_token += 1;
+            }
+            e.fondo_tipo = "video".to_string();
+        } else {
+            e.fondo_tipo = "color".to_string();
+            e.fondo_color = "#000000".to_string();
+        }
         e.fondo_version += 1;
         return;
     }
@@ -2627,7 +2673,7 @@ fn actualizar_overlay_estilos(
             if let Ok(bytes) = std::fs::read(&ruta) {
                 e.fondo_tipo = "imagen".to_string();
                 e.fondo_imagen_content_type = content_type_desde_extension(&ruta).to_string();
-                e.fondo_imagen_bytes = bytes;
+                e.fondo_imagen_bytes = bytes.into();
                 e.fondo_opacity = opacity;
                 e.fondo_ajuste = "cover".to_string();
                 e.color_texto = color_a_hex(font_color);
@@ -2639,7 +2685,7 @@ fn actualizar_overlay_estilos(
         e.fondo_tipo = "color".to_string();
         e.fondo_color = "#000000".to_string();
         e.color_texto = color_a_hex(font_color);
-        e.fondo_imagen_bytes.clear();
+        e.fondo_imagen_bytes = Default::default();
         e.fondo_version += 1;
         return;
     }
@@ -2654,7 +2700,7 @@ fn actualizar_overlay_estilos(
     e.color_texto = color_a_hex(font_color);
     e.fondo_opacity = 0.0;
     e.fondo_ajuste = "cover".to_string();
-    e.fondo_imagen_bytes.clear();
+    e.fondo_imagen_bytes = Default::default();
     e.fondo_version += 1;
 }
 
@@ -2671,29 +2717,6 @@ struct PdfData {
     name: String,
     thumb_path: String,
     pages: Vec<String>,
-}
-
-#[derive(Clone, Default)]
-struct EstadoOverlay {
-    texto: String,
-    referencia: String,
-    color_texto: String,               // hex "#rrggbb"
-    fondo_tipo: String,                // "color" | "imagen"
-    fondo_color: String,               // hex, usado si fondo_tipo == "color"
-    fondo_opacity: f32,                // scrim oscuro sobre la imagen (0.0-1.0)
-    fondo_ajuste: String,              // "cover" | "contain" | "fill"
-    fondo_imagen_bytes: Vec<u8>,       // bytes crudos del archivo (jpg/png/webp)
-    fondo_imagen_content_type: String, // "image/jpeg", "image/png", etc.
-    fondo_version: u64,                // se incrementa cada vez que cambia la imagen
-
-    // ── Video con audio para OBS ──────────────────────────────────────
-    // No transcodificamos nada: el navegador de OBS (Chromium) descarga
-    // y decodifica el archivo original vía <video>, igual que en una
-    // pestaña normal. Cero costo extra de CPU en esta app.
-    video_activo: bool,
-    video_ruta: String, // ruta local del archivo en disco (solo servidor)
-    video_loop: bool,
-    video_token: u64, // se incrementa cada vez que cambia el video, para forzar reload
 }
 
 // ---------------------------------------------------------------------------
@@ -2878,291 +2901,27 @@ fn instalar_libreoffice_linux(_ui_weak: &slint::Weak<AppWindow>) -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// Servidor HTTP para salida por IP (overlay consumible desde OBS Browser Source)
-// ---------------------------------------------------------------------------
-fn iniciar_servidor_overlay(
-    puerto: u16,
-    estado: Arc<Mutex<EstadoOverlay>>,
-    activo: Arc<AtomicBool>,
-) {
-    let server = match tiny_http::Server::http(format!("0.0.0.0:{}", puerto)) {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!(
-                "No se pudo iniciar servidor overlay en puerto {}: {}",
-                puerto, e
-            );
-            return;
-        }
-    };
-    activo.store(true, Ordering::Release);
-    println!("Servidor overlay OBS escuchando en puerto {}", puerto);
-
-    for request in server.incoming_requests() {
-        if !activo.load(Ordering::Acquire) {
-            break;
-        } // se pidió detener
-
-        // Quitamos el query string ("?v=123") para el match de rutas.
-        let ruta = request
-            .url()
-            .splitn(2, '?')
-            .next()
-            .unwrap_or("")
-            .to_string();
-
-        // ── /video: sirve el archivo de video CRUDO, con soporte de Range.
-        //    El navegador de OBS lo descarga y decodifica él mismo (igual
-        //    que un <video> en cualquier pestaña de Chrome). No hay ningún
-        //    encode/decode adicional en esta app: solo lectura de disco.
-        if ruta == "/video" {
-            let (video_path, hay_video) = {
-                let e = estado.lock().unwrap();
-                (
-                    e.video_ruta.clone(),
-                    e.video_activo && !e.video_ruta.is_empty(),
-                )
-            };
-
-            if !hay_video || !std::path::Path::new(&video_path).exists() {
-                let _ = request.respond(tiny_http::Response::from_string("").with_status_code(404));
-                continue;
-            }
-
-            let content_type = video_content_type_desde_extension(&video_path);
-            let file_len = match std::fs::metadata(&video_path) {
-                Ok(m) => m.len(),
-                Err(_) => {
-                    let _ =
-                        request.respond(tiny_http::Response::from_string("").with_status_code(500));
-                    continue;
-                }
-            };
-
-            // Parseamos "Range: bytes=inicio-fin" si viene. Es necesario
-            // para que el <video> del navegador pueda hacer seek y para
-            // que empiece a reproducir sin esperar a descargar todo.
-            let range_header = request
-                .headers()
-                .iter()
-                .find(|h| h.field.equiv("Range"))
-                .map(|h| h.value.as_str().to_string());
-
-            let (start, end) = match &range_header {
-                Some(r) if r.starts_with("bytes=") => {
-                    let rango = &r[6..];
-                    let partes: Vec<&str> = rango.splitn(2, '-').collect();
-                    let start: u64 = partes.get(0).and_then(|s| s.parse().ok()).unwrap_or(0);
-                    let end: u64 = partes
-                        .get(1)
-                        .filter(|s| !s.is_empty())
-                        .and_then(|s| s.parse().ok())
-                        .unwrap_or(file_len.saturating_sub(1));
-                    (start, end.min(file_len.saturating_sub(1)))
-                }
-                _ => (0, file_len.saturating_sub(1)),
-            };
-
-            let mut file = match std::fs::File::open(&video_path) {
-                Ok(f) => f,
-                Err(_) => {
-                    let _ =
-                        request.respond(tiny_http::Response::from_string("").with_status_code(500));
-                    continue;
-                }
-            };
-            if std::io::Seek::seek(&mut file, std::io::SeekFrom::Start(start)).is_err() {
-                let _ = request.respond(tiny_http::Response::from_string("").with_status_code(500));
-                continue;
-            }
-
-            let largo = end.saturating_sub(start) + 1;
-            let lector = std::io::Read::take(file, largo);
-
-            let mut headers = vec![
-                tiny_http::Header::from_bytes(&b"Content-Type"[..], content_type.as_bytes())
-                    .unwrap(),
-                tiny_http::Header::from_bytes(&b"Accept-Ranges"[..], &b"bytes"[..]).unwrap(),
-                tiny_http::Header::from_bytes(&b"Content-Length"[..], largo.to_string().as_bytes())
-                    .unwrap(),
-            ];
-
-            let status_code = if range_header.is_some() {
-                headers.push(
-                    tiny_http::Header::from_bytes(
-                        &b"Content-Range"[..],
-                        format!("bytes {}-{}/{}", start, end, file_len).as_bytes(),
-                    )
-                    .unwrap(),
-                );
-                206
-            } else {
-                200
-            };
-
-            let response = tiny_http::Response::new(
-                tiny_http::StatusCode(status_code),
-                headers,
-                lector,
-                Some(largo as usize),
-                None,
-            );
-            let _ = request.respond(response);
-            continue;
-        }
-
-        // ── /fondo: sirve los bytes crudos de la imagen actual ─────────────
-        if ruta == "/fondo" {
-            let (bytes, content_type, hay_imagen) = {
-                let e = estado.lock().unwrap();
-                (
-                    e.fondo_imagen_bytes.clone(),
-                    e.fondo_imagen_content_type.clone(),
-                    e.fondo_tipo == "imagen" && !e.fondo_imagen_bytes.is_empty(),
-                )
-            };
-            if hay_imagen {
-                let header =
-                    tiny_http::Header::from_bytes(&b"Content-Type"[..], content_type.as_bytes())
-                        .unwrap();
-                let response = tiny_http::Response::from_data(bytes)
-                    .with_status_code(200)
-                    .with_header(header);
-                let _ = request.respond(response);
-            } else {
-                let response = tiny_http::Response::from_string("").with_status_code(404);
-                let _ = request.respond(response);
-            }
-            continue;
-        }
-
-        let (status, content_type, body) = match ruta.as_str() {
-            "/status" => {
-                let e = estado.lock().unwrap();
-                let json = format!(
-                    r#"{{"texto":{},"referencia":{},"color_texto":{},"fondo_tipo":{},"fondo_color":{},"fondo_opacity":{},"fondo_ajuste":{},"fondo_version":{},"video_activo":{},"video_loop":{},"video_token":{}}}"#,
-                    serde_json::to_string(&e.texto).unwrap_or("\"\"".into()),
-                    serde_json::to_string(&e.referencia).unwrap_or("\"\"".into()),
-                    serde_json::to_string(&e.color_texto).unwrap_or("\"#ffffff\"".into()),
-                    serde_json::to_string(&e.fondo_tipo).unwrap_or("\"color\"".into()),
-                    serde_json::to_string(&e.fondo_color).unwrap_or("\"#000000\"".into()),
-                    e.fondo_opacity,
-                    serde_json::to_string(&e.fondo_ajuste).unwrap_or("\"cover\"".into()),
-                    e.fondo_version,
-                    e.video_activo,
-                    e.video_loop,
-                    e.video_token,
-                );
-                (200, "application/json", json)
-            }
-            _ => {
-                let html = r##"<!DOCTYPE html>
-<html><head><meta charset="utf-8">
-<style>
-  html, body { margin:0; padding:0; width:100%; height:100%; overflow:hidden; background:transparent; font-family: sans-serif; }
-  #contenedor { position:relative; width:100vw; height:100vh; }
-  #fondo { position:absolute; top:0; left:0; width:100%; height:100%; display:none; }
-  #scrim { position:absolute; top:0; left:0; width:100%; height:100%; background:#000; opacity:0; }
-  #capa-texto { position:absolute; top:0; left:0; width:100%; height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center; padding:40px; box-sizing:border-box; }
-  #texto { font-size:48px; font-weight:900; text-align:center; text-shadow: 2px 2px 6px rgba(0,0,0,0.6); white-space:pre-wrap; }
-  #referencia { font-size:24px; font-weight:700; text-align:center; margin-top:16px; text-shadow: 2px 2px 6px rgba(0,0,0,0.6); }
-  #video { position:absolute; top:0; left:0; width:100%; height:100%; display:none; background:#000; object-fit:contain; z-index:5; }
-</style></head>
-<body>
-  <div id="contenedor">
-    <img id="fondo">
-    <div id="scrim"></div>
-    <div id="capa-texto">
-      <div id="texto"></div>
-      <div id="referencia"></div>
-    </div>
-    <video id="video" playsinline></video>
-  </div>
-  <script>
-    let ultimaVersion = -1;
-    let ultimoVideoToken = -1;
-
-    async function actualizar() {
-      try {
-        const r = await fetch('/status');
-        const d = await r.json();
-
-        document.getElementById('texto').innerText = d.texto || '';
-        document.getElementById('referencia').innerText = d.referencia || '';
-        document.getElementById('texto').style.color = d.color_texto || '#ffffff';
-        document.getElementById('referencia').style.color = d.color_texto || '#ffffff';
-
-        const fondoImg   = document.getElementById('fondo');
-        const scrim      = document.getElementById('scrim');
-        const contenedor = document.getElementById('contenedor');
-        const capaTexto  = document.getElementById('capa-texto');
-        const video      = document.getElementById('video');
-
-        if (d.video_activo) {
-          // ── Video con audio: tapa todo lo demás. El navegador de OBS
-          //    lo descarga y decodifica solo, sin costo extra en la app.
-          if (d.video_token !== ultimoVideoToken) {
-            video.pause();
-            video.src = '/video?v=' + d.video_token;
-            video.loop = !!d.video_loop;
-            video.muted = false;
-            video.play().catch(() => {});
-            ultimoVideoToken = d.video_token;
-          }
-          video.style.display = 'block';
-          capaTexto.style.display = 'none';
-          fondoImg.style.display = 'none';
-          scrim.style.opacity = 0;
-          contenedor.style.background = '#000';
-        } else {
-          if (!video.paused) { video.pause(); }
-          video.style.display = 'none';
-          capaTexto.style.display = 'flex';
-
-          if (d.fondo_tipo === 'imagen') {
-            if (d.fondo_version !== ultimaVersion) {
-              fondoImg.src = '/fondo?v=' + d.fondo_version;
-              ultimaVersion = d.fondo_version;
-            }
-            fondoImg.style.display = 'block';
-            fondoImg.style.objectFit = d.fondo_ajuste || 'cover';
-            contenedor.style.background = 'transparent';
-            scrim.style.opacity = d.fondo_opacity || 0;
-          } else if (d.fondo_tipo === 'transparente') {
-            fondoImg.style.display = 'none';
-            contenedor.style.background = 'transparent';
-            scrim.style.opacity = 0;
-          } else {
-            fondoImg.style.display = 'none';
-            contenedor.style.background = d.fondo_color || '#000000';
-            scrim.style.opacity = 0;
-          }
-        }
-      } catch (e) {}
-    }
-    setInterval(actualizar, 500);
-    actualizar();
-  </script>
-</body></html>"##;
-                (200, "text/html; charset=utf-8", html.to_string())
-            }
-        };
-
-        let header =
-            tiny_http::Header::from_bytes(&b"Content-Type"[..], content_type.as_bytes()).unwrap();
-        let response = tiny_http::Response::from_string(body)
-            .with_status_code(status)
-            .with_header(header);
-        let _ = request.respond(response);
-    }
-
-    println!("Servidor overlay OBS detenido.");
-}
-
-// ---------------------------------------------------------------------------
 // main()
 // ---------------------------------------------------------------------------
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    #[cfg(windows)]
+    {
+        let previous_hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            windows_runtime::report_error(&info.to_string());
+            previous_hook(info);
+        }));
+        let result = windows_runtime::initialize().and_then(|()| run_app());
+        if let Err(error) = &result {
+            windows_runtime::report_error(&error.to_string());
+        }
+        result
+    }
+    #[cfg(not(windows))]
+    run_app()
+}
+
+fn run_app() -> Result<(), Box<dyn std::error::Error>> {
     // Preparar y migrar los datos antes de crear cualquier ventana Slint.
     let app_state = AppState::new()?;
 
@@ -3188,7 +2947,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let nucleos_totales = std::thread::available_parallelism()
             .map(|n| n.get())
             .unwrap_or(2);
-        let hilos_rayon = (nucleos_totales.saturating_sub(1)).max(1);
+        let hilos_rayon = nucleos_totales.saturating_sub(1).clamp(1, 4);
         let _ = rayon::ThreadPoolBuilder::new()
             .num_threads(hilos_rayon)
             .build_global();
@@ -3339,11 +3098,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let preview_player = Arc::new(Mutex::new(NativeVideoPlayer::new()));
 
             // OPT-7: Caché de imágenes compartido entre closures que acceden a disco
-            let image_cache: Arc<Mutex<HashMap<String, slint::Image>>> =
-                Arc::new(Mutex::new(HashMap::new()));
+            let image_cache = Arc::new(Mutex::new(memory_policy::ImageCache::new(
+                96,
+                memory_policy::THUMBNAIL_CACHE_BYTES,
+            )));
 
-            let image_cache_fondo: Arc<Mutex<HashMap<String, slint::Image>>> =
-                Arc::new(Mutex::new(HashMap::new()));
+            let image_cache_fondo = Arc::new(Mutex::new(memory_policy::ImageCache::new(
+                4,
+                memory_policy::BACKGROUND_CACHE_BYTES,
+            )));
 
             let (thumb_tx, thumb_rx) = std::sync::mpsc::channel::<(String, u32, u32, Vec<u8>)>();
 
@@ -3361,7 +3124,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             let overlay_estado: Arc<Mutex<EstadoOverlay>> =
                 Arc::new(Mutex::new(EstadoOverlay::default()));
-            let overlay_servidor_activo: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
 
             // Ventanas de identificación activas + su temporizador de auto-cierre.
             // Rc<RefCell<>> porque las ventanas de Slint no son Send (no pueden
@@ -3527,25 +3289,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             {
                 let st = state.lock().unwrap();
 
-                // Decodifica en paralelo TODAS las imágenes de ambas galerías de una vez,
-                // en vez de una por una en el hilo principal al arrancar la app.
-                let todas_las_rutas: Vec<String> = st
-                    .biblias_image_paths
-                    .iter()
-                    .chain(st.cantos_image_paths.iter())
-                    .cloned()
+                let images_b: Vec<_> = load_gallery_images(&image_cache, &st.biblias_image_paths)
+                    .into_iter()
+                    .flatten()
                     .collect();
-                precargar_cache_paralelo(&image_cache, &todas_las_rutas);
-
-                let images_b: Vec<slint::Image> = st
-                    .biblias_image_paths
-                    .iter()
-                    .filter_map(|p| load_image_cached(&image_cache, p))
-                    .collect();
-                let images_c: Vec<slint::Image> = st
-                    .cantos_image_paths
-                    .iter()
-                    .filter_map(|p| load_image_cached(&image_cache, p))
+                let images_c: Vec<_> = load_gallery_images(&image_cache, &st.cantos_image_paths)
+                    .into_iter()
+                    .flatten()
                     .collect();
 
                 if !images_b.is_empty() {
@@ -4987,13 +4737,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let items = state_arc.read().unwrap();
 
                     let paths: Vec<String> = items.iter().map(|i| i.path.clone()).collect();
-                    precargar_cache_paralelo(&img_cache, &paths);
+                    // Reuse thumbnails already owned by the UI instead of decoding
+                    // the whole library again when one item is added or removed.
+                    let existing: HashMap<String, slint::Image> = ui
+                        .get_multimedia_items()
+                        .iter()
+                        .map(|item| (item.path.to_string(), item.img))
+                        .collect();
+                    let thumbnails = load_gallery_images_reusing(&img_cache, &paths, &existing);
 
                     let slint_items: Vec<MediaItem> = items
                         .iter()
                         .enumerate()
                         .map(|(i, item)| {
-                            let img = load_image_cached(&img_cache, &item.path).unwrap_or_default();
+                            let img = thumbnails.get(i).cloned().flatten().unwrap_or_default();
                             MediaItem {
                                 id: i as i32,
                                 nombre: SharedString::from(&item.name),
@@ -5008,9 +4765,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                     let sel = ui.get_selected_media_idx();
                     if sel >= 0 && (sel as usize) < items.len() {
-                        if let Some(img_prev) =
-                            load_image_preview_cached(&img_cache_fondo, &items[sel as usize].path)
-                        {
+                        if let Some(img_prev) = load_image_preview_cached(
+                            &img_cache_fondo,
+                            &items[sel as usize].path,
+                            preview_resolution::height(ui.get_image_preview_resolution()),
+                        ) {
                             ui.set_selected_media_full_img(img_prev);
                         }
                     }
@@ -5249,20 +5008,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 {
                     let ui_h = ui.as_weak();
                     let estado_ov = Arc::clone(&overlay_estado);
-                    let activo_ov = Arc::clone(&overlay_servidor_activo);
+                    let mut server: Option<obs_server::ServerHandle> = None;
                     ui.on_toggle_servidor_overlay(move || {
                         let ui = ui_h.unwrap();
-                        if ui.get_overlay_servidor_activo() {
-                            activo_ov.store(false, Ordering::Release);
+                        ui.set_overlay_error("".into());
+                        if let Some(running) = server.take() {
+                            drop(running);
                             ui.set_overlay_servidor_activo(false);
-                        } else {
-                            let puerto = ui.get_overlay_puerto() as u16;
-                            let estado_t = Arc::clone(&estado_ov);
-                            let activo_t = Arc::clone(&activo_ov);
-                            thread::spawn(move || {
-                                iniciar_servidor_overlay(puerto, estado_t, activo_t);
-                            });
-                            ui.set_overlay_servidor_activo(true);
+                            return;
+                        }
+                        let port = match u16::try_from(ui.get_overlay_puerto()) {
+                            Ok(port) if port > 0 => port,
+                            _ => {
+                                ui.set_overlay_error("El puerto debe estar entre 1 y 65535".into());
+                                return;
+                            }
+                        };
+                        match obs_server::ServerHandle::start(port, Arc::clone(&estado_ov)) {
+                            Ok(running) => {
+                                server = Some(running);
+                                ui.set_overlay_servidor_activo(true);
+                            }
+                            Err(error) => {
+                                ui.set_overlay_servidor_activo(false);
+                                ui.set_overlay_error(
+                                    format!("No se pudo abrir el puerto {port}: {error}").into(),
+                                );
+                            }
                         }
                     });
                 }
@@ -5273,6 +5045,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 // xclip o wl-copy, que pueden no estar instalados en el equipo del usuario.
                 {
                     let ui_h = ui.as_weak();
+                    let mut clipboard: Option<arboard::Clipboard> = None;
                     ui.on_copiar_url_overlay(move || {
                         let ui = ui_h.unwrap();
                         let url = format!(
@@ -5280,15 +5053,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             ui.get_overlay_ip_local(),
                             ui.get_overlay_puerto()
                         );
-                        match arboard::Clipboard::new() {
-                            Ok(mut cb) => {
-                                if cb.set_text(url).is_ok() {
-                                    mostrar_aviso(&ui_h, "URL copiada al portapapeles");
-                                } else {
-                                    mostrar_aviso(&ui_h, "No se pudo copiar la URL");
-                                }
+                        let result = (|| {
+                            if clipboard.is_none() {
+                                clipboard = Some(arboard::Clipboard::new()?);
                             }
-                            Err(_) => mostrar_aviso(&ui_h, "No se pudo acceder al portapapeles"),
+                            clipboard.as_mut().unwrap().set_text(url)
+                        })();
+                        match result {
+                            Ok(()) => mostrar_aviso(&ui_h, "URL copiada al portapapeles"),
+                            Err(_) => mostrar_aviso(&ui_h, "No se pudo copiar la URL"),
                         }
                     });
                 }
@@ -6083,7 +5856,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             e.fondo_tipo = "transparente".to_string();
                             e.fondo_color.clear();
                             e.fondo_opacity = 0.0;
-                            e.fondo_imagen_bytes.clear();
+                            e.fondo_imagen_bytes = Default::default();
                             e.fondo_version += 1;
                         } else {
                             let idx_pdf = ui.get_selected_pdf_idx();
@@ -6104,7 +5877,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 if let Ok(bytes) = std::fs::read(&ruta_pagina) {
                                     e.fondo_imagen_content_type =
                                         content_type_desde_extension(&ruta_pagina).to_string();
-                                    e.fondo_imagen_bytes = bytes;
+                                    e.fondo_imagen_bytes = bytes.into();
                                 }
                                 e.fondo_version += 1;
                             }
@@ -6149,6 +5922,43 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             {
+                let weak = ui.as_weak();
+                let cache = Arc::clone(&image_cache_fondo);
+                let media = Arc::clone(&multimedia_state);
+                ui.on_cambiar_resolucion_preview_imagen(move |index| {
+                    if let Some(ui) = weak.upgrade() {
+                        ui.set_image_preview_resolution(index);
+                        let path = media
+                            .read()
+                            .unwrap()
+                            .get(ui.get_selected_media_idx() as usize)
+                            .map(|item| item.path.clone());
+                        if let Some(path) = path {
+                            ui.set_selected_media_full_img(
+                                load_image_preview_cached(
+                                    &cache,
+                                    &path,
+                                    preview_resolution::height(index),
+                                )
+                                .unwrap_or_default(),
+                            );
+                        }
+                    }
+                });
+                let weak = ui.as_weak();
+                let player = Arc::clone(&preview_player);
+                ui.on_cambiar_resolucion_preview_video(move |index| {
+                    if let Some(ui) = weak.upgrade() {
+                        ui.set_video_preview_resolution(index);
+                        player
+                            .lock()
+                            .unwrap()
+                            .set_preview_resolution(preview_resolution::height(index));
+                    }
+                });
+            }
+
+            {
                 let ui_h = ui.as_weak();
                 let multi_state = Arc::clone(&multimedia_state);
                 let img_cache_fondo_sel = Arc::clone(&image_cache_fondo);
@@ -6159,8 +5969,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         state.get(idx as usize).map(|i| i.path.clone())
                     };
                     if let Some(p) = path {
-                        if let Some(img_prev) = load_image_preview_cached(&img_cache_fondo_sel, &p)
-                        {
+                        if let Some(img_prev) = load_image_preview_cached(
+                            &img_cache_fondo_sel,
+                            &p,
+                            preview_resolution::height(ui.get_image_preview_resolution()),
+                        ) {
                             ui.set_selected_media_full_img(img_prev);
                         }
                     }
@@ -6239,7 +6052,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         if let Ok(bytes) = std::fs::read(&ruta) {
                             e.fondo_imagen_content_type =
                                 content_type_desde_extension(&ruta).to_string();
-                            e.fondo_imagen_bytes = bytes;
+                            e.fondo_imagen_bytes = bytes.into();
                         }
                         e.fondo_version += 1;
                     }
@@ -6443,7 +6256,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 let playing = player.toggle_play_pause();
                                 ui.set_is_preview_playing(playing);
                             } else {
-                                player.reproducir_preview(&item.path, ui.as_weak());
+                                player.reproducir_preview(
+                                    &item.path,
+                                    ui.as_weak(),
+                                    preview_resolution::height(ui.get_video_preview_resolution()),
+                                );
                                 ui.set_is_preview_playing(true);
                             }
                         } else {
@@ -6468,7 +6285,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     if player.pipeline.is_none() {
                         let state = vid_state.read().unwrap();
                         if let Some(item) = state.get(idx as usize) {
-                            player.reproducir_preview(&item.path, ui.as_weak());
+                            player.reproducir_preview(
+                                &item.path,
+                                ui.as_weak(),
+                                preview_resolution::height(ui.get_video_preview_resolution()),
+                            );
                             ui.set_is_preview_playing(true);
                         }
                     }
@@ -6540,6 +6361,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         .lock()
                         .unwrap()
                         .reproducir(&ruta, p.as_weak(), is_loop, true);
+                    vp_lib.lock().unwrap().set_mute(ui.get_is_proyector_muted());
                     ui.set_is_video_projecting(true);
                     ui.set_is_proyector_playing(true);
 
@@ -6551,6 +6373,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         e.video_activo = true;
                         e.video_ruta = ruta.clone();
                         e.video_loop = is_loop;
+                        e.video_pausado = false;
+                        e.video_silenciado = ui.get_is_proyector_muted();
+                        e.video_posicion = 0.0;
                         e.video_token += 1;
                     }
                 });
@@ -6559,28 +6384,37 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             {
                 let vp_controls = Arc::clone(&biblioteca_video_player);
                 let ui_h = ui.as_weak();
+                let overlay = Arc::clone(&overlay_estado);
                 ui.on_toggle_proyector_play(move || {
                     let ui = ui_h.unwrap();
                     let is_playing = vp_controls.lock().unwrap().toggle_play_pause();
                     ui.set_is_proyector_playing(is_playing);
+                    overlay.lock().unwrap().video_pausado = !is_playing;
                 });
             }
 
             {
                 let vp_mute = Arc::clone(&biblioteca_video_player);
                 let ui_h = ui.as_weak();
+                let overlay = Arc::clone(&overlay_estado);
                 ui.on_toggle_proyector_mute(move || {
                     let ui = ui_h.unwrap();
                     let new_mute = !ui.get_is_proyector_muted();
                     vp_mute.lock().unwrap().set_mute(new_mute);
                     ui.set_is_proyector_muted(new_mute);
+                    overlay.lock().unwrap().video_silenciado = new_mute;
                 });
             }
 
             {
                 let vp_seek = Arc::clone(&biblioteca_video_player);
+                let overlay = Arc::clone(&overlay_estado);
                 ui.on_seek_proyector_video(move |percent| {
-                    vp_seek.lock().unwrap().seek_percentage(percent);
+                    let player = vp_seek.lock().unwrap();
+                    let (_, duration) = player.get_position_and_duration();
+                    player.seek_percentage(percent);
+                    overlay.lock().unwrap().video_posicion =
+                        duration as f64 * f64::from(percent) / 1000.0;
                 });
             }
 
@@ -6605,6 +6439,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             let vp_timer = Arc::clone(&biblioteca_video_player);
             let ui_timer_handle = ui.as_weak();
+            let overlay_timer = Arc::clone(&overlay_estado);
             let _video_timer = slint::Timer::default();
             _video_timer.start(
                 slint::TimerMode::Repeated,
@@ -6612,8 +6447,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 move || {
                     if let Some(ui) = ui_timer_handle.upgrade() {
                         if ui.get_is_video_projecting() {
-                            let (pos_ms, dur_ms) =
-                                vp_timer.lock().unwrap().get_position_and_duration();
+                            let player = vp_timer.lock().unwrap();
+                            let (pos_ms, dur_ms) = player.get_position_and_duration();
+                            let playing = player.pipeline.as_ref().is_some_and(|pipeline| {
+                                pipeline.current_state() == gst::State::Playing
+                            });
+                            drop(player);
+                            {
+                                let mut overlay = overlay_timer.lock().unwrap();
+                                overlay.video_posicion = pos_ms as f64 / 1000.0;
+                                overlay.video_pausado = !playing;
+                            }
                             if dur_ms > 0 {
                                 let progress = pos_ms as f32 / dur_ms as f32;
                                 ui.set_proyector_progress(progress);
@@ -6633,38 +6477,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 },
             );
             std::mem::forget(_video_timer);
-
-            // OPT-8: Timer declarado como variable local — vive hasta el final de main().
-            //        El Box::leak original era un memory leak innecesario.
-            let vp_timer = Arc::clone(&biblioteca_video_player);
-            let ui_timer_handle = ui.as_weak();
-            let _video_timer = slint::Timer::default(); // '_' evita unused-variable warning
-            _video_timer.start(
-                slint::TimerMode::Repeated,
-                std::time::Duration::from_millis(750),
-                move || {
-                    if let Some(ui) = ui_timer_handle.upgrade() {
-                        if ui.get_is_video_projecting() {
-                            let (pos_ms, dur_ms) =
-                                vp_timer.lock().unwrap().get_position_and_duration();
-                            if dur_ms > 0 {
-                                let progress = pos_ms as f32 / dur_ms as f32;
-                                ui.set_proyector_progress(progress);
-                                let pos_sec = pos_ms / 1000;
-                                let dur_sec = dur_ms / 1000;
-                                let time_str = format!(
-                                    "{:02}:{:02} / {:02}:{:02}",
-                                    pos_sec / 60,
-                                    pos_sec % 60,
-                                    dur_sec / 60,
-                                    dur_sec % 60
-                                );
-                                ui.set_proyector_time(slint::SharedString::from(time_str));
-                            }
-                        }
-                    }
-                },
-            );
 
             {
                 let vid_state_mode = Arc::clone(&video_state);
@@ -6975,6 +6787,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Primero mostramos la ventana principal ya creada
             ui.window().show().unwrap();
 
+            // Let the first frame render before releasing startup scratch space.
+            slint::Timer::single_shot(
+                std::time::Duration::from_secs(3),
+                memory_policy::release_unused_heap,
+            );
+
             // Inmediatamente después ocultamos el splash (cero espacios vacíos ni parpadeos)
             if let Some(s) = splash_handle_clon.upgrade() {
                 let _ = s.window().hide();
@@ -7052,6 +6870,56 @@ mod performance_regression_tests {
 }
 
 #[cfg(test)]
+mod preview_resolution_tests {
+    use super::*;
+
+    #[test]
+    fn changing_resolution_refreshes_paused_video_without_resuming() {
+        gst::init().unwrap();
+        let pipeline = gst::parse::launch(
+            "videotestsrc ! video/x-raw,width=1280,height=720,pixel-aspect-ratio=1/1 ! videoconvert ! videoscale ! capsfilter name=resolution ! appsink name=frames max-buffers=1 drop=true",
+        ).unwrap().downcast::<gst::Pipeline>().unwrap();
+        let filter = pipeline.by_name("resolution").unwrap();
+        filter.set_property("caps", preview_resolution::video_caps(480));
+        let sink = pipeline
+            .by_name("frames")
+            .unwrap()
+            .downcast::<gst_app::AppSink>()
+            .unwrap();
+        let mut player = NativeVideoPlayer::new();
+        player.pipeline = Some(pipeline.clone().upcast());
+        player.preview_capsfilter = Some(filter);
+        pipeline.set_state(gst::State::Paused).unwrap();
+        let sample = sink
+            .try_pull_preroll(gst::ClockTime::from_seconds(5))
+            .unwrap();
+        assert_eq!(
+            gst_video::VideoInfo::from_caps(sample.caps().unwrap())
+                .unwrap()
+                .height(),
+            480
+        );
+        player.set_preview_resolution(240);
+        let sample = sink
+            .try_pull_preroll(gst::ClockTime::from_seconds(5))
+            .unwrap();
+        assert_eq!(
+            gst_video::VideoInfo::from_caps(sample.caps().unwrap())
+                .unwrap()
+                .height(),
+            240
+        );
+        assert_eq!(
+            pipeline.state(gst::ClockTime::from_seconds(5)).1,
+            gst::State::Paused
+        );
+        let pixels = preview_pixel_buffer(&sample, &mut None).unwrap();
+        assert_eq!(pixels.height(), 240);
+        player.detener();
+    }
+}
+
+#[cfg(test)]
 mod theme_tests {
     use super::*;
 
@@ -7094,5 +6962,84 @@ mod theme_tests {
                 tema
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod memory_integration_tests {
+    use super::*;
+
+    #[test]
+    fn bounded_gallery_loading_preserves_slots_for_missing_files() {
+        let directory = tempfile::tempdir().unwrap();
+        let first = directory.path().join("first.png");
+        let last = directory.path().join("last.png");
+        image::RgbaImage::new(640, 360).save(&first).unwrap();
+        image::RgbaImage::new(320, 180).save(&last).unwrap();
+        let paths = vec![
+            first.to_str().unwrap().into(),
+            directory
+                .path()
+                .join("missing.png")
+                .to_str()
+                .unwrap()
+                .into(),
+            last.to_str().unwrap().into(),
+        ];
+        let cache = Arc::new(Mutex::new(memory_policy::ImageCache::new(1, 200_000)));
+        let images = load_gallery_images(&cache, &paths);
+        assert_eq!(images.len(), 3);
+        assert_eq!(images[0].as_ref().unwrap().size().width, 192);
+        assert!(images[1].is_none());
+        assert_eq!(images[2].as_ref().unwrap().size().width, 192);
+    }
+
+    #[test]
+    fn library_refresh_reuses_existing_thumbnails_without_decoding_files_again() {
+        let cache = Arc::new(Mutex::new(memory_policy::ImageCache::new(1, 100_000)));
+        let image = slint::Image::from_rgba8(SharedPixelBuffer::new(192, 108));
+        let existing = HashMap::from([("existing.png".to_string(), image)]);
+        let result = load_gallery_images_reusing(&cache, &["existing.png".into()], &existing);
+        assert_eq!(result[0].as_ref().unwrap().size().width, 192);
+        assert!(cache.lock().unwrap().get("existing.png").is_none());
+    }
+
+    #[test]
+    fn restored_image_replaces_an_empty_thumbnail_on_library_refresh() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("restored.png");
+        image::RgbaImage::new(128, 64).save(&path).unwrap();
+        let path = path.to_str().unwrap().to_string();
+        let existing = HashMap::from([(path.clone(), slint::Image::default())]);
+        let cache = Arc::new(Mutex::new(memory_policy::ImageCache::new(1, 100_000)));
+        let result = load_gallery_images_reusing(&cache, &[path], &existing);
+        assert_eq!(result[0].as_ref().unwrap().size().width, 192);
+    }
+
+    #[test]
+    fn preview_resolution_and_original_work_without_retaining_oversized_images() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("preview.png");
+        image::RgbaImage::new(640, 360).save(&path).unwrap();
+        let cache = Arc::new(Mutex::new(memory_policy::ImageCache::new(4, 400_000)));
+        let path = path.to_str().unwrap();
+        let low = load_image_preview_cached(&cache, path, 240).unwrap();
+        assert_eq!((low.size().width, low.size().height), (427, 240));
+        let original = load_image_preview_cached(&cache, path, 0).unwrap();
+        assert_eq!((original.size().width, original.size().height), (640, 360));
+        assert!(
+            cache
+                .lock()
+                .unwrap()
+                .get(&format!("preview:0:{path}"))
+                .is_none()
+        );
+        assert_eq!(
+            load_image_preview_cached(&cache, path, 240)
+                .unwrap()
+                .size()
+                .height,
+            240
+        );
     }
 }

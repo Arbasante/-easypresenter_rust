@@ -16,7 +16,10 @@ AppId={{B4B6A5B0-6E2F-4F2C-9A9D-123456789ABC}}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
-DefaultDirName={autopf}\{#MyAppName}
+; Instalar para el usuario actual: no depende de permisos ni del perfil de otro administrador.
+PrivilegesRequired=lowest
+UsePreviousAppDir=no
+DefaultDirName={localappdata}\Programs\{#MyAppName}
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 OutputDir=Output
@@ -68,6 +71,7 @@ Source: "{#BuildDir}\*.dll"; DestDir: "{app}"; Flags: ignoreversion
 ;
 ; ============================================================
 Source: "{#BuildDir}\lib\gstreamer-1.0\*"; DestDir: "{app}\lib\gstreamer-1.0"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#BuildDir}\libexec\gstreamer-1.0\gst-plugin-scanner.exe"; DestDir: "{app}\libexec\gstreamer-1.0"; Flags: ignoreversion
 
 ; ============================================================
 ; DATOS
@@ -88,15 +92,5 @@ Name: "{group}\Desinstalar {#MyAppName}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\assets\icon.ico"; Tasks: desktopicon
 
 
-[Registry]
-
-; ============================================================
-; GSTREAMER
-;
-; Indica a GStreamer dónde están los plugins instalados.
-; ============================================================
-Root: HKCU; Subkey: "Environment"; ValueType: expandsz; ValueName: "GST_PLUGIN_PATH"; ValueData: "{app}\lib\gstreamer-1.0"; Flags: preservestringtype
-
-
 [Run]
-Filename: "{app}\{#MyAppExeName}"; Description: "Ejecutar {#MyAppName}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#MyAppExeName}"; Description: "Ejecutar {#MyAppName}"; Flags: nowait postinstall skipifsilent runasoriginaluser

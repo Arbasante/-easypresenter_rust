@@ -1,0 +1,26 @@
+app-id: com.arbasante.ReadyShow
+runtime: org.freedesktop.Platform
+runtime-version: '25.08'
+sdk: org.freedesktop.Sdk
+command: ReadyShow
+rename-desktop-file: ReadyShow.desktop
+rename-icon: ReadyShow
+finish-args:
+  # Projection positioning requires X11, including on Wayland via XWayland.
+  - --socket=x11
+  - --socket=wayland
+  - --share=ipc
+  - --device=dri
+  - --socket=pulseaudio
+  # OBS output, Drive backups and online images.
+  - --share=network
+  # Preserve access to saved media paths; file dialogs use the document portal.
+  - --filesystem=home:ro
+modules:
+  - name: readyshow
+    buildsystem: simple
+    build-commands:
+      - cp -a . /app/
+    sources:
+      - type: dir
+        path: ../../package-root/usr

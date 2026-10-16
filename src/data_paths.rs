@@ -3,6 +3,13 @@ use std::path::{Path, PathBuf};
 /// Prefer installed seeds, falling back to a source checkout for `cargo run --release`.
 /// This only selects read-only seeds; user databases stay in the user data directory.
 pub fn seed_data_dir(installed: PathBuf, executable: &Path) -> PathBuf {
+    // Flatpak uses /app and AppImage a temporary mount instead of the host /usr.
+    if let Some(prefix) = executable.parent().and_then(Path::parent) {
+        let bundled = prefix.join("share/readyshow/data");
+        if bundled.join("cantos.db").is_file() {
+            return bundled;
+        }
+    }
     if installed.join("cantos.db").is_file() {
         return installed;
     }
@@ -28,6 +35,19 @@ pub fn development_data_dir(directory: &Path, debug_build: bool) -> Option<PathB
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bundled_resources_take_priority_over_host_installation() {
+        let directory = tempfile::tempdir().unwrap();
+        let prefix = directory.path().join("bundle");
+        let bundled = prefix.join("share/readyshow/data");
+        let host = directory.path().join("host-data");
+        for path in [&bundled, &host] {
+            std::fs::create_dir_all(path).unwrap();
+            std::fs::write(path.join("cantos.db"), b"seed").unwrap();
+        }
+        assert_eq!(seed_data_dir(host, &prefix.join("bin/ReadyShow")), bundled);
+    }
 
     #[test]
     fn installed_seed_does_not_select_local_data() {

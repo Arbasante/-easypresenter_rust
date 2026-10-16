@@ -6,6 +6,9 @@ on:
       - 'v*'
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
   # build.rs embeds the desktop client in Linux and Windows executables.
@@ -18,7 +21,8 @@ jobs:
   # LINUX
   # ============================================================
   build-linux:
-    runs-on: ubuntu-latest
+    # Keep the binary's glibc compatible with the Flatpak 25.08 runtime.
+    runs-on: ubuntu-24.04
 
     steps:
 
@@ -38,6 +42,9 @@ jobs:
             pkg-config \
             libglib2.0-dev \
             libfontconfig1-dev \
+            libxkbcommon-dev \
+            libxkbcommon-x11-dev \
+            libwayland-dev \
             libgstreamer1.0-dev \
             libgstreamer-plugins-base1.0-dev \
             gstreamer1.0-tools \
@@ -118,12 +125,12 @@ jobs:
           # Si libpdfium.so no está en el repo, descargarlo automáticamente
           if [ ! -f libpdfium.so ]; then
             echo "libpdfium.so no encontrado. Descargando desde pdfium-binaries..."
-            curl -sL -o pdfium.tgz https://github.com/bblanchon/pdfium-binaries/releases/latest/download/pdfium-linux-x64.tgz || true
-            if [ -f pdfium.tgz ]; then
-              tar -xzf pdfium.tgz lib/libpdfium.so 2>/dev/null && mv lib/libpdfium.so . || true
-              rm -f pdfium.tgz
-            fi
+            curl --fail --location --retry 3 -o pdfium.tgz https://github.com/bblanchon/pdfium-binaries/releases/latest/download/pdfium-linux-x64.tgz
+            tar -xzf pdfium.tgz lib/libpdfium.so
+            mv lib/libpdfium.so .
+            rm -f pdfium.tgz
           fi
+          test -s libpdfium.so
 
       # --------------------------------------------------------
       # CARGO-DEB
@@ -146,7 +153,19 @@ jobs:
       # --------------------------------------------------------
       - name: Generar paquete .deb
         run: |
-          cargo deb
+          cargo deb --no-build
+
+      - name: Preparar recursos para RPM, AppImage y Flatpak
+        run: |
+          bash packaging/linux/stage.sh package-root
+          tar -czf linux-package-input.tar.gz -C package-root usr
+
+      - name: Compartir compilación Linux
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-package-input
+          path: linux-package-input.tar.gz
+          if-no-files-found: error
 
 
       # --------------------------------------------------------
@@ -155,8 +174,66 @@ jobs:
       - name: Subir artefacto Linux
         uses: actions/upload-artifact@v4
         with:
-          name: ReadyShow -linux-deb
+          name: ReadyShow-linux-deb
           path: target/debian/*.deb
+          if-no-files-found: error
+
+  package-linux:
+    needs: build-linux
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        format: [rpm, appimage, flatpak]
+    name: Paquete Linux (${{ matrix.format }})
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Descargar compilación Linux
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-package-input
+
+      - name: Restaurar archivos y permisos
+        run: |
+          mkdir -p package-root
+          tar -xzf linux-package-input.tar.gz -C package-root
+
+      - name: Instalar herramientas de empaquetado
+        env:
+          PACKAGE_FORMAT: ${{ matrix.format }}
+        run: |
+          sudo apt-get update
+          case "$PACKAGE_FORMAT" in
+            rpm)
+              sudo apt-get install -y rpm
+              ;;
+            appimage)
+              sudo apt-get install -y patchelf file \
+                gstreamer1.0-tools gstreamer1.0-plugins-base \
+                gstreamer1.0-plugins-good gstreamer1.0-plugins-bad \
+                gstreamer1.0-plugins-ugly gstreamer1.0-libav \
+                libfontconfig1 libxkbcommon-x11-0 libwayland-client0
+              ;;
+            flatpak)
+              sudo apt-get install -y flatpak flatpak-builder
+              flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+              flatpak install --user --noninteractive -y flathub \
+                org.freedesktop.Platform//25.08 org.freedesktop.Sdk//25.08
+              ;;
+          esac
+
+      - name: Generar paquete
+        env:
+          PACKAGE_FORMAT: ${{ matrix.format }}
+        run: bash packaging/linux/build.sh "$PACKAGE_FORMAT"
+
+      - name: Subir paquete Linux
+        uses: actions/upload-artifact@v4
+        with:
+          name: ReadyShow-linux-${{ matrix.format }}
+          path: dist/*
           if-no-files-found: error
 
 
@@ -749,7 +826,7 @@ jobs:
       - name: Subir instalador Windows
         uses: actions/upload-artifact@v4
         with:
-          name: ReadyShow -windows-installer
+          name: ReadyShow-windows-installer
           path: Output\*.exe
           if-no-files-found: error
 
@@ -760,14 +837,18 @@ jobs:
   release:
     needs:
       - build-linux
+      - package-linux
       - build-windows
 
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     if: |
       always() &&
       (startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch') &&
-      needs.build-linux.result == 'success'
+      needs.build-linux.result == 'success' &&
+      needs.package-linux.result == 'success'
 
 
     steps:
@@ -783,12 +864,15 @@ jobs:
       # --------------------------------------------------------
       - name: Determinar versión
         id: get_version
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            VERSION=$(grep '^version' Cargo.toml | head -n 1 | awk -F '"' '{print $2}')
+          if [[ "$EVENT_NAME" == "workflow_dispatch" ]]; then
+            VERSION=$(python3 -c 'import tomllib; print(tomllib.load(open("Cargo.toml", "rb"))["package"]["version"])')
             echo "TAG_NAME=v$VERSION" >> $GITHUB_ENV
           else
-            echo "TAG_NAME=${{ github.ref_name }}" >> $GITHUB_ENV
+            echo "TAG_NAME=$REF_NAME" >> $GITHUB_ENV
           fi
 
       # --------------------------------------------------------
@@ -798,6 +882,8 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: artifacts
+          pattern: ReadyShow-*
+          merge-multiple: true
 
 
       # --------------------------------------------------------
@@ -810,7 +896,14 @@ jobs:
           echo "ARTEFACTOS GENERADOS"
           echo "=========================================="
 
-          find artifacts -type f -print || echo "Advertencia: no se encontraron artefactos (revisa si Windows falló)."
+          find artifacts -type f -print
+          # Never publish an incomplete set of Linux packages.
+          for extension in deb rpm AppImage flatpak; do
+            compgen -G "artifacts/*.$extension" > /dev/null || {
+              echo "Falta el paquete $extension" >&2
+              exit 1
+            }
+          done
 
 
       # --------------------------------------------------------
@@ -820,10 +913,11 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.TAG_NAME }}
+          target_commitish: ${{ github.sha }}
           name: Release ${{ env.TAG_NAME }}
+          fail_on_unmatched_files: true
           files: |
-            artifacts/ReadyShow -linux-deb/*.deb
-            artifacts/ReadyShow -windows-installer/*.exe
+            artifacts/*
 
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

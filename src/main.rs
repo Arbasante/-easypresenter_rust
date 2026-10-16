@@ -5585,6 +5585,7 @@ fn run_app() -> Result<(), Box<dyn std::error::Error>> {
                     .to_path_buf();
 
                 let pdfium_paths = [
+    exe_dir.join("../share/readyshow"),
     exe_dir,
     std::path::PathBuf::from("/usr/share/readyshow"),
     std::path::PathBuf::from("/usr/lib"),

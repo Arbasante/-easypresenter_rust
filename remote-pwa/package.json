@@ -1,0 +1,14 @@
+{
+  "name": "readyshow-pwa",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node tests.mjs && node --test storage-tests.mjs",
+    "test:browser": "node browser-tests.mjs"
+  },
+  "devDependencies": {
+    "fake-indexeddb": "6.2.4",
+    "playwright": "1.58.2"
+  }
+}

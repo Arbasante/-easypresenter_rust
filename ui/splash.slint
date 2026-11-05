@@ -1,4 +1,5 @@
 export component SplashWindow inherits Window {
+    default-font-size: 14px;
     width: 600px;
     height: 350px;
     no-frame: true; // Quita los bordes de la ventana del sistema operativo
@@ -32,13 +33,13 @@ export component SplashWindow inherits Window {
                 spacing: 10px;
                 Text {
                     text: "Versión " + root.app-version;
-                    font-size: 14px;
+                    font-size: 16px;
                     color: #e9edf3;
                     font-weight: 600;
                 }
                 Text {
                     text: root.loading-status;
-                    font-size: 12px;
+                    font-size: 14px;
                     color: #93b4e7; // Color azul claro para el estado
                 }
                 

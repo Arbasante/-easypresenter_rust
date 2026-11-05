@@ -4,6 +4,7 @@ mod data_paths;
 mod memory_policy;
 mod obs_server;
 mod online_backup;
+mod remote_control;
 use obs_server::EstadoOverlay;
 mod preview_resolution;
 mod projector_window;
@@ -6599,7 +6600,7 @@ fn run_app() -> Result<(), Box<dyn std::error::Error>> {
                 let state = Arc::clone(&state);
                 let cb_lib = Arc::clone(&current_biblia_libro);
                 let cb_cap = Arc::clone(&current_biblia_capitulo);
-                ui.on_abrir_favorito(move |fav| {
+                ui.on_abrir_favorito(move |fav, solo_previsualizar| {
                     let ui = ui_h.unwrap();
                     if fav.tipo == "canto" {
                         *cb_lib.lock().unwrap() = -1;
@@ -6740,7 +6741,9 @@ fn run_app() -> Result<(), Box<dyn std::error::Error>> {
                                         } else {
                                             0.0
                                         });
-                                        if (target_idx as usize) < diapos.len() {
+                                        if !solo_previsualizar
+                                            && (target_idx as usize) < diapos.len()
+                                        {
                                             let text = diapos[target_idx as usize].texto.clone();
                                             let ord = diapos[target_idx as usize].orden.clone();
                                             ui.invoke_proyectar_estrofa(
@@ -6766,6 +6769,16 @@ fn run_app() -> Result<(), Box<dyn std::error::Error>> {
                     slint::CloseRequestResponse::HideWindow
                 });
             }
+
+            remote_control::install(
+                &ui,
+                &proyector,
+                Arc::clone(&state),
+                Arc::clone(&overlay_estado),
+                Arc::clone(&segunda_pantalla),
+                Arc::clone(&current_biblia_libro),
+                Arc::clone(&current_biblia_capitulo),
+            );
 
             // ── Auto-proyección en segunda pantalla al iniciar ───────────────────────
             // Se dispara DESPUÉS de registrar todos los callbacks (incluido

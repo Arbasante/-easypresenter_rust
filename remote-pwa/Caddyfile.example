@@ -1,0 +1,10 @@
+# Cambia esta IP por la dirección local del PC. Este archivo es un ejemplo:
+# no se aplica automáticamente ni expone el equipo a Internet.
+{
+    auto_https disable_redirects
+}
+
+https://192.168.1.20:8443 {
+    tls internal
+    reverse_proxy 127.0.0.1:8091
+}

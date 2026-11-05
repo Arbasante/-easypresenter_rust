@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#0e1723">
+  <meta name="description" content="Control remoto de ReadyShow por WiFi. Las funciones autónomas están en la aplicación nativa Android.">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" type="image/png" href="/icon-192.png">
+  <link rel="apple-touch-icon" href="/icon-192.png">
+  <link rel="stylesheet" href="/styles.css">
+  <title>ReadyShow · Control remoto</title>
+  <script type="module" src="/app.js"></script>
+</head>
+<body class="remote-page">
+  <header class="topbar"><a class="brand" href="/"><img src="/icon-192.png" width="44" height="44" alt=""><span>ReadyShow<small>CONTROL REMOTO</small></span></a><button id="install" hidden>Instalar</button></header>
+  <main>
+    <p id="offline-status" class="hint" role="status">Control remoto · Requiere el PC conectado a la misma red.</p>
+    <details id="legacy-data" class="panel" hidden>
+      <summary>Migrar datos anteriores a Android</summary>
+      <p>Las funciones independientes ahora están en la aplicación nativa Android. Tus datos anteriores siguen guardados en este navegador. Exporta una copia e impórtala en Android → Ajustes → Importar copia.</p>
+      <button id="export-legacy">Exportar datos anteriores con archivos</button>
+    </details>
+    <section id="remote-workspace">
+      <div class="library-heading"><h1>Mando remoto</h1><span id="connection" class="connection-badge" role="status">SIN CONEXIÓN AL PC</span><button id="disconnect" hidden>Desconectar PC</button></div>
+    <section id="pairing" class="pairing">
+      <span class="eyebrow">TU CELULAR, TU CONTROL</span>
+      <h1>La proyección.<br>A tu alcance.</h1>
+      <p>Explora la biblioteca del PC y elige qué mostrar en la ventana de proyección.</p>
+      <form id="connect-form">
+        <label for="code">Código de conexión</label>
+        <input id="code" name="code" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Copia el código que aparece en el PC" maxlength="32" required>
+        <button class="primary" type="submit">Conectar con ReadyShow</button>
+      </form>
+      <p class="hint">En el PC: abre ReadyShow → Configuración → Control remoto → Activar control. Ambos dispositivos deben estar en la misma red.</p>
+    </section>
+    <section id="controller" hidden>
+      <nav id="tabs" aria-label="Biblioteca">
+        <button data-tab="favorites" aria-pressed="true">Favoritos</button><button data-tab="songs" aria-pressed="false">Cantos</button><button data-tab="bible" aria-pressed="false">Biblias</button><button data-tab="images" aria-pressed="false">Imágenes</button><button data-tab="videos" aria-pressed="false">Videos</button>
+      </nav>
+      <div class="library-heading"><h2 id="section-title">Favoritos</h2><button id="refresh" aria-label="Actualizar biblioteca">Actualizar</button></div>
+      <label class="sr-only" for="search">Buscar en la sección</label><input id="search" type="search" placeholder="Buscar en favoritos…" autocomplete="off">
+      <section id="bible-picker" hidden>
+        <label for="version">Versión</label><select id="version"></select>
+        <label for="book">Libro</label><select id="book"></select>
+        <label for="chapter">Capítulo</label><select id="chapter"></select>
+        <button id="open-chapter" class="primary">Ver versículos</button>
+      </section>
+      <section id="detail" hidden><button id="back">← Volver a la biblioteca</button><h2 id="detail-title"></h2><p class="hint">Ver las tarjetas no cambia la proyección. Pulsa «Proyectar» para enviar una.</p><div id="cards" class="cards"></div></section>
+      <div id="items" class="items" aria-label="Contenido de la biblioteca"></div>
+      <footer class="transport" aria-label="Controles de salida"><button data-control="show">Mostrar pantalla</button><button data-control="hide">Ocultar pantalla</button><button id="play" data-control="play_pause" disabled>Pausar</button><button id="mute" data-control="mute" disabled>Silenciar</button></footer>
+    </section>
+    </section>
+    <p id="install-note" class="hint"></p>
+    <p id="cache-status" class="hint" role="status"></p>
+    <button id="check-update">Buscar actualización del mando</button>
+    <p id="message" role="status" aria-live="polite"></p>
+  </main>
+</body>
+</html>

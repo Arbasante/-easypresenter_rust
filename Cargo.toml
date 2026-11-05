@@ -1,12 +1,13 @@
 [package]
 name = "ReadyShow"
-version = "0.4.8"
+version = "0.4.9"
 edition = "2024"
 build = "build.rs"
 description = "Software de presentación multimedia, letras y Biblias con soporte de video nativo"
 license = "MIT"        
 
 [dependencies]
+getrandom = "0.3"
 flate2 = "1"
 tempfile = "3"
 slint = { version = "1.17.1", features = ["unstable-winit-030"] }
